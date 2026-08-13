@@ -86,12 +86,18 @@ function ReadBody{
 function SaveWorld($w){ $w | ConvertTo-Json -Depth 30 -Compress | Set-Content -Path $worldFile -Encoding UTF8 }
 
 # Server auto-runs world: create world.json from default-world.json (worldStart=now)
+$script:restoredStart = 0 # v8.26：world.json 解析失败时尽力恢复的 worldStart（世界时间轴不重置）
 function LoadWorld{
   if(Test-Path $worldFile){
     try{
       $w = Get-Content -Raw $worldFile | ConvertFrom-Json
       # 迁移旧 world.json：补齐新字段
       $dirty = $false
+      if(!$w.worldStart){
+        $w | Add-Member -MemberType NoteProperty -Name worldStart -Value ([int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) -Force
+        Write-Host '  WARN: world.json missing worldStart, set to now' -ForegroundColor Yellow
+        $dirty=$true
+      }
       if(!$w.timeScale){ $w | Add-Member -MemberType NoteProperty -Name timeScale -Value 1 -Force; $dirty=$true }
       if(!$w.lastStockRefill){ $w | Add-Member -MemberType NoteProperty -Name lastStockRefill -Value 0 -Force; $dirty=$true }
       if(!$w.stockMode){ $w | Add-Member -MemberType NoteProperty -Name stockMode -Value 'perPlayer' -Force; $dirty=$true }
@@ -105,7 +111,15 @@ function LoadWorld{
       }
       if($dirty){ SaveWorld $w }
       return $w
-    }catch{}
+    }catch{
+      # v8.26：world.json 解析失败时备份损坏文件并尽力恢复 worldStart，避免静默重建导致世界时间轴重置
+      try{
+        $raw = Get-Content -Raw $worldFile
+        if($raw -match '"worldStart"\s*:\s*(\d+)'){ $script:restoredStart = [int64]$Matches[1] }
+        Copy-Item $worldFile ($worldFile + '.bak') -Force
+        Write-Host ('  WARN: world.json parse failed, backed up to world.json.bak, restoring worldStart=' + $script:restoredStart) -ForegroundColor Yellow
+      }catch{}
+    }
   }
   if(Test-Path $defaultWorldFile){
     try{
@@ -115,7 +129,7 @@ function LoadWorld{
       $rng.GetBytes($b)
       $adminPass = ([System.BitConverter]::ToString($b)).Replace('-','').ToLower()
       $w = [pscustomobject]@{
-        worldStart=[int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        worldStart=$(if($script:restoredStart -gt 0){$script:restoredStart}else{[int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()})
         basePrices=$d.basePrices
         purchaseLimits=$d.purchaseLimits
         stockMode='perPlayer'
@@ -126,6 +140,12 @@ function LoadWorld{
       SaveWorld $w
       Write-Host ('  ADMIN PASS: ' + $adminPass) -ForegroundColor Magenta
       Write-Host '  (change it in world.json if needed)' -ForegroundColor DarkGray
+      if($script:restoredStart -gt 0){
+        Write-Host ('  INFO: world timeline restored to worldStart=' + $script:restoredStart) -ForegroundColor Green
+      }else{
+        Write-Host '  WARN: world.json missing/corrupt -> new world created, TIMELINE RESET to now (all players Day=1)' -ForegroundColor Red
+        Write-Host '  HINT: to restore, run GM cmd: /gm <adminPass> setday <correct day>' -ForegroundColor Yellow
+      }
       return $w
     }catch{ return $null }
   }

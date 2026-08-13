@@ -3862,6 +3862,7 @@ async function syncPlayer(user){
   if(useLocal){
     const up=JSON.parse(JSON.stringify(GS));
     delete up.__basePrices;delete up.__purchaseLimits; // 世界数据随服务器，不随玩家档上传
+    delete up.day;delete up.gameStartTime; // v8.26：游戏日由服务器 worldStart 统一计算
     const r=await NET.post('/api/save',{user,gs:up,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt});
     if(r&&r.ok)GS.__lastServerAt=GS.__savedAt;
   }
@@ -3879,7 +3880,8 @@ function toggleAuth(mode){
 }
 function applySaved(saved){
   if(!saved)return;
-  GS.day=saved.day;GS.gold=saved.gold;GS.location=saved.location;
+  GS.day=typeof saved.day==='number'?saved.day:1; // v8.26：存档无 day（在线剔除后）兜底 1，随后由世界锚点对齐
+  GS.gold=saved.gold;GS.location=saved.location;
   GS.vehicle=saved.vehicle||{};
   // 车厢兜底（v7.9.1）：老存档/异常数据无 wagons 时补默认装配，防止容量为 0 无法交易
   GS.vehicle.wagons=GS.vehicle.wagons||[];
@@ -3967,7 +3969,10 @@ function autoSave(){
     clearTimeout(__saveTimer);
     __saveTimer=setTimeout(async()=>{
       if(seq!==__saveSeq)return;
-      const r=await NET.post('/api/save',{user,gs:GS,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt||0});
+      // v8.26：游戏日由服务器 worldStart 统一计算并下发，玩家存档不携带 day/gameStartTime
+      const up=JSON.parse(JSON.stringify(GS));
+      delete up.day;delete up.gameStartTime;
+      const r=await NET.post('/api/save',{user,gs:up,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt||0});
       if(r&&r.ok)GS.__lastServerAt=GS.__savedAt; // v8.25：保存成功更新已知版本
       else if(r&&r.conflict){
         toast('⚠ 检测到其他设备登录，正在同步最新存档…','info');
@@ -3989,7 +3994,10 @@ function saveNow(){
   if(ONLINE){
     if(!GS.__loaded)return; // v8.24：未从真实存档加载前不上传，防止初始档覆盖服务器
     GS.__savedAt=Date.now();
-    NET.post('/api/save',{user,gs:GS,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt||0}).then(r=>{
+    // v8.26：玩家存档不携带 day/gameStartTime（游戏日由服务器 worldStart 统一计算）
+    const up=JSON.parse(JSON.stringify(GS));
+    delete up.day;delete up.gameStartTime;
+    NET.post('/api/save',{user,gs:up,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt||0}).then(r=>{
       if(r&&r.ok)GS.__lastServerAt=GS.__savedAt; // v8.25
       else if(r&&r.conflict&&ONLINE)fullSync();
     });
@@ -4009,7 +4017,10 @@ window.addEventListener('pagehide',()=>{
     if(!GS.__loaded)return; // v8.24：未从真实存档加载前不兜底上传
     GS.__savedAt=Date.now();
     try{
-      const blob=new Blob([JSON.stringify({user,gs:GS,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt||0})],{type:'application/json'});
+      // v8.26：玩家存档不携带 day/gameStartTime
+      const up=JSON.parse(JSON.stringify(GS));
+      delete up.day;delete up.gameStartTime;
+      const blob=new Blob([JSON.stringify({user,gs:up,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt||0})],{type:'application/json'});
       if(navigator.sendBeacon)navigator.sendBeacon('/api/save',blob);
     }catch(e){}
   }else{
