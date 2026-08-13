@@ -27,6 +27,7 @@
 param([int]$Port = 8080, [switch]$Lan)
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$clientRoot = Join-Path $root 'Online-Client'
 $playersDir = Join-Path $root 'players'
 $worldFile = Join-Path $root 'world.json'
 $defaultWorldFile = Join-Path $root 'default-world.json'
@@ -217,6 +218,7 @@ Write-Host '========================================' -ForegroundColor Cyan
 Write-Host '  Aierxiya Trade - World Server v4' -ForegroundColor Yellow
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host "  Root:   $root"
+Write-Host "  Client: $clientRoot"
 Write-Host "  Port:   $Port"
 $w0 = LoadWorld
 if($w0){
@@ -498,7 +500,7 @@ while($running){
     # ---- static file ----
     $url = $path
     if($url -eq '/' -or $url -eq ''){ $url = '/index.html' }
-    $filePath = Join-Path $root ($url.TrimStart('/').Replace('/','\'))
+    $filePath = Join-Path $clientRoot ($url.TrimStart('/').Replace('/','\'))
     if(Test-Path $filePath -PathType Leaf){
       $ext = [System.IO.Path]::GetExtension($filePath).ToLower()
       $ct = if($mime.ContainsKey($ext)){$mime[$ext]}else{'application/octet-stream'}
