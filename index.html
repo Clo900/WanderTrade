@@ -3842,8 +3842,16 @@ async function fullSync(){
 async function syncPlayer(user){
   const pl=await NET.get('/api/player/'+encodeURIComponent(user));
   const server=pl&&pl.ok&&pl.gs?pl.gs:null;
-  const local=getStoredGS(user)||null;
-  if(!server&&!local){window.__gsReady=true;return;} // 全新玩家：无存档可合并，允许后续正常保存
+  // v8.24：服务器账号（不在本机离线用户列表）忽略本机残留档——
+  // 本机档可能是历史版本自动保存的初始档（时间戳较新），误用会覆盖服务器真实存档导致"刷新后信息回归初始"
+  const local=(!getUsers().includes(user))?null:(getStoredGS(user)||null);
+  if(!server&&!local){
+    // v8.24：仅当服务器明确确认无存档（pl.ok）才算全新玩家，允许创建档；
+    // 网络失败（pl 为 null）不置 __loaded，防止初始档被上传覆盖服务器真实存档
+    if(pl&&pl.ok){GS.__loaded=true;}
+    window.__gsReady=true;
+    return;
+  }
   const serverAt=server?(server.__savedAt||0):0;
   const localAt=local?(local.__savedAt||0):0;
   const useLocal=!!local&&localAt>serverAt;
@@ -3895,6 +3903,7 @@ function applySaved(saved){
   GS.intel=saved.intel||{unlocked:{},log:[]};GS.knownEvents=saved.knownEvents||{};
   GS.justArrived=saved.justArrived||false;GS.tutorial=saved.tutorial||{step:6};
   GS.__savedAt=saved.__savedAt||Date.now();
+  GS.__loaded=true; // v8.24：已从真实存档加载，才允许向服务器写入
   normalizeVehicleDurability(); // v8.1 耐久公式迁移
   migrateLots(); // v8.2 货物批次结构迁移
 }
@@ -3950,6 +3959,7 @@ function autoSave(){
   if(!user)return;
   if(!window.__gsReady)return; // v8.20：存档未加载/未确立前不保存
   if(ONLINE){
+    if(!GS.__loaded)return; // v8.24：未从真实存档加载前不上传，防止初始档覆盖服务器
     GS.__savedAt=Date.now();
     const seq=++__saveSeq;
     clearTimeout(__saveTimer);
@@ -3974,6 +3984,7 @@ function saveNow(){
   if(!user)return;
   if(!window.__gsReady)return; // v8.20：存档未确立前不保存
   if(ONLINE){
+    if(!GS.__loaded)return; // v8.24：未从真实存档加载前不上传，防止初始档覆盖服务器
     GS.__savedAt=Date.now();
     NET.post('/api/save',{user,gs:GS,clientSaveTime:GS.__savedAt});
   }else{
@@ -3989,6 +4000,7 @@ window.addEventListener('pagehide',()=>{
   if(!user)return;
   if(!window.__gsReady)return; // v8.20：存档未确立前不兜底保存
   if(ONLINE){
+    if(!GS.__loaded)return; // v8.24：未从真实存档加载前不兜底上传
     GS.__savedAt=Date.now();
     try{
       const blob=new Blob([JSON.stringify({user,gs:GS,clientSaveTime:GS.__savedAt})],{type:'application/json'});
@@ -4021,6 +4033,7 @@ async function doRegister(){
     saveGS(u,GS);
   }
   localStorage.setItem(AUTH_KEY,u);
+  GS.__loaded=true; // v8.24：新账号确立，允许上传初始档
   window.__gsReady=true; // v8.20：账号存档已确立，允许自动保存
   document.getElementById('auth-overlay').style.display='none';
   toast('🎉 注册成功！欢迎来到全王国，'+u,'ok');
@@ -4042,6 +4055,7 @@ async function doLogin(){
     if(saved)applySaved(saved);
   }
   localStorage.setItem(AUTH_KEY,u);
+  GS.__loaded=true; // v8.24：登录存档已确立
   window.__gsReady=true; // v8.20：账号存档已确立，允许自动保存
   document.getElementById('auth-overlay').style.display='none';
   toast('👋 欢迎回来，'+u,'ok');
@@ -4069,6 +4083,7 @@ function resetGameState(){
   GS.achievements={};GS.visitedCities=['greentown'];
   delete GS.__basePrices;delete GS.__purchaseLimits; // 价格/限购为全局世界数据，新档在首次保存时重新附带
   GS.__savedAt=0; // v8.19：新档不继承旧保存时间戳，避免存档合并误判"本地较新"
+  delete GS.__loaded; // v8.24：重置后未从真实存档加载，禁止向服务器写入初始档
 }
 
 // ===== 成就系统（v7.5） =====
