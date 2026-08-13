@@ -359,7 +359,8 @@ while($running){
         }
       }
       elseif($action -eq 'player' -and $method -eq 'GET' -and $seg.Length -gt 2){
-        $user = $seg[2]
+        # v8.28：Url.AbsolutePath 返回转义路径（中文用户名如 %E4%B9%9D...），必须解码才能匹配 players/ 下的中文文件名
+        $user = [System.Uri]::UnescapeDataString($seg[2])
         EnsurePlayersDir
         $pf = Join-Path $playersDir ($user + '.json')
         if(!(Test-Path $pf)){ SendJson @{ok=$false; err='user not found'} }
