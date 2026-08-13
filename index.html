@@ -3856,12 +3856,14 @@ async function syncPlayer(user){
   const localAt=local?(local.__savedAt||0):0;
   const useLocal=!!local&&localAt>serverAt;
   const src=useLocal?local:server;
+  GS.__lastServerAt=src?(src.__savedAt||0):0; // v8.25：记录已知的服务器存档版本（并发保护基准，与时钟无关）
   applySaved(src);
   window.__gsReady=true; // v8.20：玩家存档已恢复，此后自动保存生效
   if(useLocal){
     const up=JSON.parse(JSON.stringify(GS));
     delete up.__basePrices;delete up.__purchaseLimits; // 世界数据随服务器，不随玩家档上传
-    await NET.post('/api/save',{user,gs:up,clientSaveTime:GS.__savedAt});
+    const r=await NET.post('/api/save',{user,gs:up,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt});
+    if(r&&r.ok)GS.__lastServerAt=GS.__savedAt;
   }
 }
 function getUsers(){try{return JSON.parse(localStorage.getItem(USERS_KEY)||'[]')}catch(e){return[]}}
@@ -3965,8 +3967,9 @@ function autoSave(){
     clearTimeout(__saveTimer);
     __saveTimer=setTimeout(async()=>{
       if(seq!==__saveSeq)return;
-      const r=await NET.post('/api/save',{user,gs:GS,clientSaveTime:GS.__savedAt});
-      if(r&&r.conflict){
+      const r=await NET.post('/api/save',{user,gs:GS,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt||0});
+      if(r&&r.ok)GS.__lastServerAt=GS.__savedAt; // v8.25：保存成功更新已知版本
+      else if(r&&r.conflict){
         toast('⚠ 检测到其他设备登录，正在同步最新存档…','info');
         fullSync();
       }
@@ -3986,7 +3989,10 @@ function saveNow(){
   if(ONLINE){
     if(!GS.__loaded)return; // v8.24：未从真实存档加载前不上传，防止初始档覆盖服务器
     GS.__savedAt=Date.now();
-    NET.post('/api/save',{user,gs:GS,clientSaveTime:GS.__savedAt});
+    NET.post('/api/save',{user,gs:GS,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt||0}).then(r=>{
+      if(r&&r.ok)GS.__lastServerAt=GS.__savedAt; // v8.25
+      else if(r&&r.conflict&&ONLINE)fullSync();
+    });
   }else{
     if(!getUsers().includes(user))return; // v8.19：服务器账号不写本机离线档
     GS.__basePrices=BASE_PRICES;GS.__purchaseLimits=PURCHASE_LIMITS;
@@ -4003,7 +4009,7 @@ window.addEventListener('pagehide',()=>{
     if(!GS.__loaded)return; // v8.24：未从真实存档加载前不兜底上传
     GS.__savedAt=Date.now();
     try{
-      const blob=new Blob([JSON.stringify({user,gs:GS,clientSaveTime:GS.__savedAt})],{type:'application/json'});
+      const blob=new Blob([JSON.stringify({user,gs:GS,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt||0})],{type:'application/json'});
       if(navigator.sendBeacon)navigator.sendBeacon('/api/save',blob);
     }catch(e){}
   }else{
@@ -4024,6 +4030,7 @@ async function doRegister(){
     if(!r||!r.ok)return authErr(r&&r.err?r.err:'注册失败（服务器不可用？）');
     const pl=await NET.get('/api/player/'+encodeURIComponent(u));
     if(pl&&pl.ok&&pl.gs)applySaved(pl.gs);
+    else if(pl&&pl.ok)GS.__loaded=true; // v8.25：服务器确认无档=新玩家，允许建档；网络失败（pl=null）不置 loaded
   }else{
     const users=getUsers();
     if(users.includes(u))return authErr('该用户名已被注册');
@@ -4031,9 +4038,9 @@ async function doRegister(){
     localStorage.setItem(GS_PREFIX+u+'_pwd',p);
     resetGameState(); // v8.12（D）：新注册离线账号使用全新开局存档，避免残留上一账号数据
     saveGS(u,GS);
+    GS.__loaded=true; // v8.25：离线新账号建档
   }
   localStorage.setItem(AUTH_KEY,u);
-  GS.__loaded=true; // v8.24：新账号确立，允许上传初始档
   window.__gsReady=true; // v8.20：账号存档已确立，允许自动保存
   document.getElementById('auth-overlay').style.display='none';
   toast('🎉 注册成功！欢迎来到全王国，'+u,'ok');
@@ -4046,16 +4053,16 @@ async function doLogin(){
   if(online){
     const r=await NET.post('/api/login',{user:u,pass:p});
     if(!r||!r.ok)return authErr(r&&r.err?r.err:'登录失败');
-    await syncPlayer(u); // v8.19：登录合并本地离线进度与服务器存档，完成教程不再丢失
+    await syncPlayer(u); // v8.19：登录合并存档；v8.25：__loaded 仅由 syncPlayer 按服务器确认状态设置
   }else{
     const users=getUsers();
     if(!users.includes(u))return authErr('该用户名未注册，请先注册');
     if(localStorage.getItem(GS_PREFIX+u+'_pwd')!==p)return authErr('密码错误');
     const saved=getStoredGS(u);
     if(saved)applySaved(saved);
+    else GS.__loaded=true; // v8.25：离线新玩家建档
   }
   localStorage.setItem(AUTH_KEY,u);
-  GS.__loaded=true; // v8.24：登录存档已确立
   window.__gsReady=true; // v8.20：账号存档已确立，允许自动保存
   document.getElementById('auth-overlay').style.display='none';
   toast('👋 欢迎回来，'+u,'ok');

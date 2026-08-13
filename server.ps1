@@ -358,12 +358,15 @@ while($running){
         if(!(Test-Path $pf)){ SendJson @{ok=$false; err='user not found'} }
         else{
           $rec = Get-Content -Raw $pf | ConvertFrom-Json
-          # 并发保护（v7.8）：比较存档时间戳，服务器有新存档（另一设备刚保存）则拒绝覆盖
+          # 并发保护（v7.8 → v8.25 版本号机制）：比较"客户端已知的服务器存档版本(lastServerAt)"与当前服务器版本。
+          # 旧机制比较客户端时间戳，跨设备/时钟偏差会误判或漏判导致存档被覆盖。
           $serverSavedAt = 0
           if($rec.gs -and $rec.gs.__savedAt){ $serverSavedAt = [int64]$rec.gs.__savedAt }
+          $clientLast = 0
+          if($b.lastServerAt){ $clientLast = [int64]$b.lastServerAt }
           $clientSavedAt = 0
           if($b.clientSaveTime){ $clientSavedAt = [int64]$b.clientSaveTime }
-          if($clientSavedAt -gt 0 -and $serverSavedAt -gt 0 -and $clientSavedAt -lt $serverSavedAt){
+          if($clientLast -gt 0 -and $serverSavedAt -gt 0 -and $clientLast -lt $serverSavedAt){
             SendJson @{ok=$false; conflict=$true}
           }
           else{
