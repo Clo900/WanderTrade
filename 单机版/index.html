@@ -4538,6 +4538,15 @@ function pointOnCurves(curves,frac){
   }
   return bezierPt(curves[n-1].p0,curves[n-1].c1,curves[n-1].c2,curves[n-1].p1,1);
 }
+// v8.23：路上取点——曲线方向由首次生成（ROADS 顺序）决定，若旅行方向与该段曲线反向则用 1-frac，
+// 修复"旅行点从目的地反向行进、与路线完全不符"（v8.22 归一化 key 后引入）
+function ptOnRoad(a,b,segFrac,cityPos){
+  const seg=buildGraph()[a][b];
+  const rc=roadCurve(a,b,cityPos[a].x,cityPos[a].y,cityPos[b].x,cityPos[b].y,seg);
+  const p0=rc.curves[0].p0;
+  const fwd=Math.abs(p0[0]-cityPos[a].x)<0.5&&Math.abs(p0[1]-cityPos[a].y)<0.5;
+  return pointOnCurves(rc.curves,fwd?segFrac:1-segFrac);
+}
 // 地图拖拽/缩放（pointer 事件：鼠标+触屏+触控笔；事件委托一次性绑定）
 function initMapInteract(){
   if(window.__mapOn)return;window.__mapOn=true;
@@ -4602,8 +4611,7 @@ function renderMap(){
         const seg=buildGraph()[a][b];
         if(accDist+seg>=targetDist){
           const segFrac=(targetDist-accDist)/seg;
-          const rc=roadCurve(a,b,cityPos[a].x,cityPos[a].y,cityPos[b].x,cityPos[b].y,seg);
-          const pt=pointOnCurves(rc.curves,segFrac);
+          const pt=ptOnRoad(a,b,segFrac,cityPos); // v8.23：方向对齐
           if(pt){px=pt[0];py=pt[1]}
           break;
         }
@@ -4645,8 +4653,7 @@ function updateTravelUI(){
       const seg=buildGraph()[a][b];
       if(accDist+seg>=targetDist){
         const segFrac=(targetDist-accDist)/seg;
-        const rc=roadCurve(a,b,cityPos[a].x,cityPos[a].y,cityPos[b].x,cityPos[b].y,seg);
-        const pt=pointOnCurves(rc.curves,segFrac);
+        const pt=ptOnRoad(a,b,segFrac,cityPos); // v8.23：方向对齐
         if(pt){px=pt[0];py=pt[1]}
         break;
       }
