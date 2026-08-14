@@ -3257,6 +3257,8 @@ h3{font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
   <div id="view-achrank"></div>
 </div>
 </div>
+<script src="src/core/state.js"></script>
+<script src="src/core/event-bus.js"></script>
 <script src="src/core/ui-primitives.js"></script>
 <script src="src/core/data.js"></script>
 <script src="src/economy/price-engine.js"></script>
@@ -3266,6 +3268,41 @@ h3{font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
 /* ================================================
  * 游戏引擎
  * ================================================ */
+
+// ===== 响应式状态容器初始化 =====
+State.init({
+  day: 1, gold: 10000, location: 'greentown',
+  timeScale: 1, gameStartTime: Date.now(),
+  vehicle: {level:1,speed:5,durability:100,durabilityMax:100,passengers:0,core:{lv:0,speed:0,dura:0},wagons:[{cur:{id:'w0',type:'balanced',lv:1},owned:{balanced_1:true}}]},
+  cargo: {}, buyPrice: {}, lots: {}, visitStamp: {},
+  cityStocks: {}, lastStockRefill: Date.now(),
+  warehouses: {}, reputation: {},
+  materials: {gear:0,repair_kit:0,fuel_tank:0,engine:0},
+  tasks: {board:[],active:[]}, traveling: null, pendingEvent: null, repairDisc: null,
+  intel: {unlocked:{},log:[]}, knownEvents: {},
+  justArrived: false, tutorial: {step:0},
+  stats: {bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0},
+  achievements: {}, visitedCities: ['greentown'],
+  __savedAt: 0, __loaded: false
+});
+
+// ===== 状态订阅 + EventBus 桥接（v9.0） =====
+State.subscribe('gold', function(newGold, oldGold){
+  EventBus.emit(EventBus.EVENTS.GOLD_CHANGED, {gold: newGold});
+});
+State.subscribe('location', function(newLoc){
+  EventBus.emit(EventBus.EVENTS.LOCATION_CHANGED, {location: newLoc});
+});
+State.subscribe('day', function(day){
+  EventBus.emit(EventBus.EVENTS.DAY_CHANGED, {day: day});
+});
+State.subscribe('traveling', function(traveling){
+  if(traveling){
+    EventBus.emit(EventBus.EVENTS.TRAVEL_START, traveling);
+  }else{
+    EventBus.emit(EventBus.EVENTS.TRAVEL_ARRIVE, {});
+  }
+});
 
 // 事件图鉴（始终展示全部14条定义，不受城市限制）
 function catalogDetail(id){document.querySelectorAll('.modal-overlay').forEach(o=>o.remove());showEventDetail(id);}
@@ -3308,25 +3345,36 @@ function rollPrivateEvent(sp,destId){
 function applyCargoLoss(pct){
   const ids=Object.keys(GS.cargo).filter(id=>GS.cargo[id]>0);
   if(ids.length===0)return;
-  for(const id of ids){
-    const lost=Math.max(1,Math.floor(GS.cargo[id]*pct));
-    GS.cargo[id]-=lost;if(GS.cargo[id]<=0){delete GS.cargo[id];delete GS.buyPrice[id];}
-  }
+  State.batch(function(){
+    var cargo = State.get('cargo') || {};
+    var buyPrice = State.get('buyPrice') || {};
+    for(const id of ids){
+      const lost=Math.max(1,Math.floor(cargo[id]*pct));
+      cargo[id]-=lost;
+      if(cargo[id]<=0){delete cargo[id];delete buyPrice[id];}
+    }
+    State.set('cargo', cargo);
+    State.set('buyPrice', buyPrice);
+  });
+  EventBus.emit(EventBus.EVENTS.CARGO_CHANGED, {reason:'loss'});
 }
 function showPrivateEvent(){
-  const pe=GS.pendingEvent;if(!pe)return;GS.pendingEvent=null;
+  const pe=GS.pendingEvent;if(!pe)return;State.set('pendingEvent',null);
   if(pe.type==='rob'){
     let val=0;for(const id in GS.cargo)val+=(GS.cargo[id]||0)*((GS.buyPrice[id])||0);
     const ransom=Math.round(val*0.2);
     showChoice('🏴 路遇劫匪',`损失 ${Math.round(pe.pct*100)}% 的货物（按各物资比例扣除）\n或花费 ${fmt(ransom)} 金币赎买免于损失`,
       ransom>GS.gold?'强行突围':`赎买 ${fmt(ransom)} 金币`,'硬抗损失',()=>{
-        if(GS.gold>=ransom){GS.gold-=ransom;toast('破财消灾，货物保住','ok');}
+        if(GS.gold>=ransom){State.set('gold',GS.gold-ransom);toast('破财消灾，货物保住','ok');}
         else{applyCargoLoss(pe.pct);toast('突围失败，货物被劫','err');}
         render();
       },()=>{applyCargoLoss(pe.pct);toast('货物被劫走一部分','err');render();});
   }else if(pe.type==='breakdown'){
     const loss=30;
-    GS.vehicle.durability=Math.max(0,GS.vehicle.durability-loss);
+    const veh = GS.vehicle;
+    veh.durability = Math.max(0, veh.durability-loss);
+    State.set('vehicle', veh);
+    EventBus.emit(EventBus.EVENTS.DAMAGE_TAKEN, {type:'breakdown', loss:loss});
     showModal('🔧 载具故障',`旅途颠簸，车辆故障\n耐久 −${loss} 点（当前 ${Math.round(getDurabilityPct()*100)}%）`,'继续赶路',()=>render());
   }else if(pe.type==='merchant'){
     // v8.10 修复：真正"收购"——按当前城卖出价 ×1.15 全量买断该货物并扣货。
@@ -3338,14 +3386,26 @@ function showPrivateEvent(){
     const sPrice=getSellPrice(GS.location,id,GS.day)||getDayPrice(GS.location,id,GS.day);
     const unit=Math.round(sPrice*1.15);
     const gain=unit*qty;
-    GS.gold+=gain;
-    delete GS.cargo[id];delete GS.buyPrice[id];delete GS.lots[id];
+    State.set('gold', GS.gold+gain);
+    State.batch(function(){
+      var cargo = State.get('cargo') || {};
+      var buyPrice = State.get('buyPrice') || {};
+      var lots = State.get('lots') || {};
+      delete cargo[id];delete buyPrice[id];delete lots[id];
+      State.set('cargo', cargo);
+      State.set('buyPrice', buyPrice);
+      State.set('lots', lots);
+    });
+    EventBus.emit(EventBus.EVENTS.ITEM_SOLD, {itemId:id, qty:qty, revenue:gain});
     showModal('🛒 偶遇行商',`行商看中你的 ${getItem(id).name}×${qty}\n以高于市价 15% 收购（${fmt(unit)} 金/件），入账 ${fmt(gain)} 金币`,'成交',()=>render());
   }else if(pe.type==='repairman'){
-    GS.repairDisc=0.5;
+    State.set('repairDisc', 0.5);
     showModal('🔧 偶遇工匠',`一位走南闯北的工匠为你的车做了检查\n下次维修享受 5 折优惠`,'多谢',()=>render());
   }else if(pe.type==='bump'){
-    GS.vehicle.durability=Math.max(0,GS.vehicle.durability-10);
+    const veh = GS.vehicle;
+    veh.durability = Math.max(0, veh.durability-10);
+    State.set('vehicle', veh);
+    EventBus.emit(EventBus.EVENTS.DAMAGE_TAKEN, {type:'bump', loss:10});
     showModal('🪨 道路颠簸',`一段碎石路颠得车辆吱呀作响\n耐久 −10 点（当前 ${Math.round(getDurabilityPct()*100)}%）`,'继续赶路',()=>render());
   }else if(pe.type==='buyer'){
     // v8.10 修复：真正"收购"——按当前城卖出价 ×1.30 全量买断该货物并扣货（同 merchant，仅玩家自有货物）
@@ -3356,8 +3416,17 @@ function showPrivateEvent(){
     const sPrice=getSellPrice(GS.location,id,GS.day)||getDayPrice(GS.location,id,GS.day);
     const unit=Math.round(sPrice*1.3);
     const gain=unit*qty;
-    GS.gold+=gain;
-    delete GS.cargo[id];delete GS.buyPrice[id];delete GS.lots[id];
+    State.set('gold', GS.gold+gain);
+    State.batch(function(){
+      var cargo = State.get('cargo') || {};
+      var buyPrice = State.get('buyPrice') || {};
+      var lots = State.get('lots') || {};
+      delete cargo[id];delete buyPrice[id];delete lots[id];
+      State.set('cargo', cargo);
+      State.set('buyPrice', buyPrice);
+      State.set('lots', lots);
+    });
+    EventBus.emit(EventBus.EVENTS.ITEM_SOLD, {itemId:id, qty:qty, revenue:gain});
     showModal('💰 货主急购',`${getItem(id).name} 在这边紧俏得很\n对方以高于市价 30% 收购（${fmt(unit)} 金/件）×${qty}，入账 ${fmt(gain)} 金币`,'成交',()=>render());
   }
 }
@@ -3460,51 +3529,73 @@ function toggleAuth(mode){
 }
 function applySaved(saved){
   if(!saved)return;
-  GS.day=typeof saved.day==='number'?saved.day:1; // v8.26：存档无 day（在线剔除后）兜底 1，随后由世界锚点对齐
-  GS.gold=saved.gold;GS.location=saved.location;
-  GS.vehicle=saved.vehicle||{};
-  // 车厢兜底（v7.9.1）：老存档/异常数据无 wagons 时补默认装配，防止容量为 0 无法交易
-  GS.vehicle.wagons=GS.vehicle.wagons||[];
-  if(!GS.vehicle.wagons.length)GS.vehicle.wagons=[{cur:{id:'w0',type:'balanced',lv:1},owned:{balanced_1:true}}];
-  if(!GS.vehicle.core)GS.vehicle.core={lv:0,speed:0,dura:0};
-  GS.cargo=saved.cargo;GS.buyPrice=saved.buyPrice;GS.lots=saved.lots||{};GS.visitStamp=saved.visitStamp||{};
-  GS.cityStocks=saved.cityStocks||initCityStocks();GS.lastStockRefill=saved.lastStockRefill||Date.now();
-  // v8.10（B1）：离线世界持久化——世界起始时间/基础价格/限购随存档恢复，刷新后世界连续不重洗。
-  // 老存档无 gameStartTime 时按已保存天数反推世界起始，保证天数连续；在线模式随后由 applyWorld 以服务器为准覆盖。
-  // v8.18：在线模式世界时间锚点始终以服务器 worldStart 为准——此前存档无 gameStartTime 时
-  // 反推值会把锚点重置为"现在"（新账号 day=1 → 每次刷新天数归 1）。
-  if(ONLINE){ /* 保留 applyWorld 设置的 worldStart，在线统一以服务器为准 */ }
-  else if(saved.gameStartTime)GS.gameStartTime=saved.gameStartTime;
-  else GS.gameStartTime=Date.now()-(Math.max(1,saved.day||1)-1)*(600000/(GS.timeScale||1));
-  if(saved.__basePrices)BASE_PRICES=saved.__basePrices;
-  if(saved.__purchaseLimits)PURCHASE_LIMITS=saved.__purchaseLimits;
-  GS.warehouses=saved.warehouses||{};GS.reputation=saved.reputation||{};
-  GS.stats=saved.stats||{bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0};
-  GS.achievements=saved.achievements||{};GS.visitedCities=saved.visitedCities||[GS.location];
-  GS.materials=saved.materials||{gear:0,repair_kit:0,fuel_tank:0,engine:0};
-  GS.tasks=saved.tasks||{board:[],active:[]};GS.traveling=saved.traveling;
-  GS.pendingEvent=saved.pendingEvent;GS.repairDisc=saved.repairDisc;
-  GS.intel=saved.intel||{unlocked:{},log:[]};GS.knownEvents=saved.knownEvents||{};
-  GS.justArrived=saved.justArrived||false;GS.tutorial=saved.tutorial||{step:6};
-  GS.__savedAt=saved.__savedAt||Date.now();
-  GS.__loaded=true; // v8.24：已从真实存档加载，才允许向服务器写入
-  normalizeVehicleDurability(); // v8.1 耐久公式迁移
-  migrateLots(); // v8.2 货物批次结构迁移
+  State.batch(function(){
+    // v8.26：存档无 day（在线剔除后）兜底 1，随后由世界锚点对齐
+    State.set('day', typeof saved.day==='number'?saved.day:1);
+    State.set('gold', saved.gold);
+    State.set('location', saved.location);
+    State.set('vehicle', saved.vehicle||{});
+    State.set('cargo', saved.cargo);
+    State.set('buyPrice', saved.buyPrice);
+    State.set('lots', saved.lots||{});
+    State.set('visitStamp', saved.visitStamp||{});
+    State.set('cityStocks', saved.cityStocks||initCityStocks());
+    State.set('lastStockRefill', saved.lastStockRefill||Date.now());
+    // v8.10/v8.18：离线世界起始时间恢复
+    if(!ONLINE){
+      if(saved.gameStartTime) State.set('gameStartTime', saved.gameStartTime);
+      else State.set('gameStartTime', Date.now()-(Math.max(1,saved.day||1)-1)*(600000/(State.get('timeScale')||1)));
+    }
+    if(saved.__basePrices)BASE_PRICES=saved.__basePrices;
+    if(saved.__purchaseLimits)PURCHASE_LIMITS=saved.__purchaseLimits;
+    State.set('warehouses', saved.warehouses||{});
+    State.set('reputation', saved.reputation||{});
+    State.set('stats', saved.stats||{bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0});
+    State.set('achievements', saved.achievements||{});
+    State.set('visitedCities', saved.visitedCities||[State.get('location')]);
+    State.set('materials', saved.materials||{gear:0,repair_kit:0,fuel_tank:0,engine:0});
+    State.set('tasks', saved.tasks||{board:[],active:[]});
+    State.set('traveling', saved.traveling);
+    State.set('pendingEvent', saved.pendingEvent);
+    State.set('repairDisc', saved.repairDisc);
+    State.set('intel', saved.intel||{unlocked:{},log:[]});
+    State.set('knownEvents', saved.knownEvents||{});
+    State.set('justArrived', saved.justArrived||false);
+    State.set('tutorial', saved.tutorial||{step:6});
+    State.set('__savedAt', saved.__savedAt||Date.now());
+    State.set('__loaded', true);
+  });
+  // 车厢兜底（v7.9.1）：老存档/异常数据无 wagons 时补默认装配
+  var veh = State.get('vehicle');
+  if(veh){
+    veh.wagons = veh.wagons || [];
+    if(!veh.wagons.length) veh.wagons=[{cur:{id:'w0',type:'balanced',lv:1},owned:{balanced_1:true}}];
+    if(!veh.core) veh.core={lv:0,speed:0,dura:0};
+    State.set('vehicle', veh);
+  }
+  normalizeVehicleDurability();
+  migrateLots();
 }
 function applyWorld(world){
   if(!world)return;
   if(world.basePrices)BASE_PRICES=world.basePrices;
   if(world.purchaseLimits)PURCHASE_LIMITS=world.purchaseLimits;
-  if(world.worldStart)GS.gameStartTime=world.worldStart;
-  if(world.timeScale)GS.timeScale=world.timeScale;
-  if(world.stocks)GS.cityStocks=world.stocks;
-  else if(world.purchaseLimits){ // perPlayer：按服务器限购对齐库存结构（不覆盖玩家已消耗库存，仅补齐缺失项）
-    GS.cityStocks=GS.cityStocks||{};
-    for(const c of CITIES){
-      GS.cityStocks[c.id]=GS.cityStocks[c.id]||{};
-      for(const gid of c.goods){if(GS.cityStocks[c.id][gid]==null)GS.cityStocks[c.id][gid]=world.purchaseLimits[c.id]?.[gid]||100;}
+  State.batch(function(){
+    if(world.worldStart)State.set('gameStartTime', world.worldStart);
+    if(world.timeScale)State.set('timeScale', world.timeScale);
+    if(world.stocks)State.set('cityStocks', world.stocks);
+    else if(world.purchaseLimits){
+      // perPlayer：按服务器限购对齐库存结构（不覆盖玩家已消耗库存，仅补齐缺失项）
+      var stocks = State.get('cityStocks') || {};
+      for(const c of CITIES){
+        stocks[c.id] = stocks[c.id] || {};
+        for(const gid of c.goods){
+          if(stocks[c.id][gid]==null) stocks[c.id][gid] = world.purchaseLimits[c.id]?.[gid]||100;
+        }
+      }
+      State.set('cityStocks', stocks);
     }
-  }
+  });
 }
 // 连接服务器并获取/创建共享世界；成功则开启在线模式
 // v7.4：服务器自动运行世界；库存每人独立、每现实 30 分钟同时刷新；timeScale 世界流速
@@ -3668,20 +3759,40 @@ function doLogout(){
   document.getElementById('auth-err').textContent='';toggleAuth('register');
 }
 // v8.12（D）：重置为全新开局状态（登出/新注册离线账号时调用，杜绝上一账号数据残留）
+// v9.0：使用 State.batch 批量更新，仅触发一次通知
 function resetGameState(){
-  GS.day=1;GS.gold=10000;GS.location='greentown';
-  GS.vehicle={level:1,speed:5,durability:100,durabilityMax:100,passengers:0,core:{lv:0,speed:0,dura:0},wagons:[{cur:{id:'w0',type:'balanced',lv:1},owned:{balanced_1:true}}]};
-  GS.cargo={};GS.buyPrice={};GS.lots={};GS.visitStamp={};GS.cityStocks=initCityStocks();GS.lastStockRefill=Date.now();
-  GS.timeScale=1;GS.gameStartTime=Date.now();
-  GS.warehouses={};GS.reputation={};GS.materials={gear:0,repair_kit:0,fuel_tank:0,engine:0};
-  GS.tasks={board:[],active:[]};GS.traveling=null;GS.pendingEvent=null;GS.repairDisc=null;
-  GS.intel={unlocked:{},log:[]};GS.knownEvents={};
-  GS.justArrived=false;GS.tutorial={step:0};
-  GS.stats={bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0};
-  GS.achievements={};GS.visitedCities=['greentown'];
-  delete GS.__basePrices;delete GS.__purchaseLimits; // 价格/限购为全局世界数据，新档在首次保存时重新附带
-  GS.__savedAt=0; // v8.19：新档不继承旧保存时间戳，避免存档合并误判"本地较新"
-  delete GS.__loaded; // v8.24：重置后未从真实存档加载，禁止向服务器写入初始档
+  State.batch(function(){
+    State.set('day', 1);
+    State.set('gold', 10000);
+    State.set('location', 'greentown');
+    State.set('vehicle', {level:1,speed:5,durability:100,durabilityMax:100,passengers:0,core:{lv:0,speed:0,dura:0},wagons:[{cur:{id:'w0',type:'balanced',lv:1},owned:{balanced_1:true}}]});
+    State.set('cargo', {});
+    State.set('buyPrice', {});
+    State.set('lots', {});
+    State.set('visitStamp', {});
+    State.set('cityStocks', initCityStocks());
+    State.set('lastStockRefill', Date.now());
+    State.set('timeScale', 1);
+    State.set('gameStartTime', Date.now());
+    State.set('warehouses', {});
+    State.set('reputation', {});
+    State.set('materials', {gear:0,repair_kit:0,fuel_tank:0,engine:0});
+    State.set('tasks', {board:[],active:[]});
+    State.set('traveling', null);
+    State.set('pendingEvent', null);
+    State.set('repairDisc', null);
+    State.set('intel', {unlocked:{},log:[]});
+    State.set('knownEvents', {});
+    State.set('justArrived', false);
+    State.set('tutorial', {step:0});
+    State.set('stats', {bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0});
+    State.set('achievements', {});
+    State.set('visitedCities', ['greentown']);
+    State.remove('__basePrices');
+    State.remove('__purchaseLimits');
+    State.set('__savedAt', 0);
+    State.remove('__loaded');
+  });
 }
 
 // ===== 成就系统（v7.5） =====
@@ -3703,7 +3814,7 @@ const ACHIEVEMENTS=[
   {id:'rep_3',icon:'⭐',name:'声望初成',desc:'任一城市声望达到 Lv3',reward:{gold:2000}},
   {id:'rep_3x3',icon:'🌟',name:'声名远扬',desc:'3 座城市声望达到 Lv3',reward:{gold:5000}}
 ];
-function statAdd(k,n){GS.stats=GS.stats||{};GS.stats[k]=(GS.stats[k]||0)+n}
+function statAdd(k,n){var s=State.get('stats')||{};s[k]=(s[k]||0)+n;State.set('stats',s);}
 function achieveProgress(a){
   const p={
     first_income:GS.stats.income/5000,first_task:GS.stats.tasks/1,seller_100:GS.stats.sold/100,
@@ -3723,20 +3834,28 @@ function fmtReward(r){
   return parts.join(' ');
 }
 function unlockAchievement(id){
-  if(!GS.achievements)GS.achievements={};
-  if(GS.achievements[id])return;
-  GS.achievements[id]=Date.now();
+  var achievements = State.get('achievements') || {};
+  if(achievements[id])return;
+  achievements[id] = Date.now();
+  State.set('achievements', achievements);
   const a=ACHIEVEMENTS.find(x=>x.id===id);
   if(!a)return;
   const parts=[];
-  if(a.reward.gold){GS.gold+=a.reward.gold;parts.push('💰'+fmt(a.reward.gold)+'金币');}
-  for(const m in (a.reward.mats||{})){GS.materials[m]=(GS.materials[m]||0)+a.reward.mats[m];parts.push(getMat(m).icon+getMat(m).name+'×'+a.reward.mats[m]);}
+  if(a.reward.gold){State.set('gold', GS.gold+a.reward.gold);parts.push('💰'+fmt(a.reward.gold)+'金币');}
+  if(a.reward.mats){
+    var mats = State.get('materials') || {};
+    for(const m in a.reward.mats){mats[m]=(mats[m]||0)+a.reward.mats[m];parts.push(getMat(m).icon+getMat(m).name+'×'+a.reward.mats[m]);}
+    State.set('materials', mats);
+  }
+  EventBus.emit(EventBus.EVENTS.ACHIEVEMENT, {id:id, name:a.name, reward:a.reward});
   toast(`🏆 成就解锁：${a.name}！${parts.join('、')}`,'ok');
 }
 function checkAchievements(){
-  if(!GS.stats)GS.stats={bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0};
-  if(!GS.achievements)GS.achievements={};
-  if(!GS.visitedCities||!GS.visitedCities.length)GS.visitedCities=[GS.location];
+  State.silent(function(){
+    if(!GS.stats)State.set('stats',{bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0});
+    if(!GS.achievements)State.set('achievements',{});
+    if(!GS.visitedCities||!GS.visitedCities.length)State.set('visitedCities',[GS.location]);
+  });
   for(const a of ACHIEVEMENTS){
     if(GS.achievements[a.id])continue;
     let done;
@@ -4001,8 +4120,8 @@ function initChatFab(){
   if(p&&head)makeDraggable(p,head,{}); // 面板：拖动标题栏移动
 }
 
-// ===== 游戏状态 =====
-const GS={day:1,gold:10000,location:'greentown',vehicle:{level:1,speed:5,durability:100,durabilityMax:100,passengers:0,core:{lv:0,speed:0,dura:0},wagons:[{cur:{id:'w0',type:'balanced',lv:1},owned:{balanced_1:true}}]},cargo:{},buyPrice:{},lots:{},visitStamp:{},cityStocks:initCityStocks(),lastStockRefill:Date.now(),timeScale:1,warehouses:{},reputation:{},materials:{gear:0,repair_kit:0,fuel_tank:0,engine:0},tasks:{board:[],active:[]},traveling:null,pendingEvent:null,repairDisc:null,intel:{unlocked:{},log:[]},knownEvents:{},gameStartTime:Date.now(),justArrived:false,tutorial:{step:0},stats:{bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0},achievements:{},visitedCities:['greentown']};
+// ===== 游戏状态（v9.0：由 state.js 的 State.init() 统一管理） =====
+// 注意：不要再在此处定义 const GS = {...} —— 会遮蔽 state.js 创建的响应式 Proxy
 // 正式：1 游戏日 = 10 分钟（600000ms）；timeScale 为世界时间流速倍率（GM 指令可调）
 function getCurrentGameDay(){const e=(Date.now()-GS.gameStartTime)/(600000/(GS.timeScale||1));return Math.max(1,Math.floor(e)+1)}
 // 库存刷新（v7.4 正式）：每【现实 30 分钟】补满——每个玩家库存独立，仅共享刷新节奏（在线以服务器为准）
@@ -4019,10 +4138,24 @@ function refillStocks(){
 }
 function advanceDay(){
   const nd=getCurrentGameDay();let r=false;
-  if(ONLINE){ // v8.17：在线天数统一由时间锚点主导，杜绝玩家间天数分叉
-    if(nd!==GS.day){r=nd>GS.day;GS.day=nd;}
-  }else if(nd>GS.day){GS.day=nd;r=true}
-  refillStocks();if(GS.traveling&&Date.now()>=GS.traveling.arrivalTime){GS.pendingEvent=GS.traveling.pendingEvent||null;GS.location=GS.traveling.to;GS.traveling=null;GS.justArrived=true;GS.visitStamp[GS.location]=(GS.visitStamp[GS.location]||0)+1;r=true}return r
+  if(ONLINE){
+    if(nd!==GS.day){r=nd>GS.day;State.set('day',nd);}
+  }else if(nd>GS.day){State.set('day',nd);r=true}
+  refillStocks();
+  if(GS.traveling&&Date.now()>=GS.traveling.arrivalTime){
+    State.batch(function(){
+      var travel = GS.traveling;
+      State.set('pendingEvent', travel.pendingEvent||null);
+      State.set('location', travel.to);
+      State.set('traveling', null);
+      State.set('justArrived', true);
+      var vs = State.get('visitStamp') || {};
+      vs[travel.to] = (vs[travel.to]||0)+1;
+      State.set('visitStamp', vs);
+    });
+    r=true;
+  }
+  return r;
 }
 // ===== 车厢系统（v6.10） =====
 // 车辆容量/速度/耐久损耗由所挂载的车厢决定；载具等级=车厢位（Lv1=1 → Lv10=10）
@@ -4101,16 +4234,19 @@ function getCoreDurability(){return (GS.vehicle.core&&GS.vehicle.core.dura||0)*5
 function getDurabilityMax(){return getDurabilityMaxByLevel(GS.vehicle.level)+getCoreDurability()+getWagonHpAll()}
 // 变更耐久上限后刷新：保持当前耐久在 [0, max] 内；added 为新增上限点数（可同步补充当前耐久）
 function refreshDurability(added=0){
-  GS.vehicle.durability=Math.max(0,Math.min(getDurabilityMax(),GS.vehicle.durability+added));
-  GS.vehicle.durabilityMax=getDurabilityMax(); // 保留字段，兼容旧存档
+  var veh = State.get('vehicle') || {};
+  veh.durability=Math.max(0,Math.min(getDurabilityMax(),veh.durability+added));
+  veh.durabilityMax=getDurabilityMax();
+  State.set('vehicle', veh);
 }
-// 加载/初始化后按新耐久公式迁移：原本满耐久则补满，否则钳制到新上限
 function normalizeVehicleDurability(){
-  const oldMax=GS.vehicle.durabilityMax||0;
+  var veh = State.get('vehicle') || {};
+  const oldMax=veh.durabilityMax||0;
   const newMax=getDurabilityMax();
-  if(GS.vehicle.durability>=oldMax){GS.vehicle.durability=newMax;}
-  else{GS.vehicle.durability=Math.min(GS.vehicle.durability,newMax);}
-  GS.vehicle.durabilityMax=newMax;
+  if(veh.durability>=oldMax){veh.durability=newMax;}
+  else{veh.durability=Math.min(veh.durability,newMax);}
+  veh.durabilityMax=newMax;
+  State.set('vehicle', veh);
 }
 function getDurability(){return GS.vehicle.durability}
 function getDurabilityPct(){return Math.min(1,GS.vehicle.durability/getDurabilityMax())}
@@ -4143,23 +4279,33 @@ function getRepairCost(){
 // stamp = 买入时该城的"停留批次号"（GS.visitStamp[city]）；离开城市再返回后 stamp 递增，
 // 旧批次不再属于"同城同次"，从而消除同城倒卖惩罚。
 function migrateLots(){
-  for(const gid of Object.keys(GS.lots||{})){
-    const e=GS.lots[gid];
+  var lots = State.get('lots') || {};
+  var changed = false;
+  for(const gid of Object.keys(lots)){
+    const e=lots[gid];
     if(Array.isArray(e))continue;
     const arr=[];
     for(const cid of Object.keys(e||{})){
       if(e[cid]&&e[cid].qty>0)arr.push({city:cid,qty:e[cid].qty,cost:e[cid].cost||0,stamp:0});
     }
-    if(arr.length)GS.lots[gid]=arr;else delete GS.lots[gid];
+    if(arr.length){lots[gid]=arr;changed=true;}
+    else{delete lots[gid];changed=true;}
   }
+  if(changed)State.set('lots', lots);
 }
 function addLots(gid,city,qty,cost){
-  if(!GS.visitStamp[city])GS.visitStamp[city]=1;
-  const stamp=GS.visitStamp[city];
-  if(!GS.lots[gid])GS.lots[gid]=[];
-  const b=GS.lots[gid].find(x=>x.city===city&&x.stamp===stamp);
+  var lots = State.get('lots') || {};
+  var vs = State.get('visitStamp') || {};
+  if(!vs[city])vs[city]=1;
+  const stamp=vs[city];
+  if(!lots[gid])lots[gid]=[];
+  const b=lots[gid].find(function(x){return x.city===city&&x.stamp===stamp;});
   if(b){b.cost=Math.round((b.cost*b.qty+cost*qty)/(b.qty+qty));b.qty+=qty;}
-  else{GS.lots[gid].push({city,qty,cost,stamp});}
+  else{lots[gid].push({city:city,qty:qty,cost:cost,stamp:stamp});}
+  State.batch(function(){
+    State.set('lots', lots);
+    State.set('visitStamp', vs);
+  });
 }
 // 判断本次卖出是否触发"同城同次 + 本城买入价<卖出价（顺价可套利）"的 60% 惩罚确认
 function getSameVisitArbitrage(gid,qty){
@@ -4182,8 +4328,8 @@ function consumeLots(gid,qty){
   const arbitrage=buy<sPrice;
   const curStamp=GS.visitStamp[GS.location];
   let remaining=qty,revenue=0,sameQty=0;
-  const arr=GS.lots[gid]||[];
-  // 先结算同城同次批次
+  var lots = State.get('lots') || {};
+  const arr = lots[gid] || [];
   for(const b of arr){
     if(remaining<=0)break;
     if(b.city===GS.location&&b.stamp===curStamp){
@@ -4192,16 +4338,16 @@ function consumeLots(gid,qty){
       revenue+=take*rate;sameQty+=take;b.qty-=take;remaining-=take;
     }
   }
-  // 其余批次按正常售价
   for(const b of arr){
     if(remaining<=0)break;
     if(b.qty<=0)continue;
     const take=Math.min(b.qty,remaining);
     revenue+=take*sPrice;b.qty-=take;remaining-=take;
   }
-  GS.lots[gid]=(GS.lots[gid]||[]).filter(b=>b.qty>0);
-  if(!GS.lots[gid].length)delete GS.lots[gid];
-  return{revenue,sameQty,arbitrage};
+  lots[gid]=(arr).filter(function(b){return b.qty>0;});
+  if(!lots[gid].length)delete lots[gid];
+  State.set('lots', lots);
+  return{revenue:revenue,sameQty:sameQty,arbitrage:arbitrage};
 }
 function buyItem(itemId,qty){
   advanceDay();if(GS.traveling)return{ok:false,msg:'旅行中不可交易'};
@@ -4211,14 +4357,28 @@ function buyItem(itemId,qty){
   const total=price*qty;if(GS.gold<total)return{ok:false,msg:'资金不足'};
   const stock=getCurStock(city,itemId);if(qty>stock)return{ok:false,msg:'库存不足'};
   if(getCargoFree()<qty)return{ok:false,msg:'载具容量不足'};
-  GS.gold-=total;const oldQty=GS.cargo[itemId]||0,oldCost=GS.buyPrice[itemId]||0;
-  GS.cargo[itemId]=oldQty+qty;GS.buyPrice[itemId]=Math.round((oldCost*oldQty+total)/(oldQty+qty));
+  const oldQty=GS.cargo[itemId]||0,oldCost=GS.buyPrice[itemId]||0;
+  const newQty=oldQty+qty;
+  const newCost=Math.round((oldCost*oldQty+total)/newQty);
   addLots(itemId,city,qty,price);
-  GS.cityStocks[city][itemId]=stock-qty;
-  const repGain=qty; // v8.11（C2）：交易为主——买入每 1 件 +1 声望（原每10件+1）
+  State.batch(function(){
+    var cargo = State.get('cargo') || {};
+    var buyPrice = State.get('buyPrice') || {};
+    cargo[itemId] = newQty;
+    buyPrice[itemId] = newCost;
+    State.set('cargo', cargo);
+    State.set('buyPrice', buyPrice);
+    var cs = State.get('cityStocks') || {};
+    if(!cs[city])cs[city]={};
+    cs[city][itemId] = stock-qty;
+    State.set('cityStocks', cs);
+  });
+  State.set('gold', GS.gold-total);
+  EventBus.emit(EventBus.EVENTS.ITEM_BOUGHT, {itemId:itemId, qty:qty, price:price, total:total});
+  const repGain=qty;
   addRep(city,repGain);
-  statAdd('bought',qty); // 成就统计
-  if(GS.tutorial&&GS.tutorial.step===1&&ITEMS[itemId].cat==='basic')advanceTutorial(1); // 引导：买入基础物资
+  statAdd('bought',qty);
+  if(GS.tutorial&&GS.tutorial.step===1&&ITEMS[itemId].cat==='basic')advanceTutorial(1);
   return{ok:true,msg:`购入${qty}件${getItem(itemId).name}${repGain>0?` · ⭐本城声望 +${repGain}`:''}`};
 }
 function sellItem(itemId,qty){
@@ -4226,27 +4386,44 @@ function sellItem(itemId,qty){
   const held=GS.cargo[itemId]||0;if(held<qty)return{ok:false,msg:'持有不足'};
   const sPrice=getSellPrice(GS.location,itemId,GS.day);if(!sPrice)return{ok:false,msg:'价格异常'};
   const{revenue,sameQty,arbitrage}=consumeLots(itemId,qty);
-  GS.cargo[itemId]=held-qty;if(GS.cargo[itemId]<=0){delete GS.cargo[itemId];delete GS.buyPrice[itemId]}
-  GS.gold+=revenue;
+  const remaining=held-qty;
+  State.batch(function(){
+    var cargo = State.get('cargo') || {};
+    var buyPrice = State.get('buyPrice') || {};
+    if(remaining<=0){
+      delete cargo[itemId];
+      delete buyPrice[itemId];
+    }else{
+      cargo[itemId]=remaining;
+    }
+    State.set('cargo', cargo);
+    State.set('buyPrice', buyPrice);
+  });
+  State.set('gold', GS.gold+revenue);
+  EventBus.emit(EventBus.EVENTS.ITEM_SOLD, {itemId:itemId, qty:qty, revenue:revenue});
   const repGain=Math.floor(revenue/1000);
-  addRep(GS.location,repGain); // v8.11（C2）：交易为主——卖出每 1000 金 +1 声望（原每5000金+1）
-  statAdd('sold',qty);statAdd('income',revenue); // 成就统计
-  if(GS.tutorial&&GS.tutorial.step===5)advanceTutorial(5); // 引导：卖出物资
+  addRep(GS.location,repGain);
+  statAdd('sold',qty);statAdd('income',revenue);
+  if(GS.tutorial&&GS.tutorial.step===5)advanceTutorial(5);
   const sameNote=sameQty>0?`（其中${sameQty}件同城同次买入按${arbitrage?'当前买入价60%':'买入价80%'}结算）`:'';
   return{ok:true,msg:`售出${qty}件${getItem(itemId).name}，得${fmt(revenue)}金${sameNote}${repGain>0?` · ⭐本城声望 +${repGain}`:''}`};
 }
 function startTravel(destId){
   advanceDay();if(GS.traveling)return{ok:false,msg:'已在旅行中'};
   if(destId===GS.location)return{ok:false,msg:'已在目标城市'};
-  if(destId==='starfall')return{ok:false,msg:'星陨城暂未开放，无法前往'}; // v8.10：特殊城暂不开放
+  if(destId==='starfall')return{ok:false,msg:'星陨城暂未开放，无法前往'};
   const sp=shortestPath(GS.location,destId);if(!sp)return{ok:false,msg:'无可用路径'};
   if(getDurability()<=0)return{ok:false,msg:'车辆耐久不足，请先维修'};
   const realSec=Math.round(sp.distance/getVehicleSpeed()*60);
   const durLoss=calcDurabilityLoss(sp.distance);
-  GS.vehicle.durability=Math.max(0,GS.vehicle.durability-durLoss);
-  GS.traveling={to:destId,startedAt:Date.now(),arrivalTime:Date.now()+realSec*1000,routeDistance:sp.distance,pendingEvent:rollPrivateEvent(sp,destId)};
-  statAdd('travels',1);statAdd('distance',Math.round(sp.distance)); // 成就统计
-  if(GS.tutorial&&GS.tutorial.step===3)advanceTutorial(3); // 引导：前往任务目的地
+  const veh = GS.vehicle;
+  State.batch(function(){
+    veh.durability = Math.max(0, veh.durability-durLoss);
+    State.set('vehicle', veh);
+    State.set('traveling', {to:destId,startedAt:Date.now(),arrivalTime:Date.now()+realSec*1000,routeDistance:sp.distance,pendingEvent:rollPrivateEvent(sp,destId)});
+  });
+  statAdd('travels',1);statAdd('distance',Math.round(sp.distance));
+  if(GS.tutorial&&GS.tutorial.step===3)advanceTutorial(3);
   return{ok:true,msg:`出发！${fmt(sp.distance)}里，耐久-${durLoss}点`};
 }
 // 维修车辆（网页内确认弹窗）
@@ -4261,7 +4438,15 @@ function doRepair(){
   showModal('🔧 维修车辆',
     `当前耐久：${Math.round(getDurabilityPct()*100)}%（${st.label}）\n维修至完整需花费 ${fmt(cost)} 金币${disc<1?'（工匠折扣 5 折）':''}`,
     '确认维修',()=>{
-      GS.gold-=cost;GS.vehicle.durability=getDurabilityMax();GS.repairDisc=null;toast('车辆已维修至完整','ok');render();
+      const veh = GS.vehicle;
+      State.batch(function(){
+        veh.durability = getDurabilityMax();
+        State.set('vehicle', veh);
+        State.set('repairDisc', null);
+      });
+      State.set('gold', GS.gold-cost);
+      EventBus.emit(EventBus.EVENTS.VEHICLE_REPAIR, {cost:cost});
+      toast('车辆已维修至完整','ok');render();
     });
 }
 // ===== 仓库系统（v6.15：分级解锁 + 指数扩建） =====
@@ -4284,8 +4469,10 @@ function doUnlockWarehouse(){
   if(GS.warehouses[GS.location])return toast('本城已有仓库','info');
   const cfg=getWhConfig(GS.location);
   if(GS.gold<cfg.unlock)return toast('资金不足，解锁需 '+fmt(cfg.unlock)+' 金币','err');
-  GS.gold-=cfg.unlock;
-  GS.warehouses[GS.location]={capacity:100,items:{},buildCount:0};
+  var wh = State.get('warehouses') || {};
+  wh[GS.location] = {capacity:100,items:{},buildCount:0};
+  State.set('warehouses', wh);
+  State.set('gold', GS.gold-cfg.unlock);
   toast(`🏪 仓库已解锁！（${getCityName(GS.location)} · 100 格）`,'ok');render();
 }
 function doExpandWarehouse(){
@@ -4293,11 +4480,15 @@ function doExpandWarehouse(){
   const w=GS.warehouses[GS.location];if(!w)return toast('本城无仓库，请先解锁','info');
   const cost=getWhExpandCost(GS.location);
   if(GS.gold<cost)return toast('资金不足，扩建需 '+fmt(cost)+' 金币','err');
-  GS.gold-=cost;w.capacity+=50;w.buildCount=(w.buildCount||0)+1;
+  var wh = State.get('warehouses') || {};
+  wh[GS.location].capacity += 50;
+  wh[GS.location].buildCount = (wh[GS.location].buildCount||0)+1;
+  State.set('warehouses', wh);
+  State.set('gold', GS.gold-cost);
   toast(`🏪 仓库扩建成功！容量 ${w.capacity-50} → ${w.capacity} 格`,'ok');render();
 }
-function doWhIn(itemId,qty){if(GS.traveling)return toast('旅行中不可操作','info');const wh=GS.warehouses[GS.location];if(!wh)return toast('无仓库','err');const held=GS.cargo[itemId]||0;if(qty>held)return;const used=Object.values(wh.items).reduce((a,b)=>a+b,0);if(used+qty>wh.capacity)return toast('仓库满','err');GS.cargo[itemId]=held-qty;if(GS.cargo[itemId]<=0)delete GS.cargo[itemId];wh.items[itemId]=(wh.items[itemId]||0)+qty;toast('已存入仓库','ok');render()}
-function doWhOut(itemId,qty){if(GS.traveling)return toast('旅行中不可操作','info');const wh=GS.warehouses[GS.location];if(!wh||!(wh.items[itemId])||wh.items[itemId]<qty)return toast('库存不足','err');if(getCargoFree()<qty)return toast('载具满','err');wh.items[itemId]-=qty;if(wh.items[itemId]<=0)delete wh.items[itemId];GS.cargo[itemId]=(GS.cargo[itemId]||0)+qty;toast('已装入载具','ok');render()}
+function doWhIn(itemId,qty){if(GS.traveling)return toast('旅行中不可操作','info');const wh=GS.warehouses[GS.location];if(!wh)return toast('无仓库','err');const held=GS.cargo[itemId]||0;if(qty>held)return;const used=Object.values(wh.items).reduce((a,b)=>a+b,0);if(used+qty>wh.capacity)return toast('仓库满','err');State.batch(function(){var cargo=State.get('cargo')||{};var warehouses=State.get('warehouses')||{};var w=warehouses[GS.location];cargo[itemId]=held-qty;if(cargo[itemId]<=0)delete cargo[itemId];w.items[itemId]=(w.items[itemId]||0)+qty;State.set('cargo',cargo);State.set('warehouses',warehouses);});toast('已存入仓库','ok');render()}
+function doWhOut(itemId,qty){if(GS.traveling)return toast('旅行中不可操作','info');const wh=GS.warehouses[GS.location];if(!wh||!(wh.items[itemId])||wh.items[itemId]<qty)return toast('库存不足','err');if(getCargoFree()<qty)return toast('载具满','err');State.batch(function(){var cargo=State.get('cargo')||{};var warehouses=State.get('warehouses')||{};var w=warehouses[GS.location];w.items[itemId]-=qty;if(w.items[itemId]<=0)delete w.items[itemId];cargo[itemId]=(cargo[itemId]||0)+qty;State.set('cargo',cargo);State.set('warehouses',warehouses);});toast('已装入载具','ok');render()}
 
 // ===== 升级素材道具（任务系统产出，用于载具升级） =====
 const MATERIALS={gear:{name:'精密齿轮',icon:'⚙️'},repair_kit:{name:'维修套件',icon:'🧰'},fuel_tank:{name:'燃油舱',icon:'🛢️'},engine:{name:'引擎核心',icon:'🔩'}};
@@ -4333,10 +4524,12 @@ function getRepExpNeed(cityId){
 }
 function addRep(cityId,exp){
   if(exp<=0)return;
-  if(!GS.reputation[cityId])GS.reputation[cityId]={level:0,exp:0};
-  const r=GS.reputation[cityId];r.exp+=exp;let ups=0;
+  var rep = State.get('reputation') || {};
+  if(!rep[cityId])rep[cityId]={level:0,exp:0};
+  const r=rep[cityId];r.exp+=exp;let ups=0;
   while(r.exp>=getRepExpNeed(cityId)){r.exp-=getRepExpNeed(cityId);r.level++;ups++}
-  if(ups>0){statAdd('reps',ups);toast(`⭐ ${getCityName(cityId)}声望提升至 Lv${r.level}！`,'ok');} // 成就统计
+  State.set('reputation', rep);
+  if(ups>0){statAdd('reps',ups);EventBus.emit(EventBus.EVENTS.REPUTATION_GAIN,{cityId:cityId,level:r.level});toast(`⭐ ${getCityName(cityId)}声望提升至 Lv${r.level}！`,'ok');}
 }
 // 本城可购物资 = 基础清单 + 声望逐步解锁的本城特产（REP_GOODS）
 function getBuyableGoods(cityId){
@@ -4458,16 +4651,20 @@ function rollTask(cityId,seq){
 }
 // 任务板 slot：{id, state:'task'|'empty', t, refreshCount}
 function genTasks(cityId){
-  GS.tasks.board=[];
-  for(let i=0;i<5;i++)GS.tasks.board.push({id:'s'+Date.now()+i,state:'task',t:rollTask(cityId,i),refreshCount:0});
+  var tasks = State.get('tasks') || {};
+  tasks.board = [];
+  for(let i=0;i<5;i++)tasks.board.push({id:'s'+Date.now()+i,state:'task',t:rollTask(cityId,i),refreshCount:0});
+  State.set('tasks', tasks);
 }
 // v8.14：任务板兜底——注册/登录/存档迁移后 board 可能为空（被服务器空存档或 resetGameState 清空），
 // 渲染前若为空则补足 5 个任务位，避免新手引导卡在"今日暂无委托"。
 function ensureTaskBoard(cityId){
-  if(!GS.tasks)GS.tasks={board:[],active:[]};
+  if(!GS.tasks)State.set('tasks',{board:[],active:[]});
   if(!Array.isArray(GS.tasks.board)||GS.tasks.board.length===0){
-    GS.tasks.board=[];
-    for(let i=0;i<5;i++)GS.tasks.board.push({id:'s'+Date.now()+i,state:'task',t:rollTask(cityId,i),refreshCount:0});
+    var tasks = State.get('tasks') || {};
+    tasks.board = [];
+    for(let i=0;i<5;i++)tasks.board.push({id:'s'+Date.now()+i,state:'task',t:rollTask(cityId,i),refreshCount:0});
+    State.set('tasks', tasks);
   }
 }
 function getSlotCost(slot){return(slot.refreshCount||0)<2?0:1000*Math.pow(2,(slot.refreshCount||0)-2)}
@@ -4479,7 +4676,7 @@ function doRollSlot(slot){
   const cost=getSlotCost(slot);
   if(cost>0){
     if(GS.gold<cost)return toast('资金不足，刷新需 '+fmt(cost)+' 金币','err');
-    GS.gold-=cost;
+    State.set('gold', GS.gold-cost);
   }
   slot.refreshCount=(slot.refreshCount||0)+1;
   slot.state='task';
@@ -4508,32 +4705,51 @@ function acceptTask(sid){
   const t=slot.t;
   if(t.capType==='cargo'&&getCargoFree()<t.qty)return toast('货舱空间不足，无法装载任务货物','err');
   if(t.capType==='pass'&&getPassFree()<t.qty)return toast('旅客仓空间不足，无法载客','err');
-  GS.tasks.active.push(t);
-  slot.state='empty';slot.t=null; // 任务位不消失，清空内容；刷新次数继承给"查看更多"
-  if(GS.tutorial&&GS.tutorial.step===2)advanceTutorial(2); // 引导：接取任务
-  toast(`已接取任务：${t.desc}`,'ok');render();saveNow(); // v8.16：接任务立即保存，刷新不丢
+  State.batch(function(){
+    var tasks = State.get('tasks') || {};
+    tasks.active = tasks.active || [];
+    tasks.active.push(t);
+    var board = tasks.board || [];
+    var bs = board.find(function(x){return x.id===sid;});
+    if(bs){bs.state='empty';bs.t=null;}
+    State.set('tasks', tasks);
+  });
+  if(GS.tutorial&&GS.tutorial.step===2)advanceTutorial(2);
+  toast(`已接取任务：${t.desc}`,'ok');render();saveNow();
 }
 function abandonTask(tid){
   if(GS.traveling)return toast('旅行中不可操作','info');
   const t=(GS.tasks.active||[]).find(x=>x.id===tid);if(!t)return;
   showModal('🚫 放弃任务',`确定放弃「${t.desc}」吗？\n${t.capType==='pass'?'商客将下车，旅客仓空间会释放。':'任务货物将被清空，货舱空间会释放。'}`,
     '确认放弃',()=>{
-      GS.tasks.active=GS.tasks.active.filter(x=>x.id!==tid);
-      toast('任务已放弃','info');render();saveNow(); // v8.16：放弃任务立即保存
+      var tasks = State.get('tasks') || {};
+      tasks.active = (tasks.active||[]).filter(function(x){return x.id!==tid;});
+      State.set('tasks', tasks);
+      toast('任务已放弃','info');render();saveNow();
     });
 }
 function completeTask(tid){
   if(GS.traveling)return toast('旅行中不可操作','info');
   const t=(GS.tasks.active||[]).find(x=>x.id===tid);if(!t)return;
   if(!t.delivered)return toast('尚未抵达目的地，无法领取奖励','info');
-  GS.gold+=t.rewardGold;addRep(t.from,t.rewardRep);
-  for(const m of t.rewardMats||[])GS.materials[m.id]=(GS.materials[m.id]||0)+m.qty;
+  State.set('gold', GS.gold+t.rewardGold);
+  addRep(t.from,t.rewardRep);
+  if(t.rewardMats&&t.rewardMats.length){
+    var mats = State.get('materials') || {};
+    for(const m of t.rewardMats)mats[m.id]=(mats[m.id]||0)+m.qty;
+    State.set('materials', mats);
+  }
+  State.batch(function(){
+    var tasks = State.get('tasks') || {};
+    tasks.active = (tasks.active||[]).filter(x=>x.id!==tid);
+    State.set('tasks', tasks);
+  });
+  EventBus.emit(EventBus.EVENTS.TASK_COMPLETE, {taskId:tid, rewardGold:t.rewardGold});
   const matTxt=(t.rewardMats||[]).map(m=>`${getMat(m.id).icon}${getMat(m.id).name}×${m.qty}`).join('、');
-  statAdd('tasks',1); // 成就统计
-  if(GS.tutorial&&GS.tutorial.step===4)advanceTutorial(4); // 引导：完成任务
+  statAdd('tasks',1);
+  if(GS.tutorial&&GS.tutorial.step===4)advanceTutorial(4);
   toast(`任务完成！+${fmt(t.rewardGold)}金 ⭐${getCityName(t.from)}声望+${t.rewardRep}${matTxt?' '+matTxt:''}`,'ok');
-  GS.tasks.active=GS.tasks.active.filter(x=>x.id!==tid);
-  render();saveNow(); // v8.16：领取奖励后立即保存
+  render();saveNow();
 }
 // 生成任务卡（mode='active' 已接 / 'open' 可接；open 需传 slotId 用于刷新/接取）
 function taskCardHtml(t,mode,slotId){
@@ -4606,10 +4822,19 @@ function doUpgradeVehicle(){
   showModal('🚛 载具升级',
     `升级至 Lv${lv+1}\n车厢位 ${getWagonSlots()} → ${newSlots} · 耐久上限 ${oldMax} → ${newMax}\n消耗：${fmt(cost.gold)} 金币 · ⚙️精密齿轮×${cost.gear}${cost.repair_kit?' · 🧰维修套件×'+cost.repair_kit:''}`,
     '确认升级',()=>{
-      GS.gold-=cost.gold;GS.materials.gear-=cost.gear;GS.materials.repair_kit-=cost.repair_kit;
-      GS.vehicle.level++;
-      while(GS.vehicle.wagons.length<getWagonSlots())GS.vehicle.wagons.push({cur:null,owned:{}}); // 新车厢位（空，独立解锁）
-      GS.vehicle.durability=getDurabilityMax();GS.vehicle.durabilityMax=getDurabilityMax();
+      var veh = GS.vehicle;
+      veh.level++;
+      while(veh.wagons.length<getWagonSlots())veh.wagons.push({cur:null,owned:{}});
+      veh.durability=getDurabilityMax();veh.durabilityMax=getDurabilityMax();
+      var mats = State.get('materials') || {};
+      mats.gear = (mats.gear||0) - cost.gear;
+      mats.repair_kit = (mats.repair_kit||0) - cost.repair_kit;
+      State.batch(function(){
+        State.set('vehicle', veh);
+        State.set('materials', mats);
+      });
+      State.set('gold', GS.gold-cost.gold);
+      statAdd('upgrades',1);
       toast('🚛 载具升级成功！车厢位 +1 · 耐久上限 +20','ok');render();
     });
 }
@@ -4626,13 +4851,15 @@ const TUTORIAL_STEPS=[
 // 步骤推进：仅当当前步骤匹配时前进（顺序教学）
 function advanceTutorial(n){
   if(!GS.tutorial||GS.tutorial.step!==n)return;
-  GS.tutorial.step=n+1;
-  if(GS.tutorial.step>=6){GS.tutorial.step=6;toast('🎓 新手教程完成！愿商路顺遂','ok');}
-  else toast(`✅ 完成「${TUTORIAL_STEPS[n].title}」，下一步：${TUTORIAL_STEPS[GS.tutorial.step].title}`,'ok');
-  saveNow(); // v8.16：引导进度立即保存，未完成引导时刷新不重置
+  var tut = State.get('tutorial') || {};
+  tut.step = n+1;
+  if(tut.step>=6){tut.step=6;toast('🎓 新手教程完成！愿商路顺遂','ok');}
+  else toast(`✅ 完成「${TUTORIAL_STEPS[n].title}」，下一步：${TUTORIAL_STEPS[tut.step].title}`,'ok');
+  State.set('tutorial', tut);
+  saveNow();
 }
-function startTutorial(){GS.tutorial=GS.tutorial||{step:0};GS.tutorial.step=1;render();toast('🎓 新手引导开始：购买基础物资','ok');}
-function skipTutorial(){GS.tutorial=GS.tutorial||{step:0};GS.tutorial.step=6;render();toast('已跳过新手引导，可在任意城市自由探索','info');}
+function startTutorial(){var tut=State.get('tutorial')||{step:0};tut.step=1;State.set('tutorial',tut);render();toast('🎓 新手引导开始：购买基础物资','ok');}
+function skipTutorial(){var tut=State.get('tutorial')||{step:0};tut.step=6;State.set('tutorial',tut);render();toast('已跳过新手引导，可在任意城市自由探索','info');}
 function goTutorial(){
   const s=TUTORIAL_STEPS[GS.tutorial.step];
   if(s&&s.tab){const b=document.querySelector('nav button[data-tab="'+s.tab+'"]');if(b)b.click();}
@@ -4694,11 +4921,19 @@ function renderContent(){
   }
   bindEvents();
   if(GS.justArrived){
-    GS.justArrived=false;markCityAsKnown(GS.location);
-    if(!GS.visitedCities.includes(GS.location)){GS.visitedCities.push(GS.location);statAdd('visits',1);} // 成就统计
-    GS.intel.log=[{cls:'sys',text:`已抵达${getCityName(GS.location)}。本城酒馆的消息自成一路，离开这座城市后打听记录即会清空。`}];
-    // 抵达任务目的地：自动完成（任务货物/旅客容量自动释放），随后可领取奖励
-    for(const t2 of (GS.tasks.active||[])){if(t2.to===GS.location&&!t2.delivered)t2.delivered=true;}
+    State.batch(function(){
+      State.set('justArrived', false);
+      markCityAsKnown(GS.location);
+      var visited = State.get('visitedCities') || [];
+      if(!visited.includes(GS.location)){visited.push(GS.location);State.set('visitedCities', visited);statAdd('visits',1);}
+      var intel = State.get('intel') || {};
+      intel.log = [{cls:'sys',text:`已抵达${getCityName(GS.location)}。本城酒馆的消息自成一路，离开这座城市后打听记录即会清空。`}];
+      State.set('intel', intel);
+      var tasks = State.get('tasks') || {};
+      tasks.active = tasks.active || [];
+      for(const t2 of tasks.active){if(t2.to===GS.location&&!t2.delivered)t2.delivered=true;}
+      State.set('tasks', tasks);
+    });
     genTasks(GS.location);
     showArrivalOverlay();setTimeout(()=>{document.querySelector('nav button[data-tab="city"]')?.click();setTimeout(showPrivateEvent,500);},600);
   }
@@ -5348,16 +5583,19 @@ function backToWagonTypes(i){
 function buyWagon(i,type,lv){
   if(i<0||i>=getWagonSlots())return toast('车厢位不存在','err');
   if(isWagonLocked(i))return toast('该车厢正为已接任务提供容量，暂不可更换','err');
-  const slot=GS.vehicle.wagons[i]||{cur:null,owned:{}};
-  if(!GS.vehicle.wagons[i])GS.vehicle.wagons[i]=slot;
+  var veh = State.get('vehicle') || {};
+  veh.wagons = veh.wagons || [];
+  const slot=veh.wagons[i]||{cur:null,owned:{}};
+  if(!veh.wagons[i])veh.wagons[i]=slot;
   const key=wagonKey(type,lv);
-  // 超载保护：装配后容量须能容纳现有货物与旅客（含已接任务占用）
   const fit=fitAfterSlot(i,type,lv);
   if(getUsedCargo()+getTaskCargoUsed()>fit.cap)return toast('货舱空间不足：现有货物超出该车厢容量，请先转移/卖出','err');
   if(getPassUsed()+getTaskPassUsed()>fit.pass)return toast('旅客仓空间不足：现有旅客超出该车厢容量，请先完成任务','err');
   const hp=WAGON_TYPES[type].hp[lv-1]||0;
   if(isOwned(slot,type,lv)){
     slot.cur={id:'w'+Date.now()+i,type,lv};
+    veh.wagons[i] = slot;
+    State.set('vehicle', veh);
     refreshDurability(hp);
     document.querySelectorAll('.modal-overlay').forEach(o=>o.remove());
     toast(`✔ 免费装配 ${WAGON_TYPES[type].name} Lv${lv}（已解锁）`,'ok');render();
@@ -5365,11 +5603,13 @@ function buyWagon(i,type,lv){
   }
   const cost=getWagonCost(type,lv);
   if(GS.gold<cost)return toast('资金不足，解锁需 '+fmt(cost)+' 金币','err');
-  GS.gold-=cost;
   slot.owned=slot.owned||{};slot.owned[key]=true;
   slot.cur={id:'w'+Date.now()+i,type,lv};
+  veh.wagons[i] = slot;
+  State.set('vehicle', veh);
+  State.set('gold', GS.gold-cost);
   refreshDurability(hp);
-  statAdd('upgrades',1); // 成就统计
+  statAdd('upgrades',1);
   document.querySelectorAll('.modal-overlay').forEach(o=>o.remove());
   toast(`已解锁并装配 ${WAGON_TYPES[type].name} Lv${lv}`,'ok');render();
 }
@@ -5377,21 +5617,26 @@ function buyWagon(i,type,lv){
 function unloadWagon(i){
   if(GS.traveling)return toast('旅行中不可操作','info');
   if(getWagons().length<=1)return toast('载具必须保留至少一个车厢','err');
-  const w=GS.vehicle.wagons[i];
+  var veh = State.get('vehicle') || {};
+  veh.wagons = veh.wagons || [];
+  const w=veh.wagons[i];
   if(!w||!w.cur)return;
   if(isWagonLocked(i))return toast('该车厢正为已接任务提供容量，暂不可卸载','err');
-  // 超载保护：卸下后剩余容量须能容纳现有货物与旅客（含已接任务占用）
   const fit=fitAfterSlot(i);
   if(getUsedCargo()+getTaskCargoUsed()>fit.cap)return toast('货舱空间不足：请先转移/卖出货物再卸下车厢','err');
   if(getPassUsed()+getTaskPassUsed()>fit.pass)return toast('旅客仓空间不足：请先完成任务让旅客下车再卸下车厢','err');
   w.cur=null;
-  refreshDurability(0); // 卸下后耐久上限下降，当前耐久钳制到新上限
+  veh.wagons[i] = w;
+  State.set('vehicle', veh);
+  refreshDurability(0);
   toast('车厢已卸下（已解锁的车厢保留，可免费重新装配）','info');render();
 }
 // 载具核心：通过提交特殊道具对速度/耐久进行额外提升（材料数量随核心等级递增）
 function openCoreUpgrade(){
   if(GS.traveling)return toast('旅行中不可操作','info');
-  const core=GS.vehicle.core||{lv:0,speed:0,dura:0};
+  var veh = State.get('vehicle') || {};
+  veh.core = veh.core || {lv:0,speed:0,dura:0};
+  const core=veh.core;
   const n=core.lv+1;
   const has=(m)=>GS.materials[m]||0;
   showChoice('⚙️ 载具核心',
@@ -5400,17 +5645,27 @@ function openCoreUpgrade(){
     `🛡 强化（耐久上限+50：🧰×${n} + 🔩×${n}）`,
     ()=>{
       if(has('fuel_tank')<n||has('engine')<n)return toast('材料不足，完成高稀有度任务可获得','err');
-      GS.materials.fuel_tank-=n;GS.materials.engine-=n;
-      GS.vehicle.core.lv++;GS.vehicle.core.speed++;
-      statAdd('upgrades',1); // 成就统计
+      var mats = State.get('materials') || {};
+      mats.fuel_tank -= n; mats.engine -= n;
+      veh.core.lv++; veh.core.speed++;
+      State.batch(function(){
+        State.set('vehicle', veh);
+        State.set('materials', mats);
+      });
+      statAdd('upgrades',1);
       toast('⚡ 载具核心升级：基础速度 +1','ok');render();
     },
     ()=>{
       if(has('repair_kit')<n||has('engine')<n)return toast('材料不足，完成高稀有度任务可获得','err');
-      GS.materials.repair_kit-=n;GS.materials.engine-=n;
-      GS.vehicle.core.lv++;GS.vehicle.core.dura++;
-      refreshDurability(50); // 核心强化 +50 耐久上限，同时补充当前耐久
-      statAdd('upgrades',1); // 成就统计
+      var mats2 = State.get('materials') || {};
+      mats2.repair_kit -= n; mats2.engine -= n;
+      veh.core.lv++; veh.core.dura++;
+      State.batch(function(){
+        State.set('vehicle', veh);
+        State.set('materials', mats2);
+      });
+      refreshDurability(50);
+      statAdd('upgrades',1);
       toast('🛡 载具核心升级：耐久上限 +50','ok');render();
     }
   );
@@ -5438,8 +5693,13 @@ function doUnlockIntel(){
   showModal('🔍 情报所 · 解锁',
     `花费 ${fmt(INTEL_COST)} 金币解锁${getCityName(GS.location)}的情报所\n每座城市的情报所独立解锁；解锁后可向酒馆打听消息（${fmt(MSG_COST)} 金币/条）\n本城声望越高，打听到的消息越珍贵`,
     '确认解锁',()=>{
-      GS.gold-=INTEL_COST;GS.intel.unlocked[GS.location]=true;
-      GS.intel.log.push({cls:'sys',text:`${getCityName(GS.location)}的情报所已解锁。酒馆掌柜笑眯眯地应下，今后每回 ${fmt(MSG_COST)} 金币，替你打听四方风声。`});
+      var intel = State.get('intel') || {};
+      intel.unlocked = intel.unlocked || {};
+      intel.unlocked[GS.location] = true;
+      intel.log = intel.log || [];
+      intel.log.push({cls:'sys',text:`${getCityName(GS.location)}的情报所已解锁。酒馆掌柜笑眯眯地应下，今后每回 ${fmt(MSG_COST)} 金币，替你打听四方风声。`});
+      State.set('intel', intel);
+      State.set('gold', GS.gold-INTEL_COST);
       toast('本城情报所已解锁','ok');render();
     });
 }
@@ -5544,7 +5804,7 @@ function doAskIntel(){
   if(!isIntelUnlocked(GS.location))return toast('请先解锁本城情报所','err');
   if(GS.traveling)return toast('旅行中不可操作','info');
   if(GS.gold<MSG_COST)return toast('资金不足，打听消息需 '+fmt(MSG_COST)+' 金币','err');
-  GS.gold-=MSG_COST;
+  State.set('gold', GS.gold-MSG_COST);
   // 本城声望每 5 级 +1 条消息
   const count=1+Math.floor(getRepLevel(GS.location)/5);
   for(let i=0;i<count;i++){
