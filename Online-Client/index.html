@@ -6,31 +6,47 @@
 <style>
 /* ===== 主题 ===== */
 :root{
-  --bg:#0f1724; --panel:#192437; --card:#1e3048; --cardHover:#25405e;
-  --accent:#ff6b6b; --gold:#f0c040; --green:#26d98b; --red:#ff5e5e;
-  --text:#e2e6ed; --text2:#8b95a5; --text3:#566270;
-  --buy:#26d98b; --sell:#ff9f43; --travel:#5b9bd5;
+  --bg:#EEECEA; --panel:#E4DFDA; --card:#F7F5F2; --cardHover:#EAE4DD;
+  --accent:#ff6b6b; --gold:#c8862c; --green:#2f9e6b; --red:#d9534f;
+  --text:#1A1A1A; --text2:#6B6058; --text3:#A59B94;
+  --buy:#2f9e6b; --sell:#c9772f; --travel:#4d7fa3;
   --village:#5a8a5a; --town:#4a7a9a; --capital:#c09840; --frontier:#6a5070; --special:#8a5a8a;
-  --radius:10px; --radius-sm:6px; --shadow:0 2px 12px rgba(0,0,0,0.3);
+  --radius:10px; --radius-sm:6px; --shadow:0 2px 12px rgba(26,26,26,0.10);
 }
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI',-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
 #app{max-width:1300px;margin:0 auto;padding:0 8px 20px}
 
 /* ===== 顶部栏 ===== */
-#topbar{display:flex;align-items:center;gap:16px;padding:8px 16px;background:var(--panel);border-radius:0 0 var(--radius) var(--radius);margin-bottom:8px;font-size:13px;position:sticky;top:0;z-index:100;box-shadow:var(--shadow);flex-wrap:wrap}
-#topbar .t-stat{display:flex;align-items:center;gap:5px;white-space:nowrap}
-#topbar .t-label{color:var(--text3);font-size:11px}
-#topbar .t-val{color:var(--text);font-weight:600}
-#topbar .t-gold{color:var(--gold);font-weight:700;font-size:15px}
-#topbar .t-loc{color:var(--text);font-weight:600;display:flex;align-items:center;gap:4px}
-#topbar .t-loc .dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block}
+#topbar{position:sticky;top:0;z-index:100;padding:10px 14px 8px;background:var(--panel);border-radius:0 0 var(--radius) var(--radius);margin-bottom:8px;box-shadow:var(--shadow)}
+.topbar-wrap{position:relative}
+.tb-row{display:grid;grid-template-columns:repeat(4,1fr);align-items:center;gap:4px}
+.tb-row+.tb-row{margin-top:8px;padding-top:8px;border-top:1px solid rgba(165,155,148,0.35)}
+.tb-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:0;text-align:center}
+.tb-cell.tb-loc{grid-column:span 2}
+.tb-label{color:var(--text3);font-size:11px}
+.tb-val{color:var(--text);font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.tb-gold{color:var(--gold);font-weight:700;font-size:15px}
+.tb-loc-name{color:var(--text);font-weight:700;font-size:15px;display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.tb-loc-name .dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;flex-shrink:0}
+.tb-travel{color:var(--travel);font-size:11px;animation:pulse 1.5s infinite;white-space:nowrap}
+@media (max-width:480px){
+  .tb-val,.tb-loc-name{font-size:12px}
+  .tb-gold{font-size:13px}
+  .tb-label{font-size:10px}
+}
+/*顶栏遗留清理标记*/
+#topbar .t-user{font-size:11px;color:var(--text2);white-space:nowrap}
+/* 标记 B */
+/* 移除: .t-gold (legacy) */
+/* 移除: .t-loc (legacy) */
+/* 移除: .t-loc .dot (legacy) */
 #topbar .t-travel{color:var(--travel);animation:pulse 1.5s infinite}
 #topbar .t-user{font-size:12px;color:var(--text2);white-space:nowrap}
 #topbar .t-user b{color:var(--gold);font-weight:600}
 #topbar .t-logout{margin-left:2px;padding:2px 9px;font-size:11px;border:1px solid rgba(240,120,120,.4);border-radius:6px;background:rgba(240,120,120,.08);color:#f0a0a0;cursor:pointer}
 #topbar .t-logout:hover{background:rgba(240,120,120,.22);color:#fff}
-#topbar .t-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+#topbar .t-right{position:absolute;top:6px;right:10px;display:flex;align-items:center;gap:8px}
 @keyframes pulse{50%{opacity:0.5}}
 @keyframes fadeIn{from{opacity:0}}@keyframes scaleIn{from{transform:scale(0.8);opacity:0}to{transform:scale(1);opacity:1}}
 #topbar .sep{width:1px;height:20px;background:var(--text3);opacity:0.3}
@@ -317,7 +333,18 @@ h3{font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
 <div id="app">
 <div id="toast-container"></div>
 <div id="topbar">
-    <span class="t-stat" title="网络状态"><span class="t-label">⚡</span><span class="t-val">⚪</span></span>
+    <div class="tb-row">
+      <div class="tb-cell" title="网络状态"><span class="tb-label">⚡</span><span class="tb-val">⚪</span></div>
+      <div class="tb-cell tb-loc"><span class="tb-loc-name"><span class="dot"></span>绿田村</span></div>
+      <div class="tb-cell"><span class="tb-label">Day</span><span class="tb-val">1</span></div>
+    </div>
+    <div class="tb-row">
+      <div class="tb-cell"><span class="tb-label">🚛 货舱</span><span class="tb-val">0/30</span></div>
+      <div class="tb-cell"><span class="tb-label">🧳 旅客</span><span class="tb-val">0/4</span></div>
+      <div class="tb-cell"><span class="tb-label">⭐ 本城声望</span><span class="tb-val" style="color:var(--gold)">Lv0</span></div>
+      <div class="tb-cell"><span class="tb-gold">💰 10,000</span></div>
+    </div>
+    <span class="t-right"><span class="t-user" title="当前账号">👤 <b></b></span></span>
     <span class="sep"></span>
     <span class="t-stat"><span class="t-label">Day</span><span class="t-val">1</span></span>
     <span class="sep"></span>
