@@ -359,3 +359,8 @@ window.shortestPath = shortestPath;
 - `GS`
 
 仍然是最高风险区域，应放到后面处理。
+# 统一客户端入口补充说明
+
+在线与单机现共享 `Online-Client/index.html` 和同一套 `src/` 模块，不再维护 `单机版/` 副本。运行模式由 `src/app/runtime.js` 集中判定：玩法模块保持共用，差异只允许出现在持久化、聊天、排行榜和服务端管理能力边界。
+
+新增模块或迁移现有逻辑时，不得复制一份“单机实现”；应通过 `Runtime`、`Capabilities` 或统一适配接口表达差异。

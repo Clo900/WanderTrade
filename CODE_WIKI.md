@@ -36,7 +36,7 @@
   - [8.1 本机游玩](#81-本机游玩)
   - [8.2 局域网联机](#82-局域网联机)
   - [8.3 互联网联机](#83-互联网联机)
-  - [8.4 单机版](#84-单机版)
+  - [8.4 单机模式（统一入口）](#84-单机模式统一入口)
 - [9. 开发与部署指南](#9-开发与部署指南)
   - [9.1 JS 模块拆分](#91-js-模块拆分)
   - [9.2 新增事件指南](#92-新增事件指南)
@@ -133,10 +133,14 @@
 
 ```
 e:\WanderTrade\
-├── Online-Client/                  # 在线版客户端
+├── Online-Client/                  # 唯一客户端入口（在线 / 单机两种模式）
 │   ├── index.html                  # 主游戏文件 (含内联 CSS + JS)
 │   └── src/
+│       ├── app/
+│       │   └── runtime.js          # 运行模式与能力判定
 │       ├── core/
+│       │   ├── state.js            # 状态容器与路径订阅
+│       │   ├── event-bus.js        # 瞬时业务事件总线
 │       │   ├── data.js             # 静态数据 (城市/道路/物资)
 │       │   └── ui-primitives.js    # UI 基础组件 (toast/modal)
 │       ├── economy/
@@ -144,10 +148,6 @@ e:\WanderTrade\
 │       │   └── events.js          # 事件系统 (42 条公共事件)
 │       └── gameplay/
 │           └── pathing-core.js    # 寻路核心 (Dijkstra)
-│
-├── 单机版/                         # 单机版副本 (无需服务器)
-│   ├── index.html                  # 单机版游戏文件
-│   └── README.txt                  # 单机版说明
 │
 ├── Docs/
 │   └── JS模块拆分首批迁移清单.md    # 模块拆分设计文档
@@ -558,7 +558,7 @@ server.ps1 [-Port 8080] [-Lan]
 ```
 
 - **在线模式**：客户端从服务器获取 `worldStart`，所有玩家时间完全同步
-- **离线模式**：单机版从存档 `gameStartTime` 恢复
+- **单机模式**：统一客户端从本地存档 `gameStartTime` 恢复
 
 ### 6.2 价格引擎
 
@@ -694,7 +694,7 @@ server.ps1 [-Port 8080] [-Lan]
 | 📜 任务 | `tasks` | 累计完成任务数 |
 | ⭐ 声望 | `rep` | 总声望等级 |
 
-在线版为全服 Top 20，单机版为本机多账号。
+在线模式为全服 Top 20，单机模式为本机多账号。
 
 ### 6.9 聊天室
 
@@ -810,14 +810,18 @@ powershell -File server.ps1 -Lan
 **方案 B：内网穿透工具**
 - 花生壳 / frp / ngrok / Tailscale
 
-### 8.4 单机版
+### 8.4 单机模式（统一入口）
 
 ```
 # 直接双击打开
-单机版/index.html
+Online-Client/index.html
 
 # 无需服务器，存档存在浏览器 localStorage
 ```
+
+运行模式由 `Online-Client/src/app/runtime.js` 唯一判定：`file://` 自动进入单机模式，HTTP(S) 默认进入在线模式，也可以用 `?mode=standalone` 或 `?mode=online` 显式指定。在线连接失败不会静默回退并写入本地档，必须由玩家明确选择切换模式。
+
+在线和单机共享全部玩法、UI、状态容器与事件模块，差异仅保留在持久化、聊天、排行榜和 GM 能力上。顶栏的“导出/导入”用于迁移单机 JSON 存档。
 
 ---
 
@@ -825,10 +829,13 @@ powershell -File server.ps1 -Lan
 
 ### 9.1 JS 模块拆分
 
-项目已启动首批 JS 模块拆分工作，已完成 5 个模块的迁移：
+项目已启动 JS 模块拆分工作，当前已落地以下基础模块：
 
 | 模块 | 状态 | 路径 |
 |------|------|------|
+| `runtime.js` | ✅ 已落地 | `Online-Client/src/app/` |
+| `state.js` | ✅ 已落地 | `Online-Client/src/core/` |
+| `event-bus.js` | ✅ 已落地 | `Online-Client/src/core/` |
 | `ui-primitives.js` | ✅ 已落地 | `Online-Client/src/core/` |
 | `data.js` | ✅ 已落地 | `Online-Client/src/core/` |
 | `price-engine.js` | ✅ 已落地 | `Online-Client/src/economy/` |

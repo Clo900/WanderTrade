@@ -306,6 +306,11 @@ h3{font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
   <div class="auth-btns" id="auth-btns-login" style="">
     <button class="btn btn-primary" onclick="doLogin()">🔑 登录</button>
   </div>
+  <!-- 在线连接失败时才显示。切换到单机模式必须由玩家主动选择。 -->
+  <div class="auth-btns" id="runtime-actions" style="display:none">
+    <button class="btn btn-primary" onclick="location.reload()">🔄 重试在线连接</button>
+    <button class="btn" onclick="Runtime.switchTo('standalone')">💾 进入单机模式</button>
+  </div>
   <div class="auth-toggle">没有账号？<span onclick="toggleAuth('register')">点此注册</span></div>
 </div>
 </div>
@@ -341,6 +346,8 @@ h3{font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
   <div id="view-achrank"></div>
 </div>
 </div>
+<!-- runtime.js 必须最先加载：后续模块只通过 Runtime/Capabilities 判断运行模式。 -->
+<script src="src/app/runtime.js"></script>
 <script src="src/core/state.js"></script>
 <script src="src/core/event-bus.js"></script>
 <script src="src/core/ui-primitives.js"></script>
@@ -527,7 +534,7 @@ function initCityStocks(){
 // ===== 在线世界同步（v7.1 共享世界 / v7.2 库存独立） =====
 // 服务器为世界权威：价格种子/购买限额/世界起始时间共享；玩家存档存服务器 players/
 // v7.2：库存按玩家独立（不共享），随【服务器游戏日】同时刷新；留 stockMode 接口（默认 perPlayer，未来可切 shared）
-// 离线模式（file:// 或服务器不可用）回退 localStorage 单机玩法
+// 单机模式使用 localStorage；在线模式连接失败时不再静默写入本地档。
 const AUTH_KEY='_auth_user',USERS_KEY='_auth_users',GS_PREFIX='_gs_';
 let ONLINE=false;
 // v7.8：网络状态机（ok=正常 / down=断开重连中）；断线自动重连 + 恢复后全量同步
@@ -605,9 +612,19 @@ function saveUsers(arr){localStorage.setItem(USERS_KEY,JSON.stringify(arr))}
 function getStoredGS(user){try{return JSON.parse(localStorage.getItem(GS_PREFIX+user)||'null')}catch(e){return null}}
 function saveGS(user,gs){localStorage.setItem(GS_PREFIX+user,JSON.stringify(gs))}
 function authErr(msg){const e=document.getElementById('auth-err');if(e)e.textContent=msg}
+// 在线模式不可用时保持登录门禁，不自动改写浏览器本地存档。
+function showOnlineUnavailable(){
+  ONLINE=false;
+  const overlay=document.getElementById('auth-overlay');
+  const actions=document.getElementById('runtime-actions');
+  if(overlay)overlay.style.display='flex';
+  if(actions)actions.style.display='flex';
+  authErr('无法连接在线服务器。你可以重试，或明确进入独立的单机存档。');
+}
 function toggleAuth(mode){
   document.getElementById('auth-btns-register').style.display=mode==='register'?'':'none';
   document.getElementById('auth-btns-login').style.display=mode==='login'?'':'none';
+  document.getElementById('runtime-actions').style.display='none';
   document.querySelector('.auth-toggle').innerHTML=mode==='register'?'已有账号？<span onclick="toggleAuth(\'login\')">点此登录</span>':'没有账号？<span onclick="toggleAuth(\'register\')">点此注册</span>';
   document.getElementById('auth-err').textContent='';
 }
@@ -684,7 +701,8 @@ function applyWorld(world){
 // 连接服务器并获取/创建共享世界；成功则开启在线模式
 // v7.4：服务器自动运行世界；库存每人独立、每现实 30 分钟同时刷新；timeScale 世界流速
 async function startOnline(){
-  if(location.protocol!=='http:'&&location.protocol!=='https:')return false; // file:// 离线
+  // 运行模式只由 runtime.js 决定；单机模式绝不探测 /api。
+  if(!Runtime.isOnline)return false;
   if(window.__netStarted)return ONLINE;
   const w=await NET.get('/api/world');
   if(!w||!w.ok){ONLINE=false;return false;} // 失败可重试（如服务器尚未启动）
@@ -790,6 +808,7 @@ async function doRegister(){
   if(u.length<3||u.length>12)return authErr('用户名需 3~12 个字符');
   if(p.length<4)return authErr('密码至少 4 位');
   const online=await startOnline();
+  if(Runtime.isOnline&&!online)return showOnlineUnavailable();
   let ok=true;
   if(online){
     const r=await NET.post('/api/register',{user:u,pass:p});
@@ -815,6 +834,7 @@ async function doRegister(){
 async function doLogin(){
   const u=document.getElementById('auth-user').value.trim(),p=document.getElementById('auth-pass').value;
   const online=await startOnline();
+  if(Runtime.isOnline&&!online)return showOnlineUnavailable();
   let ok=true;
   if(online){
     const r=await NET.post('/api/login',{user:u,pass:p});
@@ -841,6 +861,57 @@ function doLogout(){
   document.getElementById('auth-overlay').style.display='flex';
   document.getElementById('auth-user').value='';document.getElementById('auth-pass').value='';
   document.getElementById('auth-err').textContent='';toggleAuth('register');
+}
+
+// ===== 单机存档导入/导出 =====
+// 导出文件不包含密码，只包含当前账号的游戏状态和格式版本。
+function exportLocalSave(){
+  if(!Runtime.isStandalone)return toast('在线模式不能导出本地存档','info');
+  const user=localStorage.getItem(AUTH_KEY);
+  if(!user)return toast('请先登录单机账号','info');
+  saveNow();
+  const payload={
+    format:'wandertrade-save',
+    version:1,
+    exportedAt:Date.now(),
+    user:user,
+    state:getStoredGS(user)||State.snapshot()
+  };
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download='wandertrade-'+user+'-'+new Date().toISOString().slice(0,10)+'.json';
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  toast('单机存档已导出','ok');
+}
+
+function importLocalSave(){
+  if(!Runtime.isStandalone)return toast('在线模式不能导入本地存档','info');
+  const user=localStorage.getItem(AUTH_KEY);
+  if(!user)return toast('请先登录单机账号','info');
+  const input=document.createElement('input');
+  input.type='file';input.accept='application/json,.json';
+  input.onchange=function(){
+    const file=input.files&&input.files[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=function(){
+      try{
+        const payload=JSON.parse(String(reader.result||''));
+        if(!payload||payload.format!=='wandertrade-save'||payload.version!==1||!payload.state){
+          throw new Error('unsupported save format');
+        }
+        showModal('导入单机存档','导入将覆盖当前账号「'+user+'」的本地进度。建议先导出当前存档作为备份。','确认导入',function(){
+          saveGS(user,payload.state);
+          applySaved(payload.state);
+          window.__gsReady=true;
+          render();
+          toast('单机存档导入成功','ok');
+        });
+      }catch(e){toast('存档文件无效或版本不受支持','err');}
+    };
+    reader.readAsText(file,'UTF-8');
+  };
+  input.click();
 }
 // v8.12（D）：重置为全新开局状态（登出/新注册离线账号时调用，杜绝上一账号数据残留）
 // v9.0：使用 State.batch 批量更新，仅触发一次通知
@@ -1984,7 +2055,12 @@ function renderTopbar(){
     <span class="t-stat"><span class="t-label">⭐ 本城声望</span><span class="t-val" style="color:var(--gold)">Lv${getRepLevel(GS.location)}</span></span>
     ${trav}
     <span class="sep"></span>
-    <span class="t-right"><span class="t-user" title="当前账号">👤 <b>${localStorage.getItem(AUTH_KEY)||''}</b></span><button class="t-logout" onclick="doLogout()" title="退出当前账号">登出</button></span>
+    <span class="t-right">
+      <span class="t-user" title="当前运行模式">${Runtime.isStandalone?'💾 单机':'🌐 在线'}</span>
+      ${Runtime.isStandalone?'<button class="t-logout" onclick="exportLocalSave()" title="导出当前单机存档">导出</button><button class="t-logout" onclick="importLocalSave()" title="导入并覆盖当前单机存档">导入</button>':''}
+      <span class="t-user" title="当前账号">👤 <b>${localStorage.getItem(AUTH_KEY)||''}</b></span>
+      <button class="t-logout" onclick="doLogout()" title="退出当前账号">登出</button>
+    </span>
   `;
 }
 function renderContent(){
@@ -3116,15 +3192,27 @@ initMapInteract();
 // 弹幕聊天室初始化（延迟到 DOM 就绪：chat-fab 位于脚本之后的 HTML 中）
 function initChatUI(){initChatFab();chatLoad();startChatPolling();}
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initChatUI);}else{initChatUI();}
-// v8.0 登录门禁：未登录账号时弹出注册/登录界面（全屏遮罩挡住游戏，不可跳过）
-// v8.15：已登录账号刷新后自动恢复在线会话——此前 ONLINE 不恢复，排行榜/聊天/存档都走离线分支导致数据"清空"
+// 登录门禁：在线与单机共享同一入口，但使用彼此隔离的持久化来源。
+const __authSub=document.querySelector('.auth-sub');
+if(__authSub)__authSub.textContent=Runtime.isStandalone?'单机模式 · 存档保存在当前浏览器':'在线模式 · 存档保存在服务器';
 const __bootUser=localStorage.getItem(AUTH_KEY);
 if(!__bootUser){const ao=document.getElementById('auth-overlay');if(ao){ao.style.display='flex';toggleAuth('login');}}
 else{(async()=>{
+  if(Runtime.isStandalone){
+    // 单机启动只读取 localStorage，不发起任何 /api 请求。
+    if(getUsers().includes(__bootUser)){
+      const saved=getStoredGS(__bootUser);if(saved)applySaved(saved);
+      window.__gsReady=true;render();
+    }else{
+      localStorage.removeItem(AUTH_KEY);
+      const ao=document.getElementById('auth-overlay');if(ao){ao.style.display='flex';toggleAuth('login');}
+    }
+    return;
+  }
   const online=await startOnline();
-  if(online){await fullSync();}
-  else if(getUsers().includes(__bootUser))window.__gsReady=true; // v8.20：服务器不可用时，本机离线账号允许本机保存
-})();} // 拉取服务器世界与玩家存档并恢复在线状态
+  if(online)await fullSync();
+  else showOnlineUnavailable();
+})();} // 在线模式失败时保持门禁，由玩家明确选择是否切换单机模式
 </script>
 
 <!-- 后台指令台（v7.4） -->
