@@ -157,6 +157,9 @@ State.batch(function () {
 进一步资料：
 
 - [代码与架构 Wiki](CODE_WIKI.md)
+
+## 资料
+
 - [游戏设计文档](跑商网页游戏设计文档.md)
 - [事件系统设计](跑商游戏事件系统设计.md)
 - [JavaScript 模块拆分清单](Docs/JS模块拆分首批迁移清单.md)
@@ -187,4 +190,3 @@ http://localhost:8080/api/world
 ## 项目状态
 
 当前处于持续开发和模块化整理阶段。核心玩法可以运行，但客户端仍有一部分业务逻辑保留在 `Online-Client/index.html` 中。
-
