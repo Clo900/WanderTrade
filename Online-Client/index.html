@@ -2106,9 +2106,9 @@ function genMapDeco(){
   }
   const ox=ER.x1,oy=ER.y1,ow=ER.x2-ER.x1,oh=ER.y2-ER.y1;
   MAP_DECO=`<defs>
-  <radialGradient id="mapCoreLight" cx="50%" cy="46%" r="62%"><stop offset="0%" stop-color="#3b6a7c" stop-opacity="0.15"/><stop offset="60%" stop-color="#24495e" stop-opacity="0.05"/><stop offset="100%" stop-color="#24495e" stop-opacity="0"/></radialGradient>
-  <radialGradient id="cityShieldGrad" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#dceeff" stop-opacity="0.15"/><stop offset="60%" stop-color="#dceeff" stop-opacity="0.06"/><stop offset="100%" stop-color="#dceeff" stop-opacity="0"/></radialGradient>
-  <radialGradient id="mistGrad" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#d9ecf7" stop-opacity="0.10"/><stop offset="60%" stop-color="#9fc3d8" stop-opacity="0.05"/><stop offset="100%" stop-color="#9fc3d8" stop-opacity="0"/></radialGradient>
+  <radialGradient id="mapCoreLight" cx="50%" cy="46%" r="62%"><stop offset="0%" stop-color="var(--map-core-light)" stop-opacity="0.15"/><stop offset="60%" stop-color="var(--map-bg-mid)" stop-opacity="0.05"/><stop offset="100%" stop-color="var(--map-bg-mid)" stop-opacity="0"/></radialGradient>
+  <radialGradient id="cityShieldGrad" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="var(--map-shield-light)" stop-opacity="0.15"/><stop offset="60%" stop-color="var(--map-shield-light)" stop-opacity="0.06"/><stop offset="100%" stop-color="var(--map-shield-light)" stop-opacity="0"/></radialGradient>
+  <radialGradient id="mistGrad" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="var(--map-mist-center)" stop-opacity="0.10"/><stop offset="60%" stop-color="var(--map-mist-edge)" stop-opacity="0.05"/><stop offset="100%" stop-color="var(--map-mist-edge)" stop-opacity="0"/></radialGradient>
   <filter id="cityShieldBlur" x="-120%" y="-120%" width="340%" height="340%"><feGaussianBlur stdDeviation="9"/></filter>
   <filter id="mistBlur" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="26"/></filter>
   </defs>
@@ -2142,7 +2142,7 @@ function genMapClouds(){
     const dur=45+rnd()*40;
     const dir=(rnd()<0.5?-1:1)*(90+rnd()*170);
     const baseOp=(side<2?0.03:0.022).toFixed(3);
-    out+=`<ellipse cx="${ex.toFixed(0)}" cy="${ey.toFixed(0)}" rx="${rx.toFixed(0)}" ry="${ry.toFixed(0)}" fill="#eef8ff" fill-opacity="${baseOp}" class="cloud"><animateTransform attributeName="transform" type="translate" values="0 0; ${dir.toFixed(0)} 0; 0 0" dur="${dur.toFixed(0)}s" repeatCount="indefinite"/></ellipse>`;
+    out+=`<ellipse cx="${ex.toFixed(0)}" cy="${ey.toFixed(0)}" rx="${rx.toFixed(0)}" ry="${ry.toFixed(0)}" fill="var(--map-cloud)" fill-opacity="${baseOp}" class="cloud"><animateTransform attributeName="transform" type="translate" values="0 0; ${dir.toFixed(0)} 0; 0 0" dur="${dur.toFixed(0)}s" repeatCount="indefinite"/></ellipse>`;
   }
   MAP_CLOUDS=`<g filter="url(#cloudBlur)">${out}</g><defs><filter id="cloudBlur" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="16"/></filter></defs>`;
   return MAP_CLOUDS;
@@ -2291,7 +2291,7 @@ function renderMap(){
         accDist+=seg;
         if(i===sp.path.length-2){px=cityPos[sp.path[i+1]].x;py=cityPos[sp.path[i+1]].y}
       }
-      if(px&&py)travelDot=`<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="7" fill="#5b9bd5" stroke="#fff" stroke-width="2" data-travel-dot="1"><animate attributeName="r" values="7;10;7" dur="1.5s" repeatCount="indefinite"/></circle>`;
+      if(px&&py)travelDot=`<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="7" fill="var(--map-travel-dot)" stroke="var(--map-travel-dot-border)" stroke-width="2" data-travel-dot="1"><animate attributeName="r" values="7;10;7" dur="1.5s" repeatCount="indefinite"/></circle>`;
     }
   }
   // 流动云雾（放在路网与城市下层，避免和可交互元素混为一体）
