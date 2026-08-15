@@ -1,0 +1,24 @@
+/* ================================================
+ * 主题颜色与视觉变量
+ * ================================================ */
+:root,
+[data-theme="light"]{
+  --bg:#EEECEA; --panel:#E4DFDA; --card:#F7F5F2; --cardHover:#EAE4DD;
+  --accent:#ff6b6b; --gold:#c8862c; --green:#2f9e6b; --red:#d9534f;
+  --text:#1A1A1A; --text2:#6B6058; --text3:#A59B94;
+  --buy:#2f9e6b; --sell:#c9772f; --travel:#4d7fa3;
+  --village:#5a8a5a; --town:#4a7a9a; --capital:#c09840; --frontier:#6a5070; --special:#8a5a8a;
+  --line:#333; --bg2:#14161b;
+  --radius:10px; --radius-sm:6px; --shadow:0 2px 12px rgba(26,26,26,0.10);
+  color-scheme: light;
+}
+[data-theme="dark"]{
+  --bg:#0f1724; --panel:#192437; --card:#1e3048; --cardHover:#25405e;
+  --accent:#ff6b6b; --gold:#f0c040; --green:#26d98b; --red:#ff5e5e;
+  --text:#e2e6ed; --text2:#8b95a5; --text3:#566270;
+  --buy:#26d98b; --sell:#ff9f43; --travel:#5b9bd5;
+  --village:#5a8a5a; --town:#4a7a9a; --capital:#c09840; --frontier:#6a5070; --special:#8a5a8a;
+  --line:#333; --bg2:#14161b;
+  --radius:10px; --radius-sm:6px; --shadow:0 2px 12px rgba(0,0,0,0.3);
+  color-scheme: dark;
+}

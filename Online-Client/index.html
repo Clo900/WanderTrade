@@ -3,294 +3,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>艾尔希亚跑商</title>
-<style>
-/* ===== 主题 ===== */
-:root{
-  --bg:#0f1724; --panel:#192437; --card:#1e3048; --cardHover:#25405e;
-  --accent:#ff6b6b; --gold:#f0c040; --green:#26d98b; --red:#ff5e5e;
-  --text:#e2e6ed; --text2:#8b95a5; --text3:#566270;
-  --buy:#26d98b; --sell:#ff9f43; --travel:#5b9bd5;
-  --village:#5a8a5a; --town:#4a7a9a; --capital:#c09840; --frontier:#6a5070; --special:#8a5a8a;
-  --radius:10px; --radius-sm:6px; --shadow:0 2px 12px rgba(0,0,0,0.3);
-}
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Segoe UI',-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
-#app{max-width:1300px;margin:0 auto;padding:0 8px 20px}
-
-/* ===== 顶部栏 ===== */
-#topbar{display:flex;align-items:center;gap:16px;padding:8px 16px;background:var(--panel);border-radius:0 0 var(--radius) var(--radius);margin-bottom:8px;font-size:13px;position:sticky;top:0;z-index:100;box-shadow:var(--shadow);flex-wrap:wrap}
-#topbar .t-stat{display:flex;align-items:center;gap:5px;white-space:nowrap}
-#topbar .t-label{color:var(--text3);font-size:11px}
-#topbar .t-val{color:var(--text);font-weight:600}
-#topbar .t-gold{color:var(--gold);font-weight:700;font-size:15px}
-#topbar .t-loc{color:var(--text);font-weight:600;display:flex;align-items:center;gap:4px}
-#topbar .t-loc .dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block}
-#topbar .t-travel{color:var(--travel);animation:pulse 1.5s infinite}
-#topbar .t-user{font-size:12px;color:var(--text2);white-space:nowrap}
-#topbar .t-user b{color:var(--gold);font-weight:600}
-#topbar .t-logout{margin-left:2px;padding:2px 9px;font-size:11px;border:1px solid rgba(240,120,120,.4);border-radius:6px;background:rgba(240,120,120,.08);color:#f0a0a0;cursor:pointer}
-#topbar .t-logout:hover{background:rgba(240,120,120,.22);color:#fff}
-#topbar .t-right{margin-left:auto;display:flex;align-items:center;gap:8px}
-@keyframes pulse{50%{opacity:0.5}}
-@keyframes fadeIn{from{opacity:0}}@keyframes scaleIn{from{transform:scale(0.8);opacity:0}to{transform:scale(1);opacity:1}}
-#topbar .sep{width:1px;height:20px;background:var(--text3);opacity:0.3}
-
-/* ===== 导航 ===== */
-nav{display:flex;background:var(--panel);border-radius:var(--radius) var(--radius) 0 0;overflow:hidden}
-nav button{flex:1;padding:10px;background:transparent;color:var(--text2);border:none;cursor:pointer;font-size:13px;transition:all 0.2s;position:relative;min-width:80px}
-nav button.active{color:var(--text);background:var(--card);font-weight:600}
-nav button.active::after{content:'';position:absolute;bottom:0;left:20%;right:20%;height:2px;background:var(--accent);border-radius:1px}
-nav button:hover{color:var(--text);background:rgba(255,255,255,0.03)}
-
-/* ===== 内容 ===== */
-#content{background:var(--card);border-radius:0 0 var(--radius) var(--radius);padding:16px;min-height:500px;box-shadow:var(--shadow)}
-#view-map,#view-city,#view-vehicle,#view-achrank{display:none}
-#view-map.active,#view-city.active,#view-vehicle.active,#view-achrank.active{display:block}
-
-/* ===== 地图（v7.9 交互式：缩放/平移/等高线/曲线路网/云雾） ===== */
-.map-wrap{position:relative;background:radial-gradient(circle at 50% 44%,rgba(59,106,124,0.20) 0%,rgba(36,73,94,0.10) 40%,rgba(13,31,47,0) 72%),linear-gradient(165deg,#0d1f2f 0%,#143246 52%,#0c1c2a 100%);border-radius:var(--radius-sm);overflow:hidden;border:1px solid rgba(90,169,240,.10);cursor:grab}
-.map-wrap:active{cursor:grabbing}
-.map-wrap svg{display:block;width:100%;height:auto;touch-action:none}
-.map-scene .iso,.map-scene .iso-f,.map-scene .iso-tex,.map-scene .road-line,.map-scene .road-flow,.map-scene .road-label,.map-scene .cloud,.map-scene .city-shield,.map-scene .mist{pointer-events:none}
-.iso{fill:none;stroke:rgba(110,188,154,0.22);stroke-width:1;animation:isoBreathe 4.2s ease-in-out infinite}
-.iso-tex{stroke:rgba(144,205,178,0.10);stroke-width:0.85;stroke-linecap:round}
-.iso-f{fill:rgba(86,165,128,0.05)}
-.iso-f1{fill:rgba(86,165,128,0.04);animation-delay:0s}
-.iso-f2{fill:rgba(86,165,128,0.07);animation-delay:-0.8s}
-.iso-f3{fill:rgba(86,165,128,0.10);animation-delay:-1.6s}
-.iso-f4{fill:rgba(86,165,128,0.13);animation-delay:-2.4s}
-@keyframes isoBreathe{0%,100%{stroke:rgba(110,188,154,0.18);filter:drop-shadow(0 0 0 rgba(120,210,175,0))}50%{stroke:rgba(158,236,201,0.45);filter:drop-shadow(0 0 5px rgba(120,220,180,0.28))}}
-.city-node{cursor:pointer;transition:all 0.2s;stroke:rgba(7,16,24,0.72);stroke-width:1.35;paint-order:stroke fill}
-.city-node:hover{filter:brightness(1.35)}
-.city-node.closed{opacity:0.45;cursor:not-allowed}
-.city-node.closed:hover{filter:none}
-.city-node.tier-village{fill:var(--village)}
-.city-node.tier-town{fill:var(--town)}
-.city-node.tier-capital{fill:var(--capital)}
-.city-node.tier-frontier{fill:var(--frontier)}
-.city-node.tier-special{fill:var(--special)}
-.city-node.current{stroke:var(--gold);stroke-width:2.6;animation:glow 2s infinite}
-@keyframes glow{0%,100%{filter:drop-shadow(0 0 2px var(--gold))}50%{filter:drop-shadow(0 0 7px var(--gold))}}
-.road-line{stroke:#5f83ab;stroke-width:2.35;fill:none;stroke-linecap:round}
-.road-flow{stroke:#b8ddff;stroke-width:1.35;fill:none;stroke-linecap:round;stroke-dasharray:5 9;animation:roadFlow 3s linear infinite}
-@keyframes roadFlow{from{stroke-dashoffset:14}to{stroke-dashoffset:0}}
-.road-label{font-size:9px;fill:rgba(215,232,246,0.55);text-anchor:middle;text-shadow:0 1px 2px rgba(0,0,0,.7)}
-.city-label{font-size:13px;fill:#eef7ff;text-anchor:middle;pointer-events:none;font-weight:700;text-shadow:0 1px 3px rgba(0,0,0,.95)}
-.cloud{pointer-events:none;animation:cloudPulse 12s ease-in-out infinite}
-.cloud:nth-child(odd){animation-delay:-4s}
-@keyframes cloudPulse{0%,100%{opacity:0.012}50%{opacity:0.045}}
-.map-tools{position:absolute;top:10px;right:10px;display:flex;gap:6px;z-index:5}
-.map-tools button{width:30px;height:30px;border-radius:8px;border:1px solid rgba(90,169,240,.35);background:rgba(10,20,32,.75);color:var(--text);font-size:15px;cursor:pointer;line-height:1}
-.map-tools button:hover{background:rgba(90,169,240,.25);color:#fff}
-.map-info{display:flex;gap:12px;align-items:center;padding:8px 14px;margin-top:8px;background:rgba(0,0,0,0.45);border-radius:var(--radius-sm);font-size:12px;color:var(--text2)}
-.map-info .city-name{color:var(--gold);font-weight:600;font-size:14px}
-.map-hint{font-size:11px;color:var(--text3);margin-top:6px;text-align:center}
-
-/* ===== 旅行进度条 ===== */
-.travel-progress{flex:1;height:22px;background:var(--bg);border-radius:11px;overflow:hidden;position:relative}
-.travel-progress .fill{height:100%;background:linear-gradient(90deg,var(--travel),#4a90d9);border-radius:11px;transition:width 1s linear}
-.travel-progress .text{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:11px;font-weight:600;color:#fff;white-space:nowrap;text-shadow:0 1px 2px rgba(0,0,0,0.5)}
-
-/* ===== 城市双栏（左右各 50%） ===== */
-.city-layout{display:flex;gap:14px;align-items:flex-start}
-.city-left{flex:1 1 0;min-width:0;overflow:hidden}
-.city-right{flex:1 1 0;min-width:0;display:flex;flex-direction:column;max-height:calc(100vh - 150px)}
-
-/* ===== 车站栏目 ===== */
-.station-panel{background:var(--panel);border-radius:var(--radius);padding:14px;margin-top:14px}
-.station-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
-.station-card{background:var(--bg);border-radius:var(--radius-sm);padding:12px}
-.station-card .sc-label{color:var(--text3);font-size:11px;margin-bottom:4px}
-.station-card .sc-val{font-size:15px;font-weight:700;color:var(--text)}
-.station-card .sc-val.warn{color:var(--sell)}
-.station-card .sc-val.danger{color:var(--red)}
-.dur-bar{height:8px;background:var(--card);border-radius:4px;overflow:hidden;margin-top:6px}
-.dur-bar .fill{height:100%;border-radius:4px;background:var(--green);transition:width 0.3s}
-.station-btn{width:100%;margin-top:10px}
-.station-placeholder{font-size:11px;color:var(--text3);border:1px dashed var(--text3);border-radius:var(--radius-sm);padding:10px;text-align:center;margin-top:6px;background:var(--bg)}
-.task-row{padding:10px 12px;background:var(--panel);border-radius:var(--radius-sm);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-.task-section-label{font-size:12px;font-weight:700;color:var(--text2);margin:10px 0 6px}
-.task-divider{border-top:1px solid var(--text3);margin:12px 0 4px;opacity:0.4}
-/* 已接任务区：固定高度占位（无任务也保留），卡片固定宽，超出横向滑动 */
-.task-board-active{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;min-height:160px;align-items:flex-start}
-.task-board-active .task-card{flex:0 0 260px}
-.task-active-empty{display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px;background:var(--bg);border:1px dashed var(--text3);border-radius:var(--radius-sm);min-height:110px}
-/* 可接任务区：固定宽度卡片一字排开，不自适应宽度，超出横向滑动 */
-.task-board-grid{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px}
-.task-card{position:relative;background:var(--panel);border:1px solid var(--text3);border-radius:var(--radius-sm);padding:10px 12px;display:flex;flex-direction:column;gap:6px;flex:0 0 240px;min-height:170px;justify-content:space-between}
-.task-top{display:flex;justify-content:space-between;align-items:center}
-.task-rarity{font-size:12px;font-weight:700}
-.task-refresh,.task-x{background:none;border:none;cursor:pointer;font-size:14px;color:var(--text2);padding:2px 4px;line-height:1}
-.task-refresh:hover,.task-x:hover{color:var(--gold)}
-.task-desc{font-size:13px;line-height:1.5;min-height:38px}
-.task-meta{font-size:11px;color:var(--text3)}
-.task-reward{font-size:12px;color:var(--gold)}
-.task-slot-empty{border-style:dashed;background:var(--bg)}
-.task-slot-empty-inner{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text3);font-size:12px;gap:4px}
-/* ===== 车厢管理 ===== */
-.wagon-panel{margin-top:12px}
-.wagon-card{position:relative;background:var(--panel);border:1px solid var(--text3);border-radius:var(--radius-sm);padding:10px 12px;display:flex;flex-direction:column;gap:6px;flex:0 0 180px;min-height:150px;justify-content:space-between}
-.wagon-name{font-size:13px;font-weight:700}
-.wagon-slot-empty{border-style:dashed;border-color:var(--accent);background:var(--bg);align-items:center;justify-content:center;text-align:center;cursor:pointer;transition:all 0.2s}
-.wagon-slot-empty:hover{border-color:var(--gold);background:rgba(255,215,0,0.06);transform:translateY(-2px)}
-.wagon-slot-empty .wagon-plus{color:var(--accent)}
-.wagon-plus{font-size:30px;color:var(--text3);line-height:1}
-.core-card{border-color:var(--gold);background:linear-gradient(180deg,rgba(255,215,0,0.08),rgba(255,215,0,0.02));border-width:2px}
-/* 车厢选择弹窗按钮化（v6.11）：类型=大卡片按钮、等级=带徽章价格按钮 */
-.wagon-cat{display:flex;align-items:center;gap:10px;width:100%;background:var(--bg);border:2px solid var(--text3);border-radius:var(--radius-sm);padding:13px 15px;margin:7px 0;font-size:14px;font-weight:800;cursor:pointer;transition:all 0.15s;text-align:left}
-.wagon-cat:hover{transform:translateY(-2px);box-shadow:0 4px 14px rgba(0,0,0,0.3);border-color:var(--gold)}
-.wagon-cat:active{transform:translateY(0)}
-.wagon-cat .wc-arrow{margin-left:auto;font-size:18px;font-weight:900;opacity:0.6}
-.wagon-opt{display:flex;align-items:center;gap:8px;width:100%;background:var(--panel);border:2px solid var(--text3);border-radius:var(--radius-sm);padding:10px 12px;margin:5px 0;font-size:13px;cursor:pointer;transition:all 0.15s;text-align:left}
-.wagon-opt:hover{border-color:var(--gold);background:rgba(255,215,0,0.08);transform:translateX(4px)}
-.wagon-opt:active{transform:translateX(0)}
-.wagon-opt .wo-lv{flex:0 0 auto;background:var(--text3);color:var(--bg);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:800}
-.wagon-opt .wo-price{margin-left:auto;font-weight:800;color:var(--gold);white-space:nowrap}
-.wh-split{border-top:1px solid var(--text3);margin:14px 0;opacity:0.4}
-/* ===== 新手引导面板（v6.14） ===== */
-.tutorial-panel{background:linear-gradient(90deg,rgba(91,155,213,0.14),rgba(91,155,213,0.05));border:1px solid var(--travel);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:10px;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.tut-head{font-weight:800;color:var(--travel);white-space:nowrap}
-.tut-progress{background:var(--travel);color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;margin-left:6px}
-.tut-body{flex:1;min-width:200px;font-size:13px;color:var(--text)}
-.tut-btns{display:flex;gap:6px;align-items:center}
-.tut-steps{flex-basis:100%;display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--text3)}
-.tut-step{padding:2px 8px;border-radius:10px;background:var(--panel);border:1px solid var(--text3)}
-.tut-step.tut-done{color:var(--green);border-color:var(--green);background:rgba(80,200,120,0.08)}
-.tut-step.tut-cur{color:#111;background:var(--accent);border-color:var(--accent);font-weight:700}
-
-/* ===== 认证覆盖层（v7.0 内测） ===== */
-.auth-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);z-index:99999;display:flex;align-items:center;justify-content:center}
-.auth-box{background:var(--panel);border:2px solid var(--gold);border-radius:var(--radius);padding:32px 36px;width:380px;max-width:95vw;text-align:center}
-.auth-box h2{font-size:22px;color:var(--gold);margin-bottom:4px}
-.auth-box .auth-sub{font-size:12px;color:var(--text3);margin-bottom:20px}
-.auth-field{margin-bottom:14px;text-align:left}
-.auth-field label{display:block;font-size:12px;color:var(--text2);margin-bottom:4px;font-weight:600}
-.auth-field input{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--text3);border-radius:var(--radius-sm);color:var(--text);font-size:14px;outline:none;transition:border-color 0.15s}
-.auth-field input:focus{border-color:var(--gold)}
-.auth-err{color:var(--red);font-size:12px;margin-bottom:10px;min-height:18px}
-.auth-btns{display:flex;gap:8px;justify-content:center;margin-top:4px}
-.auth-toggle{font-size:12px;color:var(--text3);margin-top:14px}
-.auth-toggle span{color:var(--travel);cursor:pointer;font-weight:600}
-.auth-toggle span:hover{text-decoration:underline}
-
-/* ===== 图表面板 ===== */
-.chart-panel{background:var(--panel);border-radius:var(--radius);padding:12px;display:flex;flex-direction:column}
-.chart-panel canvas{width:100%;height:auto}
-.chart-panel h4{font-size:13px;color:var(--text2);margin-bottom:8px;display:flex;align-items:center;gap:8px}
-.chart-panel h4 select{padding:4px 8px;background:var(--bg);color:var(--text);border:1px solid var(--text3);border-radius:4px;font-size:12px}
-.chart-time{display:flex;margin-bottom:8px}
-.chart-time button{padding:4px 16px;background:var(--bg);color:var(--text2);border:1px solid var(--text3);font-size:12px;cursor:pointer;transition:0.2s}
-.chart-time button:first-child{border-radius:4px 0 0 4px}
-.chart-time button:last-child{border-radius:0 4px 4px 0}
-.chart-time button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
-.chart-stats{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;margin-top:8px;color:var(--text2)}
-.chart-stats .stat{background:var(--bg);padding:4px 10px;border-radius:4px}
-.chart-stats .stat b{color:var(--text)}
-.chart-stats .stat .buy{color:var(--buy)}
-.chart-stats .stat .sell{color:var(--sell)}
-canvas{border-radius:var(--radius-sm);max-width:100%}
-
-/* ===== 市场卡片 ===== */
-.market-panel{background:var(--panel);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;flex:1;min-height:0}
-.market-tabs{display:flex}
-.market-tabs button{flex:1;padding:10px;background:var(--bg);color:var(--text2);border:none;cursor:pointer;font-size:13px;transition:0.2s}
-.market-tabs button.active{background:var(--card);color:var(--text);font-weight:600}
-.market-tabs button.buy-tab.active{border-bottom:2px solid var(--buy)}
-.market-tabs button.sell-tab.active{border-bottom:2px solid var(--sell)}
-.market-cards{padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;overflow-y:auto;min-height:0}
-.item-card{background:var(--bg);border-radius:var(--radius-sm);padding:10px;cursor:pointer;transition:all 0.2s;border:1px solid transparent;position:relative}
-.item-card:hover{border-color:var(--text3);background:var(--cardHover)}
-.item-card.expanded{border-color:var(--accent);background:var(--cardHover)}
-.item-card .ic-icon{font-size:28px;display:block;margin-bottom:4px}
-.item-card .ic-name{font-size:13px;font-weight:600;color:var(--text)}
-.item-card .ic-cat{font-size:10px;color:var(--text3)}
-.item-card .ic-price{font-size:16px;font-weight:700;margin:4px 0}
-.item-card .ic-price.buy{color:var(--buy)}
-.item-card .ic-price.sell{color:var(--sell)}
-.item-card .ic-price2{font-size:12px;margin:4px 0;line-height:1.5}
-.item-card .ic-price2 .ic-cost{color:var(--text3);font-weight:600}
-.item-card .ic-price2 .ic-sell{color:var(--sell);font-weight:700;font-size:13px}
-.item-card .ic-change{font-size:11px}
-.item-card .ic-change.up{color:var(--buy)}
-.item-card .ic-change.down{color:var(--red)}
-.item-card .ic-change.flat{color:var(--text3)}
-.item-card .ic-limit{font-size:10px;color:var(--text3);margin-top:2px}
-.item-card .ic-detail{display:none;margin-top:8px;border-top:1px solid var(--text3);padding-top:8px}
-.item-card.expanded .ic-detail{display:block}
-.item-card .ic-detail .row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px}
-.item-card .ic-detail .btn-action{flex:1;padding:7px;border:none;border-radius:4px;color:#fff;font-size:13px;cursor:pointer;font-weight:600}
-.item-card .ic-detail .btn-buy{background:var(--buy)}
-.item-card .ic-detail .btn-sell{background:var(--sell)}
-.item-card .ic-cargo-info{font-size:10px;color:var(--text3);margin-top:4px}
-.wh-badge{display:inline-block;background:var(--sell);color:#fff;font-size:9px;padding:1px 6px;border-radius:8px;margin-left:4px}
-
-/* ===== 数量滑块 ===== */
-.qty-slider{display:flex;align-items:center;gap:4px;margin:6px 0}
-.qty-slider .qty-arrow{width:26px;height:26px;border:none;border-radius:4px;background:var(--panel);color:var(--text);cursor:pointer;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;transition:0.15s}
-.qty-slider .qty-arrow:hover{background:var(--cardHover)}
-.qty-slider input[type=range]{flex:1;height:6px;-webkit-appearance:none;background:var(--panel);border-radius:3px;outline:none;cursor:pointer}
-.qty-slider input[type=range]::-webkit-slider-thumb{width:20px;height:20px;-webkit-appearance:none;background:var(--accent);border-radius:50%;cursor:pointer;border:2px solid #fff}
-.qty-val{font-weight:700;font-size:16px;min-width:40px;text-align:center;color:var(--text)}
-
-/* ===== Toast（居中偏上长条形） ===== */
-#toast-container{position:fixed;top:12%;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none}
-.toast{padding:10px 32px;border-radius:20px;color:#fff;font-size:14px;font-weight:600;animation:toastIn 0.35s ease;box-shadow:0 4px 20px rgba(0,0,0,0.5);min-width:200px;text-align:center}
-.toast.ok{background:var(--green)}
-.toast.err{background:var(--red)}
-.toast.info{background:var(--travel)}
-@keyframes toastIn{from{transform:translateY(-16px);opacity:0}to{transform:translateY(0);opacity:1}}
-
-/* ===== 居中确认弹窗 ===== */
-.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.65);z-index:9998;display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s}
-.modal-box{background:var(--panel);border-radius:var(--radius);padding:24px;max-width:380px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,0.6);text-align:center}
-.modal-box h3{font-size:17px;margin-bottom:6px}
-.modal-box p{color:var(--text2);font-size:13px;margin:8px 0 16px;white-space:pre-line}
-.modal-box .modal-btns{display:flex;gap:10px;justify-content:center}
-.modal-box .modal-btns button{padding:8px 28px;border:none;border-radius:var(--radius-sm);font-size:14px;font-weight:600;cursor:pointer}
-.modal-box .btn-ok{background:var(--accent);color:#fff}
-.modal-box .btn-cancel{background:var(--bg);color:var(--text2)}
-.modal-box .nudge-check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);margin:0 0 14px;cursor:pointer;justify-content:center}
-
-/* ===== 载具仓库 ===== */
-.wh-list{max-height:320px;overflow-y:auto}
-.wh-list .wh-row{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:var(--bg);border-radius:4px;margin-bottom:4px;font-size:13px}
-.wh-list .wh-row .qty-inline{display:flex;align-items:center;gap:6px}
-.wh-list .wh-row input{width:60px;padding:3px 6px;background:var(--panel);color:var(--text);border:1px solid var(--text3);border-radius:3px;font-size:12px;text-align:center}
-.wh-list .wh-row .btn-sm{padding:3px 10px;border:none;border-radius:3px;cursor:pointer;font-size:11px;font-weight:600}
-.btn-buy-sm{background:var(--buy);color:#fff}
-.btn-sell-sm{background:var(--sell);color:#fff}
-
-/* ===== 事件横幅 ===== */
-.event-board{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
-.event-chip{display:inline-flex;align-items:center;gap:5px;background:var(--panel);border:1px solid var(--text3);color:var(--text);font-size:12px;padding:5px 12px;border-radius:16px;cursor:pointer;transition:all 0.2s}
-.event-chip:hover{border-color:var(--accent);color:#fff;background:var(--cardHover)}
-.event-chip.st-active{border-color:var(--green);color:var(--green)}
-.event-chip.st-ending{border-color:var(--sell);color:var(--sell)}
-.event-chip.st-upcoming{border-color:var(--travel);color:var(--travel)}
-.event-chip.st-active:hover,.event-chip.st-ending:hover,.event-chip.st-upcoming:hover{color:#fff}
-.ev-row{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.06);line-height:1.6;cursor:pointer;border-radius:var(--radius-sm)}
-.ev-row:hover{background:var(--cardHover)}
-.modal-box p{max-height:60vh;overflow-y:auto;margin:0}
-
-/* ===== 情报所·聊天 ===== */
-.intel-chat{display:flex;flex-direction:column;gap:6px;margin:10px 0;max-height:340px;overflow-y:auto}
-.chat-msg{font-size:13px;line-height:1.7;padding:8px 12px;border-radius:10px;background:var(--card);color:var(--text);max-width:92%;border-left:3px solid var(--text3)}
-.chat-msg.sys{color:var(--text2);font-size:12px;text-align:center;background:transparent;border-left:none}
-.chat-msg.intel{border-left-color:var(--travel)}
-.chat-msg.best{border-left-color:var(--gold);background:linear-gradient(135deg,rgba(240,192,64,0.10),var(--card))}
-.chat-msg.rare{border-left-color:var(--accent);background:linear-gradient(135deg,rgba(255,107,107,0.08),var(--card))}
-
-/* ===== 通用 ===== */
-.btn{padding:8px 18px;border:none;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;font-weight:600;transition:all 0.2s}
-.btn:disabled{opacity:0.4;cursor:default}
-.btn-primary{background:var(--accent);color:#fff}
-.btn-small{padding:4px 12px;font-size:11px}
-h3{font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
-.empty{text-align:center;color:var(--text3);padding:40px;font-size:13px}
-::-webkit-scrollbar{width:5px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--text3);border-radius:3px}
-</style>
+<script>
+(function(){
+  try{
+    const t=localStorage.getItem('ui-theme');
+    if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);
+  }catch(e){}
+})();
+</script>
+<link rel="stylesheet" href="styles/theme.css">
+<link rel="stylesheet" href="styles/app.css">
 </head>
 <body>
 <div id="auth-overlay" class="auth-overlay" style="display: none;">
@@ -317,19 +39,27 @@ h3{font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
 <div id="app">
 <div id="toast-container"></div>
 <div id="topbar">
-    <span class="t-stat" title="网络状态"><span class="t-label">⚡</span><span class="t-val">⚪</span></span>
-    <span class="sep"></span>
-    <span class="t-stat"><span class="t-label">Day</span><span class="t-val">1</span></span>
-    <span class="sep"></span>
-    <span class="t-loc"><span class="dot"></span>绿田村</span>
-    <span class="sep"></span>
-    <span class="t-stat"><span class="t-gold">💰 10,000</span></span>
-    <span class="sep"></span>
-    <span class="t-stat"><span class="t-label">🚛 货舱</span><span class="t-val">0/30</span></span>
-    <span class="t-stat"><span class="t-label">🧳 旅客</span><span class="t-val">0/4</span></span>
-    <span class="sep"></span>
-    <span class="t-stat"><span class="t-label">⭐ 本城声望</span><span class="t-val" style="color:var(--gold)">Lv0</span></span>
-    
+    <div class="tb-row">
+      <div class="tb-cell" title="网络状态"><span class="tb-label">⚡</span><span class="tb-val">⚪</span></div>
+      <div class="tb-cell tb-loc"><span class="tb-loc-name"><span class="dot"></span>绿田村</span></div>
+      <div class="tb-cell"><span class="tb-label">Day</span><span class="tb-val">1</span></div>
+    </div>
+    <div class="tb-row">
+      <div class="tb-cell"><span class="tb-label">🚛 货舱</span><span class="tb-val">0/30</span></div>
+      <div class="tb-cell"><span class="tb-label">🧳 旅客</span><span class="tb-val">0/4</span></div>
+      <div class="tb-cell"><span class="tb-label">⭐ 本城声望</span><span class="tb-val" style="color:var(--gold)">Lv0</span></div>
+      <div class="tb-cell tb-ops"><span class="tb-gold">💰 10,000</span></div>
+    </div>
+    <div class="tb-row tb-row-user">
+      <div class="tb-user-meta">
+        <span class="tb-user-chip" title="当前运行模式">🌐 在线</span>
+        <span class="tb-user-chip" title="当前账号">👤 <b></b></span>
+      </div>
+      <div class="tb-user-actions">
+        <button class="tb-theme" onclick="toggleTheme()" title="切换到深色">🌙 深色</button>
+        <button class="t-logout" onclick="doLogout()" title="退出当前账号">登出</button>
+      </div>
+    </div>
   </div>
 <nav>
   <button data-tab="map" class="active">🗺 地图</button>
@@ -2037,30 +1767,42 @@ function renderTutorial(){
 // ===== UI 渲染 =====
 let currentTab='map',marketTab='buy',_chartDays=60,_chartItem=null,expandedCard=null,sliderVals={};
 function render(){advanceDay();ensureTaskBoard(GS.location);checkAchievements();renderTopbar();renderContent();autoSave()}
+const THEME_KEY='ui-theme';
+function getTheme(){try{return localStorage.getItem(THEME_KEY)||document.documentElement.getAttribute('data-theme')||'light'}catch(e){return document.documentElement.getAttribute('data-theme')||'light'}}
+function setTheme(theme){
+  const next=theme==='dark'?'dark':'light';
+  document.documentElement.setAttribute('data-theme',next);
+  try{localStorage.setItem(THEME_KEY,next)}catch(e){}
+}
+function toggleTheme(){setTheme(getTheme()==='dark'?'light':'dark');renderTopbar()}
 function renderTopbar(){
   const loc=getCityName(GS.location),used=getUsedCargo(),cap=getVehicleCapacity();
-  let trav='';if(GS.traveling)trav=`<span class="t-travel">⏳ ${getCityName(GS.traveling.to)} ${Math.max(0,Math.ceil((GS.traveling.arrivalTime-Date.now())/1000))}s</span>`;
+  const theme=getTheme(),themeBtn=theme==='dark'?'☀ 浅色':'🌙 深色',themeTitle=theme==='dark'?'切换到浅色':'切换到深色';
+  let trav='';if(GS.traveling)trav=`<span class="tb-user-chip tb-travel-chip">⏳ ${getCityName(GS.traveling.to)} ${Math.max(0,Math.ceil((GS.traveling.arrivalTime-Date.now())/1000))}s</span>`;
   document.getElementById('topbar').innerHTML=`
-    <span class="t-stat" title="网络状态"><span class="t-label">⚡</span><span class="t-val">${netDot()}</span></span>
-    <span class="sep"></span>
-    <span class="t-stat"><span class="t-label">Day</span><span class="t-val">${GS.day}</span></span>
-    <span class="sep"></span>
-    <span class="t-loc"><span class="dot"></span>${loc}</span>
-    <span class="sep"></span>
-    <span class="t-stat"><span class="t-gold">💰 ${fmt(GS.gold)}</span></span>
-    <span class="sep"></span>
-    <span class="t-stat"><span class="t-label">🚛 货舱</span><span class="t-val">${used+getTaskCargoUsed()}/${cap}</span></span>
-    <span class="t-stat"><span class="t-label">🧳 旅客</span><span class="t-val">${getPassUsed()+getTaskPassUsed()}/${getPassCapacity()}</span></span>
-    <span class="sep"></span>
-    <span class="t-stat"><span class="t-label">⭐ 本城声望</span><span class="t-val" style="color:var(--gold)">Lv${getRepLevel(GS.location)}</span></span>
-    ${trav}
-    <span class="sep"></span>
-    <span class="t-right">
-      <span class="t-user" title="当前运行模式">${Runtime.isStandalone?'💾 单机':'🌐 在线'}</span>
-      ${Runtime.isStandalone?'<button class="t-logout" onclick="exportLocalSave()" title="导出当前单机存档">导出</button><button class="t-logout" onclick="importLocalSave()" title="导入并覆盖当前单机存档">导入</button>':''}
-      <span class="t-user" title="当前账号">👤 <b>${localStorage.getItem(AUTH_KEY)||''}</b></span>
-      <button class="t-logout" onclick="doLogout()" title="退出当前账号">登出</button>
-    </span>
+    <div class="tb-row">
+      <div class="tb-cell" title="网络状态"><span class="tb-label">⚡</span><span class="tb-val">${netDot()}</span></div>
+      <div class="tb-cell tb-loc"><span class="tb-loc-name"><span class="dot"></span>${loc}</span></div>
+      <div class="tb-cell"><span class="tb-label">Day</span><span class="tb-val">${GS.day}</span></div>
+    </div>
+    <div class="tb-row">
+      <div class="tb-cell"><span class="tb-label">🚛 货舱</span><span class="tb-val">${used+getTaskCargoUsed()}/${cap}</span></div>
+      <div class="tb-cell"><span class="tb-label">🧳 旅客</span><span class="tb-val">${getPassUsed()+getTaskPassUsed()}/${getPassCapacity()}</span></div>
+      <div class="tb-cell"><span class="tb-label">⭐ 本城声望</span><span class="tb-val" style="color:var(--gold)">Lv${getRepLevel(GS.location)}</span></div>
+      <div class="tb-cell tb-ops"><span class="tb-gold">💰 ${fmt(GS.gold)}</span></div>
+    </div>
+    <div class="tb-row tb-row-user">
+      <div class="tb-user-meta">
+        <span class="tb-user-chip" title="当前运行模式">${Runtime.isStandalone?'💾 单机':'🌐 在线'}</span>
+        <span class="tb-user-chip" title="当前账号">👤 <b>${localStorage.getItem(AUTH_KEY)||''}</b></span>
+        ${trav}
+      </div>
+      <div class="tb-user-actions">
+        ${Runtime.isStandalone?'<button class="t-logout" onclick="exportLocalSave()" title="导出当前单机存档">导出</button><button class="t-logout" onclick="importLocalSave()" title="导入并覆盖当前单机存档">导入</button>':''}
+        <button class="tb-theme" onclick="toggleTheme()" title="${themeTitle}">${themeBtn}</button>
+        <button class="t-logout" onclick="doLogout()" title="退出当前账号">登出</button>
+      </div>
+    </div>
   `;
 }
 function renderContent(){
@@ -3222,43 +2964,9 @@ else{(async()=>{
   <div id="cmd-out"></div>
   <input id="cmd-input" placeholder="输入指令，回车执行（/help 查看帮助）" onkeydown="cmdInputKey(event)" autocomplete="off">
 </div>
-<style>
-#cmd-fab{position:fixed;right:14px;bottom:14px;z-index:9999;width:46px;height:46px;border-radius:50%;background:var(--accent,#8a6cf0);color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.35);user-select:none}
-#cmd-fab:hover{filter:brightness(1.15)}
-#cmd-panel{position:fixed;right:14px;bottom:70px;z-index:9998;width:min(340px,calc(100vw - 28px));height:260px;background:var(--panel,#1c1f26);border:1px solid var(--line,#333);border-radius:10px;display:flex;flex-direction:column;box-shadow:0 4px 20px rgba(0,0,0,.45);overflow:hidden}
-#cmd-head{padding:8px 12px;background:var(--accent,#8a6cf0);color:#fff;font-size:13px;font-weight:600}
-#cmd-out{flex:1;overflow-y:auto;padding:8px 10px;font-size:12px;line-height:1.6;color:var(--text,#e6e8ee);word-break:break-all}
-#cmd-out div{border-bottom:1px dashed var(--line,#333);padding:2px 0}
-#cmd-input{width:100%;box-sizing:border-box;border:none;border-top:1px solid var(--line,#333);background:var(--bg2,#14161b);color:var(--text,#e6e8ee);padding:9px 10px;font-size:13px;outline:none}
-</style>
+
 <!-- 成就与排行榜样式（v7.5） -->
-<style>
-.ach-bar-wrap{display:flex;align-items:center;gap:10px;margin:10px 0 16px;padding:10px 14px;background:var(--card,#1c1f26);border:1px solid var(--line,#333);border-radius:10px}
-.ach-bar{height:10px;border-radius:5px;background:linear-gradient(90deg,var(--accent,#8a6cf0),var(--gold,#f0c96a));flex:1;transition:width .4s}
-.ach-bar-wrap span{font-size:13px;font-weight:700;color:var(--gold)}
-.ach-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
-.ach-card{display:flex;gap:12px;padding:12px;background:var(--card,#1c1f26);border:1px solid var(--line,#333);border-radius:10px;opacity:.62}
-.ach-card.done{opacity:1;border-color:var(--gold)}
-.ach-card.done .ach-icon{filter:none}
-.ach-icon{font-size:30px;filter:grayscale(1);opacity:.7}
-.ach-card.done .ach-icon{filter:none;opacity:1}
-.ach-body{flex:1;min-width:0}
-.ach-name{font-size:14px;font-weight:700;margin-bottom:2px}
-.ach-desc{font-size:12px;color:var(--text2);margin-bottom:4px}
-.ach-reward{font-size:12px;color:var(--gold)}
-.ach-prog{display:flex;align-items:center;gap:8px;margin-top:6px}
-.ach-prog-bar{height:6px;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--gold));flex:1}
-.ach-prog span{font-size:11px;color:var(--text2);min-width:32px;text-align:right}
-.rank-type{display:flex;gap:8px;margin:10px 0 14px;flex-wrap:wrap}
-.rank-type button{padding:8px 16px;background:var(--card,#1c1f26);border:1px solid var(--line,#333);border-radius:8px;color:var(--text2);cursor:pointer;font-size:13px}
-.rank-type button.active{background:var(--accent,#8a6cf0);color:#fff;border-color:var(--accent)}
-.rank-row{display:flex;align-items:center;gap:12px;padding:11px 14px;background:var(--card,#1c1f26);border:1px solid var(--line,#333);border-radius:10px;margin-bottom:8px}
-.rank-row.top{border-color:var(--gold)}
-.rank-no{width:34px;text-align:center;font-size:18px;font-weight:800}
-.rank-user{flex:1;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rank-val{font-size:14px;font-weight:700;color:var(--gold)}
-.empty{color:var(--text2);text-align:center;padding:30px 0}
-</style>
+
 <!-- 弹幕聊天室（v7.6） -->
 <div id="danmaku-layer"></div>
 <div id="chat-fab" title="弹幕聊天室">💬</div>
@@ -3274,27 +2982,7 @@ else{(async()=>{
     <button id="chat-hist-btn" onclick="toggleChatHist()">查看历史</button>
   </div>
 </div>
-<style>
-#danmaku-layer{position:fixed;top:0;left:0;right:0;height:25%;z-index:9994;pointer-events:none;overflow:hidden}
-@keyframes danmaku{from{transform:translateX(100vw)}to{transform:translateX(-100%)}}
-.danmaku{position:absolute;left:0;white-space:nowrap;font-size:15px;font-weight:600;color:#fff;background:rgba(0,0,0,.28);border-radius:6px;padding:3px 12px;text-shadow:0 1px 2px rgba(0,0,0,.9);animation:danmaku linear forwards;pointer-events:none;max-width:80vw;overflow:hidden;text-overflow:ellipsis}
-#chat-fab{position:fixed;left:16px;bottom:16px;z-index:9998;width:44px;height:44px;border-radius:50%;background:var(--travel,#5aa9f0);color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;cursor:grab;box-shadow:0 2px 10px rgba(0,0,0,.35);user-select:none}
-#chat-fab:active{cursor:grabbing}
-#chat-panel{position:fixed;z-index:9997;width:min(320px,calc(100vw - 32px));background:var(--panel,#1c1f26);border:1px solid var(--line,#333);border-radius:10px;display:flex;flex-direction:column;box-shadow:0 4px 20px rgba(0,0,0,.45);overflow:hidden}
-#chat-head{padding:8px 12px;background:var(--travel,#5aa9f0);color:#fff;font-size:13px;font-weight:600;cursor:move;user-select:none}
-.ch-close{float:right;cursor:pointer}
-#chat-hist{height:180px;overflow-y:auto;padding:8px 10px;font-size:12px;line-height:1.7;border-bottom:1px solid var(--line,#333)}
-.ch-msg{color:var(--text,#e6e8ee);word-break:break-all}
-.ch-time{color:var(--text2);margin-right:4px}
-.ch-empty{color:var(--text2);text-align:center;padding:20px 0}
-#chat-input-row{display:flex;gap:6px;padding:8px}
-#chat-input{flex:1;border:1px solid var(--line,#333);border-radius:6px;background:var(--bg2,#14161b);color:var(--text,#e6e8ee);padding:8px 10px;font-size:13px;outline:none}
-#chat-send{padding:8px 14px;border:none;border-radius:6px;background:var(--travel,#5aa9f0);color:#fff;font-size:13px;cursor:pointer}
-#chat-foot{display:flex;justify-content:space-between;align-items:center;padding:6px 10px 8px;font-size:11px}
-.ch-tip{color:var(--text2)}
-#chat-hist-btn{background:none;border:1px solid var(--line,#333);border-radius:6px;color:var(--text2);font-size:11px;padding:4px 10px;cursor:pointer}
-#chat-hist-btn:hover{color:var(--text)}
-</style>
+
 
 
 </body></html>
