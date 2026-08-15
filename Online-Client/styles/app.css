@@ -51,19 +51,19 @@ nav button:hover{color:var(--text);background:rgba(255,255,255,0.03)}
 #view-map.active,#view-city.active,#view-vehicle.active,#view-achrank.active{display:block}
 
 /* ===== 地图（v7.9 交互式：缩放/平移/等高线/曲线路网/云雾） ===== */
-.map-wrap{position:relative;background:radial-gradient(circle at 50% 44%,rgba(59,106,124,0.20) 0%,rgba(36,73,94,0.10) 40%,rgba(13,31,47,0) 72%),linear-gradient(165deg,#0d1f2f 0%,#143246 52%,#0c1c2a 100%);border-radius:var(--radius-sm);overflow:hidden;border:1px solid rgba(90,169,240,.10);cursor:grab}
+.map-wrap{position:relative;background:radial-gradient(circle at 50% 44%,var(--map-bg-radial-center) 0%,var(--map-bg-radial-mid) 40%,var(--map-bg-radial-edge) 72%),linear-gradient(165deg,var(--map-bg-start) 0%,var(--map-bg-mid) 52%,var(--map-bg-end) 100%);border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--map-border);cursor:grab}
 .map-wrap:active{cursor:grabbing}
 .map-wrap svg{display:block;width:100%;height:auto;touch-action:none}
 .map-scene .iso,.map-scene .iso-f,.map-scene .iso-tex,.map-scene .road-line,.map-scene .road-flow,.map-scene .road-label,.map-scene .cloud,.map-scene .city-shield,.map-scene .mist{pointer-events:none}
-.iso{fill:none;stroke:rgba(110,188,154,0.22);stroke-width:1;animation:isoBreathe 4.2s ease-in-out infinite}
-.iso-tex{stroke:rgba(144,205,178,0.10);stroke-width:0.85;stroke-linecap:round}
-.iso-f{fill:rgba(86,165,128,0.05)}
-.iso-f1{fill:rgba(86,165,128,0.04);animation-delay:0s}
-.iso-f2{fill:rgba(86,165,128,0.07);animation-delay:-0.8s}
-.iso-f3{fill:rgba(86,165,128,0.10);animation-delay:-1.6s}
-.iso-f4{fill:rgba(86,165,128,0.13);animation-delay:-2.4s}
-@keyframes isoBreathe{0%,100%{stroke:rgba(110,188,154,0.18);filter:drop-shadow(0 0 0 rgba(120,210,175,0))}50%{stroke:rgba(158,236,201,0.45);filter:drop-shadow(0 0 5px rgba(120,220,180,0.28))}}
-.city-node{cursor:pointer;transition:all 0.2s;stroke:rgba(7,16,24,0.72);stroke-width:1.35;paint-order:stroke fill}
+.iso{fill:none;stroke:var(--map-contour);stroke-width:1;animation:isoBreathe 4.2s ease-in-out infinite}
+.iso-tex{stroke:var(--map-contour-texture);stroke-width:0.85;stroke-linecap:round}
+.iso-f{fill:var(--map-terrain)}
+.iso-f1{fill:var(--map-terrain-1);animation-delay:0s}
+.iso-f2{fill:var(--map-terrain-2);animation-delay:-0.8s}
+.iso-f3{fill:var(--map-terrain-3);animation-delay:-1.6s}
+.iso-f4{fill:var(--map-terrain-4);animation-delay:-2.4s}
+@keyframes isoBreathe{0%,100%{stroke:var(--map-contour-rest);filter:drop-shadow(0 0 0 transparent)}50%{stroke:var(--map-contour-active);filter:drop-shadow(0 0 5px var(--map-contour-glow))}}
+.city-node{cursor:pointer;transition:all 0.2s;stroke:var(--map-node-border);stroke-width:1.35;paint-order:stroke fill}
 .city-node:hover{filter:brightness(1.35)}
 .city-node.closed{opacity:0.45;cursor:not-allowed}
 .city-node.closed:hover{filter:none}
@@ -74,18 +74,18 @@ nav button:hover{color:var(--text);background:rgba(255,255,255,0.03)}
 .city-node.tier-special{fill:var(--special)}
 .city-node.current{stroke:var(--gold);stroke-width:2.6;animation:glow 2s infinite}
 @keyframes glow{0%,100%{filter:drop-shadow(0 0 2px var(--gold))}50%{filter:drop-shadow(0 0 7px var(--gold))}}
-.road-line{stroke:#5f83ab;stroke-width:2.35;fill:none;stroke-linecap:round}
-.road-flow{stroke:#b8ddff;stroke-width:1.35;fill:none;stroke-linecap:round;stroke-dasharray:5 9;animation:roadFlow 3s linear infinite}
+.road-line{stroke:var(--map-road);stroke-width:2.35;fill:none;stroke-linecap:round}
+.road-flow{stroke:var(--map-road-flow);stroke-width:1.35;fill:none;stroke-linecap:round;stroke-dasharray:5 9;animation:roadFlow 3s linear infinite}
 @keyframes roadFlow{from{stroke-dashoffset:14}to{stroke-dashoffset:0}}
-.road-label{font-size:9px;fill:rgba(215,232,246,0.55);text-anchor:middle;text-shadow:0 1px 2px rgba(0,0,0,.7)}
-.city-label{font-size:13px;fill:#eef7ff;text-anchor:middle;pointer-events:none;font-weight:700;text-shadow:0 1px 3px rgba(0,0,0,.95)}
+.road-label{font-size:9px;fill:var(--map-road-label);text-anchor:middle;text-shadow:0 1px 2px var(--map-road-label-shadow)}
+.city-label{font-size:13px;fill:var(--map-city-label);text-anchor:middle;pointer-events:none;font-weight:700;text-shadow:0 1px 3px var(--map-city-label-shadow)}
 .cloud{pointer-events:none;animation:cloudPulse 12s ease-in-out infinite}
 .cloud:nth-child(odd){animation-delay:-4s}
 @keyframes cloudPulse{0%,100%{opacity:0.012}50%{opacity:0.045}}
 .map-tools{position:absolute;top:10px;right:10px;display:flex;gap:6px;z-index:5}
-.map-tools button{width:30px;height:30px;border-radius:8px;border:1px solid rgba(90,169,240,.35);background:rgba(10,20,32,.75);color:var(--text);font-size:15px;cursor:pointer;line-height:1}
-.map-tools button:hover{background:rgba(90,169,240,.25);color:#fff}
-.map-info{display:flex;gap:12px;align-items:center;padding:8px 14px;margin-top:8px;background:rgba(0,0,0,0.45);border-radius:var(--radius-sm);font-size:12px;color:var(--text2)}
+.map-tools button{width:30px;height:30px;border-radius:8px;border:1px solid var(--map-control-border);background:var(--map-control-bg);color:var(--text);font-size:15px;cursor:pointer;line-height:1}
+.map-tools button:hover{background:var(--map-control-hover);color:var(--map-control-hover-text)}
+.map-info{display:flex;gap:12px;align-items:center;padding:8px 14px;margin-top:8px;background:var(--map-info-bg);border-radius:var(--radius-sm);font-size:12px;color:var(--text2)}
 .map-info .city-name{color:var(--gold);font-weight:600;font-size:14px}
 .map-hint{font-size:11px;color:var(--text3);margin-top:6px;text-align:center}
 
