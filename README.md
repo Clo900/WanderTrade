@@ -7,7 +7,7 @@
 ## 主要玩法
 
 - 在 13 座城市之间规划路线并开展贸易
-- 交易约 30 种商品，利用城市价差和市场周期获利
+- 交易 31 种商品，利用城市价差和市场周期获利
 - 应对公共市场事件与旅途随机事件
 - 装配、升级不同类型的车厢和载具核心
 - 接取送货、载客等任务，提升城市声望
@@ -93,6 +93,7 @@ JSON 文件存储
 
 客户端采用原生 JavaScript，并逐步从单文件结构拆分模块：
 
+- `app/runtime.js`：运行模式（在线/单机）与能力判定
 - `core/state.js`：游戏状态容器、批量更新与路径订阅
 - `core/event-bus.js`：业务事件发布与订阅
 - `core/data.js`：城市、道路和商品等静态数据
@@ -100,6 +101,8 @@ JSON 文件存储
 - `economy/price-engine.js`：价格计算与市场周期
 - `economy/events.js`：公共事件系统
 - `gameplay/pathing-core.js`：路径搜索与距离计算
+
+静态样式已从 `index.html` 抽离到 `styles/theme.css`（主题变量）与 `styles/app.css`（布局与组件），脚本按 `runtime → state → event-bus → ui-primitives → data → price-engine → events → pathing-core` 顺序加载。
 
 服务端基于 PowerShell 与 `.NET HttpListener`，负责：
 
@@ -114,9 +117,10 @@ JSON 文件存储
 ```text
 WanderTrade/
 ├─ Online-Client/           统一客户端（在线 / 单机）
-│  ├─ index.html            页面、样式及主要游戏逻辑
+│  ├─ index.html            页面结构、主脚本及游戏逻辑
+│  ├─ styles/               静态样式（theme.css 主题变量 / app.css 布局组件）
 │  └─ src/                  已拆分的客户端模块
-├─ Docs/                    开发与迁移文档
+├─ Docs/                    开发与迁移文档（拆分清单 / 地图索引 / 样式文件表）
 ├─ server.ps1               在线版 HTTP 服务端
 ├─ start-server.bat         本机一键启动脚本
 ├─ setup-admin.ps1          局域网 URL ACL 注册脚本
@@ -173,6 +177,8 @@ State.batch(function () {
 - [游戏设计文档](跑商网页游戏设计文档.md)
 - [事件系统设计](跑商游戏事件系统设计.md)
 - [JavaScript 模块拆分清单](Docs/JS模块拆分首批迁移清单.md)
+- [地图模块实现索引](Docs/地图模块实现索引.md)
+- [颜色与样式文件表](Docs/颜色与样式文件表.md)
 - [部署上线指南](部署上线指南.txt)
 
 ## 常见问题
@@ -205,4 +211,4 @@ http://localhost:8080/api/world
 
 ## 项目状态
 
-当前处于持续开发和模块化整理阶段。核心玩法可以运行，但客户端仍有一部分业务逻辑保留在 `Online-Client/index.html` 中。
+当前版本 **v9.0**，处于持续开发和模块化整理阶段。核心玩法可以运行；客户端已拆出 8 个模块（`runtime`/`state`/`event-bus`/`ui-primitives`/`data`/`price-engine`/`events`/`pathing-core`），静态样式已全部外置到 `styles/` 并支持浅/深色主题切换。地图渲染与交互、任务、载具、在线同步等业务逻辑仍保留在 `Online-Client/index.html` 中，作为后续拆分批次。

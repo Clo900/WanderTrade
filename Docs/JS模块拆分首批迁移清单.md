@@ -12,6 +12,8 @@
 - 未迁移：`showEventCatalog`、`showEventDetail`、私人事件、库存初始化、地图曲线渲染、联机同步、主渲染与 `GS`
 - 目录现状：在线版客户端已移动到 `Online-Client/`，首批模块脚本通过普通 `<script src="..."></script>` 顺序加载
 
+> **第二批补充落地（v9.0）**：`src/core/state.js`（状态容器，`State.set/batch/subscribe` + `GS` Proxy）、`src/core/event-bus.js`（事件总线）与 `src/app/runtime.js`（运行模式判定）已随样式抽离一并落地；全部静态样式迁移至 `Online-Client/styles/theme.css` + `styles/app.css`。当前客户端外部脚本共 8 个，实际加载顺序：`runtime` → `state` → `event-bus` → `ui-primitives` → `data` → `price-engine` → `events` → `pathing-core`。本清单仍以首批 5 文件为设计基线，第二批起的状态/样式方案见 `Docs/地图模块实现索引.md` 与 `Docs/颜色与样式文件表.md`。
+
 ## 本轮落地记录
 
 - `Online-Client/index.html` 已接入 5 个首批模块脚本，保留主内联脚本承载高耦合逻辑
@@ -359,6 +361,9 @@ window.shortestPath = shortestPath;
 - `GS`
 
 仍然是最高风险区域，应放到后面处理。
+
+> **落地进度（v9.0）**：第二批中「启动入口/运行模式」(`runtime.js`)、「状态容器」(`state.js`)、「事件总线」(`event-bus.js`) 与「样式抽离」(`styles/`) 已落地；库存初始化、声望、载具、任务、城市页渲染、地图渲染与交互、在线同步仍留在 `index.html` 主内联脚本中，作为后续批次。
+
 # 统一客户端入口补充说明
 
 在线与单机现共享 `Online-Client/index.html` 和同一套 `src/` 模块，不再维护 `单机版/` 副本。运行模式由 `src/app/runtime.js` 集中判定：玩法模块保持共用，差异只允许出现在持久化、聊天、排行榜和服务端管理能力边界。

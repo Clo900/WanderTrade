@@ -12,6 +12,7 @@
     Online-Client/        唯一客户端目录（在线 / 单机共享）
       index.html          唯一游戏入口
       src/app/runtime.js  运行模式与能力判定（必须保留）
+      styles/             静态样式：theme.css（主题变量）/ app.css（布局组件）（必须保留）
     default-world.json    世界种子（13 城价格/限额，勿删除，删了世界重建）
     world.json            运行中的世界数据（服务器自动生成，含 GM 管理密码）
     players/              玩家存档目录（每个账号一个 json）
@@ -19,7 +20,8 @@
 
   单机模式：直接打开 Online-Client/index.html。file:// 会自动进入单机模式，
   不连接 /api，账号与存档保存在当前浏览器 localStorage。
-  不要只复制 index.html；必须连同 Online-Client/src/ 一起分发。
+  不要只复制 index.html；必须连同 Online-Client/src/ 与 Online-Client/styles/
+  一起分发。
 
   注意：server.ps1 需保持纯英文内容（Windows PowerShell 5.1 编码限制）。
 

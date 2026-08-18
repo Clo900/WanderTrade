@@ -1,6 +1,6 @@
 # 艾尔希亚跑商 · Code Wiki
 
-> 版本：v8.30 ｜ 生成日期：2026-08-14 ｜ 状态：内测就绪
+> 版本：v9.0 ｜ 生成日期：2026-08-18 ｜ 状态：内测就绪
 
 ---
 
@@ -16,6 +16,8 @@
   - [4.4 价格引擎模块 economy/price-engine.js](#44-价格引擎模块-economyprice-enginejs)
   - [4.5 事件系统模块 economy/events.js](#45-事件系统模块-economyeventsjs)
   - [4.6 寻路核心模块 gameplay/pathing-core.js](#46-寻路核心模块-gameplaypathing-corejs)
+  - [4.7 状态容器模块 core/state.js](#47-状态容器模块-corestatejs)
+  - [4.8 事件总线模块 core/event-bus.js](#48-事件总线模块-coreevent-busjs)
 - [5. 服务端模块详解](#5-服务端模块详解)
   - [5.1 HTTP 服务器 server.ps1](#51-http-服务器-serverps1)
   - [5.2 数据模型](#52-数据模型)
@@ -47,12 +49,12 @@
 
 ## 1. 项目总览
 
-**艾尔希亚跑商**（Aierxiya Trade）是一款基于浏览器的多人在线跑商贸易游戏。玩家扮演商队角色，在 13 座城市之间运输 30 种商品，通过低买高卖赚取金币，同时完成任务、收集情报、参与事件机遇。
+**艾尔希亚跑商**（Aierxiya Trade）是一款基于浏览器的多人在线跑商贸易游戏。玩家扮演商队角色，在 13 座城市之间运输 31 种商品，通过低买高卖赚取金币，同时完成任务、收集情报、参与事件机遇。
 
 | 属性 | 说明 |
 |------|------|
 | 项目名称 | 艾尔希亚跑商 (Aierxiya Trade) |
-| 版本 | v8.30 |
+| 版本 | v9.0 |
 | 项目类型 | Browser MMORPG（Web 多人跑商游戏） |
 | 技术栈 | 原生 HTML5 + CSS3 + JavaScript（客户端），PowerShell + .NET HttpListener（服务端） |
 | 数据库 | JSON 文件存档（world.json + players/*.json） |
@@ -61,9 +63,9 @@
 
 ### 核心玩法
 
-- **跑商贸易**：跨 13 城贩运 30 种商品，利用价差获利
+- **跑商贸易**：跨 13 城贩运 31 种商品，利用价差获利
 - **股票式价格引擎**：中枢周期（2 现实小时）驱动物价波动，包含突破、趋势、调控三个阶段
-- **公共事件系统**：42 条确定性事件（全服同步），影响价格、维修成本
+- **公共事件系统**：44 条确定性事件（全服同步），影响价格、维修成本
 - **私人事件系统**：6 种旅途随机事件（劫匪、故障、偶遇行商等）
 - **载具升级**：4 种车厢类型 × 5 等级，搭配核心强化
 - **任务系统**：送货/送客两种任务，4 级稀有度
@@ -78,17 +80,20 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                        客户端 (Browser)                          │
 │  ┌─────────────────────────────────────────────────────────────┐ │
-│  │  Online-Client/index.html  (主文件 ~500KB)                  │ │
-│  │  ├── CSS 主题样式 (内联)                                    │ │
+│  │  Online-Client/index.html  (主文件 ~183KB)                  │ │
+│  │  ├── CSS 外部样式: styles/theme.css + styles/app.css        │ │
 │  │  ├── 认证覆盖层                                             │ │
 │  │  ├── DOM 骨架: topbar / nav / content / views               │ │
 │  │  ├── 内联脚本: GS 状态 / 主渲染 / 地图 / 任务 / 载具 / ...  │ │
 │  │  └── 外部脚本 (按序加载):                                   │ │
-│  │       ① src/core/ui-primitives.js  (toast/modal)            │ │
-│  │       ② src/core/data.js          (CITIES/ROADS/ITEMS)    │ │
-│  │       ③ src/economy/price-engine.js (价格引擎)              │ │
-│  │       ④ src/economy/events.js      (事件系统)              │ │
-│  │       ⑤ src/gameplay/pathing-core.js (寻路算法)            │ │
+│  │       ① src/app/runtime.js           (运行模式判定)         │ │
+│  │       ② src/core/state.js            (状态容器 State/GS)    │ │
+│  │       ③ src/core/event-bus.js        (事件总线)             │ │
+│  │       ④ src/core/ui-primitives.js    (toast/modal)          │ │
+│  │       ⑤ src/core/data.js             (CITIES/ROADS/ITEMS)   │ │
+│  │       ⑥ src/economy/price-engine.js  (价格引擎)             │ │
+│  │       ⑦ src/economy/events.js        (事件系统)             │ │
+│  │       ⑧ src/gameplay/pathing-core.js (寻路算法)             │ │
 │  └─────────────────────────────────────────────────────────────┘ │
 │                              │                                   │
 │                     fetch/async/await                            │
@@ -134,7 +139,10 @@
 ```
 e:\WanderTrade\
 ├── Online-Client/                  # 唯一客户端入口（在线 / 单机两种模式）
-│   ├── index.html                  # 主游戏文件 (含内联 CSS + JS)
+│   ├── index.html                  # 主游戏文件 (含内联 JS；样式已外置)
+│   ├── styles/
+│   │   ├── theme.css               # 主题变量（含地图 --map-* 变量、浅/深色）
+│   │   └── app.css                 # 页面布局与组件样式
 │   └── src/
 │       ├── app/
 │       │   └── runtime.js          # 运行模式与能力判定
@@ -145,12 +153,14 @@ e:\WanderTrade\
 │       │   └── ui-primitives.js    # UI 基础组件 (toast/modal)
 │       ├── economy/
 │       │   ├── price-engine.js    # 价格引擎 (中枢/突破/趋势)
-│       │   └── events.js          # 事件系统 (42 条公共事件)
+│       │   └── events.js          # 事件系统 (44 条公共事件)
 │       └── gameplay/
 │           └── pathing-core.js    # 寻路核心 (Dijkstra)
 │
 ├── Docs/
-│   └── JS模块拆分首批迁移清单.md    # 模块拆分设计文档
+│   ├── JS模块拆分首批迁移清单.md    # 首批模块拆分设计文档
+│   ├── 地图模块实现索引.md          # 地图模块实现索引（文件+行号）
+│   └── 颜色与样式文件表.md          # 客户端 CSS 文件职责与维护边界
 │
 ├── server.ps1                      # HTTP 服务器主程序
 ├── start-server.bat                # 一键启动脚本
@@ -174,12 +184,12 @@ e:\WanderTrade\
 
 **文件路径**：`Online-Client/index.html`
 
-这是整个游戏的核心文件，包含：
+这是整个游戏的核心文件，包含 HTML 结构、内联主脚本与少量动态样式。**所有静态 CSS 已于 v9.0 外置到 `styles/`**：
 
-#### 内联 CSS（约 293 行）
+#### 外部样式（styles/theme.css + styles/app.css）
 
-- **主题变量**：定义 CSS 变量体系（`--bg`, `--accent`, `--gold` 等），形成统一配色
-- **布局样式**：顶栏（#topbar）、导航（nav）、内容区（#content）
+- **主题变量**（`theme.css`）：定义 CSS 变量体系（`--bg`, `--accent`, `--gold` 等）与地图专用 `--map-*` 变量，支持 `[data-theme]` 浅/深色切换
+- **布局样式**（`app.css`）：顶栏（#topbar）、导航（nav）、内容区（#content）
 - **视图显隐**：四大视图（地图/城市/载具/成就排行）通过 `.active` 类切换
 - **地图渲染**：SVG 地图样式（城市节点、道路曲线、等高线、云雾动画）
 - **城市页**：市场面板、任务板、情报所、车站面板
@@ -194,7 +204,7 @@ e:\WanderTrade\
 
 | 模块 | 说明 |
 |------|------|
-| **GS 状态对象** | 全局游戏状态，包含金币、货物、载具、声望、任务等所有玩家数据 |
+| **GS 状态对象** | 全局游戏状态（由 `state.js` 的 `State.init()` 提供），包含金币、货物、载具、声望、任务等所有玩家数据 |
 | **渲染系统** | `render()` 主渲染函数，按视图类型分发渲染 |
 | **地图渲染** | SVG 地图生成、等高线、曲线路网、缩放平移、旅行动画 |
 | **城市页渲染** | 市场卡片、价格图表、情报所、任务板 |
@@ -205,6 +215,8 @@ e:\WanderTrade\
 | **旅行系统** | `startTravel()`、`advanceDay()`、旅行进度动画 |
 | **成就/排行** | 成就解锁检测、排行榜数据获取 |
 | **GM 指令台** | `runCmd()` 本地/GM 指令分发 |
+
+> 注：`GS` 状态对象本身仍由主文件 `State.init()`（来自 `src/core/state.js`）统一管理，主文件通过 `State.set()/State.batch()` 写状态、`EventBus.emit()` 发通知；地图渲染/旅行、任务、载具、在线同步等逻辑仍在主文件内联脚本中。
 
 #### 关键全局变量
 
@@ -236,7 +248,7 @@ AUTH_KEY;     // 登录标识
 
 格式：`[fromCityId, toCityId, distance]`，distance 为里数。
 
-**ITEMS**：30 种物资定义
+**ITEMS**：31 种物资定义（11 基础 + 20 特产）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -333,10 +345,10 @@ AUTH_KEY;     // 登录标识
 
 #### 事件类型
 
-**公共事件**（42 条，确定性触发，全服同步）：
+**公共事件**（44 条，确定性触发，全服同步）：
 - 全局物资事件（+8）：铁锭/精钢刃、布帛、香料、食盐等全王国物资影响
 - 城市整体事件（+6）：铁砧堡锻炉季、盐湾港大潮、霜岭堡暴雪等
-- 城市单品事件（+14）：月影谷月夜祭、紫穗原酿酒季等产地行情
+- 城市单品事件（+16）：月影谷月夜祭、紫穗原酿酒季等产地行情
 - 基础事件（14 条）：王国征兵令、丰收祭、盐湾港风暴等
 - 费用事件（2 条）：商路整顿、王国限价令（影响维修成本）
 
@@ -415,6 +427,48 @@ getActiveEvents() → getItemMult(city, item, mode) → priceFor() → 市场价
 - **图结构**：`{cityId: {neighborCityId: distance}}` 邻接表
 - **算法**：标准 Dijkstra，时间复杂度 O(V²)（节点数 13，可接受）
 - **返回值**：路径数组 + 总距离（里数），若不可达返回 null
+
+### 4.7 状态容器模块 core/state.js
+
+**文件路径**：`Online-Client/src/core/state.js`
+
+**职责**：响应式状态容器，为全局 `GS` 提供路径级订阅与批量更新能力，v9.0 起由主文件 `State.init()` 统一初始化。
+
+#### 导出的接口
+
+| 接口 | 说明 |
+|------|------|
+| `State.set(path, value)` | 按路径写入状态并触发通知（推荐用于嵌套字段） |
+| `State.get(path)` | 按路径读取状态 |
+| `State.batch(fn)` | 批量修改仅触发一次通知 |
+| `State.subscribe(path, cb)` | 路径级订阅；支持父路径冒泡与 `'*'` 通配符 |
+| `State.init(defaults)` | 初始化状态与 `GS` Proxy（主文件启动时调用） |
+
+#### 设计要点
+
+- `GS` 保持为 Proxy 对象，**顶层赋值**可自动触发通知；嵌套写入（如 `GS.vehicle.durability = x`）仍推荐 `State.set()`。
+- 与旧代码完全兼容：现有 `GS.xxx` 读写语法零修改可用。
+- 旅行出发/到达、存档恢复、重置等批量状态变更均走 `State.batch`。
+
+### 4.8 事件总线模块 core/event-bus.js
+
+**文件路径**：`Online-Client/src/core/event-bus.js`
+
+**职责**：轻量发布/订阅总线，用于状态变更与 UI 动画、音效、通知等副作用模块解耦。
+
+#### 导出的接口
+
+| 接口 | 说明 |
+|------|------|
+| `EventBus.on(event, cb)` | 订阅事件，返回取消订阅函数 |
+| `EventBus.off(event, cb)` | 取消订阅 |
+| `EventBus.emit(event, data)` | 发布事件 |
+| `EventBus.once(event, cb)` | 一次性订阅 |
+
+#### 设计要点
+
+- 业务事件（如 `DAMAGE_TAKEN`）由主文件在结算点 `EventBus.emit(...)` 发布，订阅方负责动画/音效等副作用。
+- 与 `State.subscribe` 分工：需要持久化的游戏数据放 `State`，跨模块的瞬时业务通知走 `EventBus`。
 
 ---
 
@@ -746,7 +800,7 @@ price-engine.js  events.js  pathing-core.js
   └────────────┼────────────┘
                │
          index.html (主脚本)
-         ├── GS (全局状态)
+         ├── GS (全局状态，由 state.js 提供)
          ├── render() (主渲染)
          ├── startOnline() (在线同步)
          ├── renderMap() (地图渲染)
@@ -756,6 +810,10 @@ price-engine.js  events.js  pathing-core.js
          ├── runCmd() (指令分发)
          └── ...
 
+state.js (State/GS 状态容器，先于主脚本加载)
+event-bus.js (瞬时业务事件总线，先于主脚本加载)
+runtime.js (运行模式判定，最先加载，无依赖)
+
 依赖方向：数据层 → 引擎层 → 表现层 → 交互层
 ```
 
@@ -764,6 +822,9 @@ price-engine.js  events.js  pathing-core.js
 | 模块 | 依赖 | 被依赖 |
 |------|------|--------|
 | `data.js` | 无 | 所有模块 |
+| `state.js` | 无 | 主脚本 |
+| `event-bus.js` | 无 | 主脚本 |
+| `runtime.js` | 无 | 主脚本（最先加载） |
 | `ui-primitives.js` | 无 | 主脚本 |
 | `price-engine.js` | `data.js`, `events.js`(运行时) | 主脚本 |
 | `events.js` | `data.js`, `GS`(全局) | `price-engine.js`, 主脚本 |
@@ -842,12 +903,14 @@ Online-Client/index.html
 | `events.js` | ✅ 已落地 | `Online-Client/src/economy/` |
 | `pathing-core.js` | ✅ 已落地 | `Online-Client/src/gameplay/` |
 
-**第二阶段建议**：库存初始化、声望系统、载具系统、任务系统、在线同步。
+**第二批补充落地**（v9.0）：`state.js`（状态容器）、`event-bus.js`（事件总线）随 `runtime.js` 一并落地；全部静态样式已抽离到 `Online-Client/styles/`（`theme.css` + `app.css`），`index.html` 不再含静态 `<style>` 区块。
+
+**仍在主文件（后续批次候选）**：库存初始化、声望系统、载具系统、任务系统、地图渲染与交互、在线同步、主渲染与 `GS` 装配。
 
 **约束**：
 - 暂不引入 ES Module / 构建工具
 - 保持全局函数调用方式
-- 脚本加载顺序：`ui-primitives` → `data` → `price-engine` → `events` → `pathing-core` → 主脚本
+- 脚本加载顺序：`runtime` → `state` → `event-bus` → `ui-primitives` → `data` → `price-engine` → `events` → `pathing-core` → 主脚本
 
 ### 9.2 新增事件指南
 
@@ -895,8 +958,8 @@ runCmd("/gm <adminPass> setday <正确天数>")
 - **basePrices**：每城 × 每物的基础价格
 - **purchaseLimits**：每城 × 每物的限购量（按城市等级梯度设计）
 - **物资分类**：
-  - 基础物资（12 种）：谷物、面粉、粗布、铁器、陶器、木杯、纸巾、肥皂、蜡烛、食盐、麻绳
-  - 特产品（18 种）：橡木、菌菇、野蜂蜜、铁锭、精钢刃、海鱼、珍珠、帆布、麦酒、羊毛、奶酪、香料、皮革、毛毯、药草、月光水晶、精油、毛皮、雪参、猛犸牙
+  - 基础物资（11 种）：谷物、面粉、粗布、铁器、陶器、木杯、纸巾、肥皂、蜡烛、食盐、麻绳
+  - 特产品（20 种）：橡木、菌菇、野蜂蜜、铁锭、精钢刃、海鱼、珍珠、帆布、麦酒、羊毛、奶酪、香料、皮革、毛毯、药草、月光水晶、精油、毛皮、雪参、猛犸牙
 
 ### world.json
 
@@ -924,9 +987,9 @@ runCmd("/gm <adminPass> setday <正确天数>")
 | frostfort | 霜岭堡 | frontier | 4 | 毛皮/雪参/猛犸牙 |
 | starfall | 星陨城 | special | 4 | 暂未开放 |
 
-### 30 种物资
+### 31 种物资
 
-#### 基础物资（12 种，cat: basic）
+#### 基础物资（11 种，cat: basic）
 
 | id | 名称 | 图标 | 基础价范围 |
 |----|------|------|-----------|
@@ -942,7 +1005,7 @@ runCmd("/gm <adminPass> setday <正确天数>")
 | salt | 食盐 | 🧂 | ~110-155 |
 | hemp | 麻绳 | 🪢 | ~65-90 |
 
-#### 特产品（18 种，cat: special）
+#### 特产品（20 种，cat: special）
 
 | id | 名称 | 图标 | 基础价范围 | 主产地 |
 |----|------|------|-----------|--------|
@@ -1028,4 +1091,4 @@ frostfort ──45── starfall (暂未开放)
 
 ---
 
-*本文档基于 v8.30 版本代码自动生成，如有更新请同步修改。*
+*本文档基于 v9.0 版本代码自动生成，如有更新请同步修改。*
