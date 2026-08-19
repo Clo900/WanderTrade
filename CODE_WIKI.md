@@ -1,6 +1,6 @@
 # 艾尔希亚跑商 · Code Wiki
 
-> 版本：v9.0 ｜ 生成日期：2026-08-18 ｜ 状态：内测就绪
+> 版本：v9.1 ｜ 生成日期：2026-08-19 ｜ 状态：内测就绪
 
 ---
 
@@ -54,7 +54,7 @@
 | 属性 | 说明 |
 |------|------|
 | 项目名称 | 艾尔希亚跑商 (Aierxiya Trade) |
-| 版本 | v9.0 |
+| 版本 | v9.1 |
 | 项目类型 | Browser MMORPG（Web 多人跑商游戏） |
 | 技术栈 | 原生 HTML5 + CSS3 + JavaScript（客户端），PowerShell + .NET HttpListener（服务端） |
 | 数据库 | JSON 文件存档（world.json + players/*.json） |
@@ -93,7 +93,12 @@
 │  │       ⑤ src/core/data.js             (CITIES/ROADS/ITEMS)   │ │
 │  │       ⑥ src/economy/price-engine.js  (价格引擎)             │ │
 │  │       ⑦ src/economy/events.js        (事件系统)             │ │
-│  │       ⑧ src/gameplay/pathing-core.js (寻路算法)             │ │
+│  │       ⑧ src/economy/trade-graph.js   (经济距离图)           │ │
+│  │       ⑨ src/economy/tax.js           (税务系统)             │ │
+│  │       ⑩ src/economy/trade-draft.js   (交易单/中转面板)       │ │
+│  │       ⑪ src/economy/trade-validate.js(交易单校验)           │ │
+│  │       ⑫ src/economy/trade-preview.js (交易单预览/总额)       │ │
+│  │       ⑬ src/gameplay/pathing-core.js (寻路算法)             │ │
 │  └─────────────────────────────────────────────────────────────┘ │
 │                              │                                   │
 │                     fetch/async/await                            │
@@ -108,7 +113,7 @@
 │  │  ├── 世界管理: LoadWorld / SaveWorld / RefillAllPlayers    │ │
 │  │  ├── 用户认证: SHA256+salt 密码哈希                        │ │
 │  │  ├── 存档 API: register / login / save / player            │ │
-│  │  ├── 交易 API: trade / stocks                              │ │
+│  │  ├── 交易 API: trade / tradeBatch / stocks                 │ │
 │  │  ├── 聊天 API: chat POST/GET                              │ │
 │  │  ├── 排行榜: rankings                                     │ │
 │  │  └── GM 后台: admin (timescale/setday/givegold/...)       │ │
@@ -327,7 +332,7 @@ AUTH_KEY;     // 登录标识
 | `getSellPrice(cityId, itemId, day)` | 获取卖出价（含价差率 + 事件乘数 + 声望加成） |
 | `getPriceHistory(cityId, itemId, days)` | 获取历史价格序列 |
 | `getMarketPhase(cityId, itemId, day)` | 判定当前市场阶段（normal/breakout/trend/intervention） |
-| `getTrend(cityId, itemId)` | 获取趋势标注（高位/低位/突破/调控） |
+| `getTrend(cityId, itemId, mode)` | 获取趋势标注（未来中枢价格变动指向；mode 区分买入/卖出，分别对应各自未来趋势） |
 
 #### 价格公式要点
 
@@ -544,6 +549,7 @@ server.ps1 [-Port 8080] [-Lan]
     "buyPrice": { "grain": 139, ... },
     "cityStocks": { "greentown": { "grain": 70, ... }, ... },
     "visitStamp": { "greentown": 1, ... },
+    "tradeDraft": { "buy": { "cityId": "greentown", "day": 1, "hub": 0, "items": {} }, "sell": { "cityId": "greentown", "day": 1, "hub": 0, "items": {} } },
     "vehicle": { "level": 1, "core": { "level": 1, "dura": 0 }, "wagons": [...] },
     "warehouses": { "greentown": { "items": {...}, "expanded": false, "level": 0 } },
     "reputation": { "greentown": { "exp": 0, "level": 0 }, ... },
@@ -571,6 +577,7 @@ server.ps1 [-Port 8080] [-Lan]
 | POST | `/api/world` | 客户端回退创建世界 |
 | GET | `/api/stocks?user=` | 获取玩家库存 |
 | POST | `/api/trade` | 交易（买入/卖出），body: `{user, city, item, qty, dir}` |
+| POST | `/api/tradeBatch` | 批量交易库存台账（原子），body: `{user, city, dir, items:[{item, qty}]}` |
 | POST | `/api/register` | 注册，body: `{user, pass}` |
 | POST | `/api/login` | 登录，body: `{user, pass}` |
 | GET | `/api/player/{user}` | 获取玩家存档 |

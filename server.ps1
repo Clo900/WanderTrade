@@ -102,6 +102,35 @@ function LoadWorld{
       if(!$w.timeScale){ $w | Add-Member -MemberType NoteProperty -Name timeScale -Value 1 -Force; $dirty=$true }
       if(!$w.lastStockRefill){ $w | Add-Member -MemberType NoteProperty -Name lastStockRefill -Value 0 -Force; $dirty=$true }
       if(!$w.stockMode){ $w | Add-Member -MemberType NoteProperty -Name stockMode -Value 'perPlayer' -Force; $dirty=$true }
+      # vNext：经济距离（tradeRoads）与表现路网解耦。缺失时从 default-world.json 补齐。
+      if(!$w.tradeRoads){
+        try{
+          if(Test-Path $defaultWorldFile){
+            $d0 = Get-Content -Raw $defaultWorldFile | ConvertFrom-Json
+            if($d0 -and $d0.tradeRoads){ $w | Add-Member -MemberType NoteProperty -Name tradeRoads -Value $d0.tradeRoads -Force; $dirty=$true }
+          }
+        }catch{}
+        if(!$w.tradeRoads){
+          # 最后兜底：保持字段存在，但为空（客户端可自行处理/提示）
+          $w | Add-Member -MemberType NoteProperty -Name tradeRoads -Value @() -Force
+          $dirty=$true
+        }
+      }
+      # P1/P3：产地买入差异化与卖出封顶/封底。缺失时从 default-world.json 补齐，兜底为空对象。
+      foreach($cfgName in @('sourceConfig','sellExceptions')){
+        if(!$w.$cfgName){
+          try{
+            if(Test-Path $defaultWorldFile){
+              $d0 = Get-Content -Raw $defaultWorldFile | ConvertFrom-Json
+              if($d0 -and $d0.$cfgName){ $w | Add-Member -MemberType NoteProperty -Name $cfgName -Value $d0.$cfgName -Force; $dirty=$true }
+            }
+          }catch{}
+          if(!$w.$cfgName){
+            $w | Add-Member -MemberType NoteProperty -Name $cfgName -Value @{} -Force
+            $dirty=$true
+          }
+        }
+      }
       if(!$w.adminPass){
         $rng = New-Object System.Security.Cryptography.RNGCryptoServiceProvider
         $bb = New-Object byte[] 6
@@ -131,6 +160,9 @@ function LoadWorld{
       $adminPass = ([System.BitConverter]::ToString($b)).Replace('-','').ToLower()
       $w = [pscustomobject]@{
         worldStart=$(if($script:restoredStart -gt 0){$script:restoredStart}else{[int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()})
+        tradeRoads=$(if($d.tradeRoads){$d.tradeRoads}else{@()})
+        sourceConfig=$(if($d.sourceConfig){$d.sourceConfig}else{@{} })
+        sellExceptions=$(if($d.sellExceptions){$d.sellExceptions}else{@{} })
         basePrices=$d.basePrices
         purchaseLimits=$d.purchaseLimits
         stockMode='perPlayer'
@@ -279,7 +311,8 @@ while($running){
           elseif($b -and $b.basePrices){
             $new = [pscustomobject]@{
               worldStart=[int64]$b.worldStart; basePrices=$b.basePrices
-              purchaseLimits=$b.purchaseLimits; stockMode='perPlayer'; timeScale=1; lastStockRefill=0; adminPass=''
+              purchaseLimits=$b.purchaseLimits; tradeRoads=$b.tradeRoads; stockMode='perPlayer'; timeScale=1; lastStockRefill=0; adminPass=''
+              sourceConfig=$(if($b.sourceConfig){$b.sourceConfig}else{@{} }); sellExceptions=$(if($b.sellExceptions){$b.sellExceptions}else{@{} })
             }
             SaveWorld $new
             SendJson @{ok=$true; world=$new}
@@ -331,6 +364,85 @@ while($running){
             if($stock -lt $qty){ SendJson @{ok=$false; err='stock shortage'} }
             else{ $rec.gs.cityStocks.$city.$item=$stock-$qty; $rec | ConvertTo-Json -Depth 30 | Set-Content $pf -Encoding UTF8; SendJson @{ok=$true; stock=([int]$rec.gs.cityStocks.$city.$item)} }
           }else{ $rec.gs.cityStocks.$city.$item=$stock+$qty; $rec | ConvertTo-Json -Depth 30 | Set-Content $pf -Encoding UTF8; SendJson @{ok=$true; stock=([int]$rec.gs.cityStocks.$city.$item)} }
+        }
+      }
+      elseif($action -eq 'tradeBatch' -and $method -eq 'POST'){
+        $b = ReadBody
+        $w = LoadWorld
+        if(!$w){ SendJson @{ok=$false; err='world not ready'}; continue }
+        MaybeRefill $w
+        $user=[string]$b.user; $city=[string]$b.city; $dir=[string]$b.dir
+        $items=$b.items
+        if(!$city -or !$dir -or !$items){ SendJson @{ok=$false; err='bad tradeBatch payload'}; continue }
+        if($dir -ne 'buy' -and $dir -ne 'sell'){ SendJson @{ok=$false; err='bad dir'}; continue }
+
+        if($w.stockMode -eq 'shared'){
+          if(!$w.stocks -or !$w.stocks.$city){ SendJson @{ok=$false; err='unknown city'}; continue }
+          # 先全量校验 buy
+          if($dir -eq 'buy'){
+            foreach($it in $items){
+              $iid=[string]$it.item; $q=[int]$it.qty
+              if(!$iid -or $q -le 0){ SendJson @{ok=$false; err='bad item'}; continue 2 }
+              if(!$w.stocks.$city.$iid){ SendJson @{ok=$false; err='unknown city/item'}; continue 2 }
+              $stock=[int]$w.stocks.$city.$iid
+              if($stock -lt $q){ SendJson @{ok=$false; err='stock shortage'; item=$iid; stock=$stock}; continue 2 }
+            }
+          }
+          # 再一次性应用
+          foreach($it in $items){
+            $iid=[string]$it.item; $q=[int]$it.qty
+            if(!$iid -or $q -le 0){ continue }
+            $stock=[int]$w.stocks.$city.$iid
+            if($dir -eq 'buy'){ $w.stocks.$city.$iid = $stock - $q } else { $w.stocks.$city.$iid = $stock + $q }
+          }
+          SaveWorld $w
+          SendJson @{ok=$true; stocks=$w.stocks.$city}
+        }else{
+          EnsurePlayersDir
+          $pf = Join-Path $playersDir ($user + '.json')
+          if(!(Test-Path $pf)){ SendJson @{ok=$false; err='user not found'}; continue }
+          $rec = Get-Content -Raw $pf | ConvertFrom-Json
+          if(!$rec.gs){
+            # 新注册未建立存档时：补一个最小可用 gs（以 purchaseLimits 初始化 cityStocks）
+            $rec.gs = [pscustomobject]@{
+              gold=10000; day=1; location='greentown'; vehicle=$null; cargo=@{}; buyPrice=@{}; lots=@{}; visitStamp=@{}
+              cityStocks=[pscustomobject]@{}; lastStockRefill=0; timeScale=1; warehouses=@{}; reputation=@{}
+              materials=@{gear=0;repair_kit=0;fuel_tank=0;engine=0}; tasks=@{board=@();active=@()}; traveling=$null; pendingEvent=$null; repairDisc=$null
+              intel=@{unlocked=@{};log=@()}; knownEvents=@{}; gameStartTime=$w.worldStart; justArrived=$false; tutorial=$null
+              stats=@{bought=0;sold=0;tasks=0;travels=0;distance=0;visits=1;income=0;upgrades=0;reps=0}; achievements=@{}; visitedCities=@('greentown')
+              __savedAt=0; __loaded=$true
+            }
+            foreach($cityProp in $w.purchaseLimits.PSObject.Properties){
+              $cn = $cityProp.Name
+              $rec.gs.cityStocks | Add-Member -MemberType NoteProperty -Name $cn -Value ([pscustomobject]@{}) -Force
+              foreach($itemProp in $cityProp.Value.PSObject.Properties){
+                $rec.gs.cityStocks.$cn | Add-Member -MemberType NoteProperty -Name $itemProp.Name -Value ([int]$itemProp.Value) -Force
+              }
+            }
+          }
+          if(!$rec.gs.cityStocks -or !$rec.gs.cityStocks.$city){ SendJson @{ok=$false; err='unknown city'}; continue }
+          # 先全量校验 buy
+          if($dir -eq 'buy'){
+            foreach($it in $items){
+              $iid=[string]$it.item; $q=[int]$it.qty
+              if(!$iid -or $q -le 0){ SendJson @{ok=$false; err='bad item'}; continue 2 }
+              if(!($rec.gs.cityStocks.$city.PSObject.Properties.Name -contains $iid)){ SendJson @{ok=$false; err='unknown city/item'}; continue 2 }
+              $stock=[int]$rec.gs.cityStocks.$city.$iid
+              if($stock -lt $q){ SendJson @{ok=$false; err='stock shortage'; item=$iid; stock=$stock}; continue 2 }
+            }
+          }
+          # 再一次性应用
+          foreach($it in $items){
+            $iid=[string]$it.item; $q=[int]$it.qty
+            if(!$iid -or $q -le 0){ continue }
+            $stock=[int]$rec.gs.cityStocks.$city.$iid
+            if($dir -eq 'buy'){ $rec.gs.cityStocks.$city.$iid = $stock - $q } else { $rec.gs.cityStocks.$city.$iid = $stock + $q }
+          }
+          # 更新服务器版本戳，避免客户端自动保存覆盖本次库存变更
+          $now = [int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+          if($rec.gs.__savedAt){ $rec.gs.__savedAt = $now }else{ $rec.gs | Add-Member -NotePropertyName __savedAt -NotePropertyValue $now -Force }
+          $rec | ConvertTo-Json -Depth 30 | Set-Content -Path $pf -Encoding UTF8
+          SendJson @{ok=$true; stocks=$rec.gs.cityStocks.$city; serverAt=$now}
         }
       }
       elseif($action -eq 'register' -and $method -eq 'POST'){

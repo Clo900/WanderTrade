@@ -145,10 +145,17 @@ function priceFor(cityId,itemId,day,salt,center,multiplier){
   const jitter=(seededRnd((cityId.charCodeAt(0)*1e3+itemId.charCodeAt(0)+day+Math.floor(salt/7))*37031)-0.5)*0.05;
   return Math.round(hubBase*(1+jitter)*multiplier);
 }
-function getDayPrice(cityId,itemId,day){return priceFor(cityId,itemId,day,0,undefined,getItemMult(cityId,itemId,day,'buy'))}
+function getDayPrice(cityId,itemId,day){
+  const srcMult = (window.SourcePricing && SourcePricing.getBuyMult) ? SourcePricing.getBuyMult(cityId,itemId) : 1;
+  return priceFor(cityId,itemId,day,0,undefined,getItemMult(cityId,itemId,day,'buy')*srcMult);
+}
 function getSellPrice(cityId,itemId,day){
   const base=BASE_PRICES[cityId]?.[itemId];if(base==null)return null;
-  return Math.round(priceFor(cityId,itemId,day,100,Math.round(base*(1-getSpreadRate(cityId,day))),getItemMult(cityId,itemId,day,'sell'))*getRepSellBonus(cityId));
+  const raw=Math.round(priceFor(cityId,itemId,day,100,Math.round(base*(1-getSpreadRate(cityId,day))),getItemMult(cityId,itemId,day,'sell'))*getRepSellBonus(cityId));
+  if(window.PriceExceptions && PriceExceptions.applySell){
+    return PriceExceptions.applySell(cityId,itemId,raw);
+  }
+  return raw;
 }
 function getPriceHistory(cityId,itemId,days=120){
   const h=[];for(let d=Math.max(1,GS.day-days+1);d<=GS.day;d++){
@@ -166,20 +173,22 @@ function getMarketPhase(cityId,itemId,day){
   if(k<=ev.trendHubs)return{phase:'trend',dir:ev.dir};
   return{phase:'intervention'};
 }
-// —— 趋势标注：基于市场阶段 + 当前价在物价带中的位置 ——
-function getTrend(cityId,itemId){
+// —— 趋势标注：未来中枢价格变动指向（mode 区分买入/卖出，分别对应各自未来趋势） ——
+function getTrend(cityId,itemId,mode){
   if(!BASE_PRICES[cityId]||!BASE_PRICES[cityId][itemId])return{label:'数据不足',cls:''};
-  const day=GS.day,hub=Math.floor(day/CENTRAL_PERIOD);
-  const band=getEffectiveBand(cityId,itemId,hub,0);if(!band)return{label:'数据不足',cls:''};
-  const ph=getMarketPhase(cityId,itemId,day);
-  const price=getDayPrice(cityId,itemId,day);
-  if(ph.phase==='breakout')return ph.dir>0?{label:'📈 突破涨停',cls:'up'}:{label:'📉 突破跌停',cls:'down'};
-  if(ph.phase==='trend')return ph.dir>0?{label:'📈 暴涨中',cls:'up'}:{label:'📉 暴跌中',cls:'down'};
-  if(ph.phase==='intervention')return{label:'🏛 王国调控中',cls:'flat'};
-  const pos=(price-band.min)/((band.max-band.min)||1);
-  if(pos>0.85)return{label:'📈 高位运行',cls:'up'};
-  if(pos<0.15)return{label:'📉 低位运行',cls:'down'};
-  return{label:'📊 平稳波动',cls:'flat'};
+  const isSell = (mode==='sell');
+  const priceFn = isSell ? getSellPrice : getDayPrice;
+  const day=GS.day;
+  const cur=priceFn(cityId,itemId,day);
+  // 趋势指向：未来一个中枢周期后的价格相对当前价的变动方向（宏观预案，非当前阶段/日内噪声）
+  const future=priceFn(cityId,itemId,day+CENTRAL_PERIOD);
+  if(cur==null||future==null)return{label:'数据不足',cls:''};
+  const pct=(future-cur)/cur;
+  if(pct>=0.15)return{label:'大幅上涨 ↑↑',cls:'up'};
+  if(pct>=0.03)return{label:'小幅上涨 ↑',cls:'up'};
+  if(pct<=-0.15)return{label:'大幅下跌 ↓↓',cls:'down'};
+  if(pct<=-0.03)return{label:'小幅下跌 ↓',cls:'down'};
+  return{label:'平稳波动 →',cls:'flat'};
 }
 window.BASE_PRICES = BASE_PRICES;
 window.PURCHASE_LIMITS = PURCHASE_LIMITS;

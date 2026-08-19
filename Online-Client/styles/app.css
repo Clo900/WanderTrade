@@ -179,7 +179,7 @@ nav button:hover{color:var(--text);background:rgba(255,255,255,0.03)}
 
 /* ===== 图表面板 ===== */
 .chart-panel{background:var(--panel);border-radius:var(--radius);padding:12px;display:flex;flex-direction:column}
-.chart-panel canvas{width:100%;height:auto}
+.chart-panel canvas{width:100%;height:360px;display:block}
 .chart-panel h4{font-size:13px;color:var(--text2);margin-bottom:8px;display:flex;align-items:center;gap:8px}
 .chart-panel h4 select{padding:4px 8px;background:var(--bg);color:var(--text);border:1px solid var(--text3);border-radius:4px;font-size:12px}
 .chart-time{display:flex;margin-bottom:8px}
@@ -201,10 +201,111 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 .market-tabs button.active{background:var(--card);color:var(--text);font-weight:600}
 .market-tabs button.buy-tab.active{border-bottom:2px solid var(--buy)}
 .market-tabs button.sell-tab.active{border-bottom:2px solid var(--sell)}
+
+/* ===== 交易所式布局（左图表/右交易） ===== */
+.market-panel.market-split{display:flex;flex-direction:column;min-height:0}
+.market-body{
+  display:grid;
+  grid-template-columns:1fr 1.1fr;
+  gap:10px;
+  padding:10px;
+  align-items:stretch;
+}
+/* 左侧以内容高度为准（该列决定整个 market-body 高度基准） */
+.market-chart{min-width:0;display:block}
+.market-chart .chart-panel{height:auto}
+/* 右侧必须严格贴合左侧高度：不参与“高度撑开”，仅在既定高度内滚动 */
+.market-trade{min-width:0;min-height:0;overflow:hidden;display:flex}
+.trade-pane{flex:1;min-height:0;height:100%;display:grid;grid-template-columns:0.92fr 1.08fr;gap:10px}
+.goods-pane,.side-pane{min-height:0;border:1px solid rgba(255,255,255,0.10);border-radius:10px;background:var(--panel);overflow:hidden}
+.pane-title{padding:10px 12px;font-size:13px;font-weight:800;color:var(--text);border-bottom:1px solid rgba(255,255,255,0.08);background:linear-gradient(180deg,rgba(255,255,255,0.04),transparent)}
+.goods-pane{display:flex;flex-direction:column;height:100%}
+.goods-pane .market-cards{
+  /* 物资列表：外层面板固定高度，内部列表区域纵向滚动 */
+  padding:10px;
+  display:grid;
+  grid-template-columns:1fr;
+  gap:8px;
+  flex:1;
+  overflow-y:auto;
+  overflow-x:hidden; /* 只允许纵向滚动，避免出现横向滚动条 */
+  min-height:0;
+  /* 关键：物资少时不要让 slot 被拉伸填满整块面板，行高由内容决定 */
+  align-content:start;
+  grid-auto-rows:min-content;
+}
+.side-pane{display:flex;flex-direction:column;padding:10px;gap:10px;height:100%}
+#trade-draft{flex:1;min-height:0;display:flex;flex-direction:column}
+
+/* ===== 中转面板（交易单） ===== */
+.trade-side{
+  /* 中转购物车面板更高，详情面板较矮，两者相加填满侧栏高度，不重叠不压缩 */
+  --trade-gap: 10px;
+  display:grid;
+  grid-template-rows: 1.6fr 1fr;
+  gap:var(--trade-gap);
+  min-height:0;
+  flex:1;
+  height:100%;
+}
+.trade-cart-panel,.trade-summary-panel{background:var(--bg);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;min-height:0}
+.trade-cart-panel .td-list{flex:1;min-height:0;overflow:auto}
+.trade-summary-panel{min-height:0}
+.trade-summary-panel .td-confirm{margin-top:auto}
+.trade-cart-panel.empty,.trade-summary-panel.empty{color:var(--text3);font-size:12px;line-height:1.6}
+.trade-draft-panel .td-head,.trade-cart-panel .td-head{display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700;color:var(--text)}
+.trade-draft-panel .td-clear,.trade-cart-panel .td-clear{background:none;border:1px solid var(--text3);color:var(--text2);padding:3px 8px;border-radius:6px;cursor:pointer;font-size:11px}
+.trade-draft-panel .td-clear:hover,.trade-cart-panel .td-clear:hover{border-color:var(--gold);color:var(--text)}
+.trade-cart-panel .td-row{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:6px 8px}
+.trade-cart-panel .td-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.trade-cart-panel .td-qty{width:70px;padding:4px 6px;background:var(--bg);border:1px solid var(--text3);border-radius:6px;color:var(--text);font-size:12px;text-align:center}
+.trade-cart-panel .td-del{background:var(--bg);border:1px solid var(--text3);color:var(--text2);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px}
+.trade-cart-panel .td-del:hover{border-color:var(--red);color:var(--red)}
+.trade-summary-panel .ts-row{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text2);padding:6px 8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px}
+.trade-summary-panel .ts-row b{color:var(--gold)}
+.trade-summary-panel .td-confirm{margin-top:4px}
+
+/* ===== 更明显的滚动条（物资列表/购物车） ===== */
+.goods-pane .market-cards::-webkit-scrollbar,
+.trade-cart-panel .td-list::-webkit-scrollbar{width:10px}
+.goods-pane .market-cards::-webkit-scrollbar-track,
+.trade-cart-panel .td-list::-webkit-scrollbar-track{background:rgba(0,0,0,0.12);border-radius:10px}
+.goods-pane .market-cards::-webkit-scrollbar-thumb,
+.trade-cart-panel .td-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.22);border-radius:10px;border:2px solid rgba(0,0,0,0.12)}
+.goods-pane .market-cards::-webkit-scrollbar-thumb:hover,
+.trade-cart-panel .td-list::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.32)}
+.trade-draft-panel .td-row{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:6px 8px}
+.trade-draft-panel .td-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.trade-draft-panel .td-qty{width:70px;padding:4px 6px;background:var(--bg);border:1px solid var(--text3);border-radius:6px;color:var(--text);font-size:12px;text-align:center}
+.trade-draft-panel .td-del{background:var(--bg);border:1px solid var(--text3);color:var(--text2);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px}
+.trade-draft-panel .td-del:hover{border-color:var(--red);color:var(--red)}
+.trade-draft-panel .td-sum{font-size:12px;color:var(--text2);line-height:1.5}
+.trade-draft-panel .td-sum b{color:var(--gold)}
+.trade-draft-panel .td-confirm{width:100%}
 .market-cards{padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;overflow-y:auto;min-height:0}
-.item-card{background:var(--bg);border-radius:var(--radius-sm);padding:10px;cursor:pointer;transition:all 0.2s;border:1px solid transparent;position:relative}
+/* 交易面板的物资列表：强制单列（避免被上面的通用 .market-cards 规则覆盖成两列） */
+.goods-pane .market-cards{grid-template-columns:1fr}
+.item-card{background:var(--bg);border-radius:var(--radius-sm);padding:10px;cursor:pointer;transition:all 0.2s;border:1px solid transparent;position:relative;overflow:hidden}
+.goods-pane .item-card{
+  /* 列表 slot 更“扁”：高度由内容决定，展开后显示滑条与按钮。
+     用纵向 flex 让图标/名称/价格等信息各自成行，避免 inline/block 混排导致文字被截断或点击区域异常。 */
+  padding:8px 10px;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  overflow:visible;
+}
+.goods-pane .item-card .ic-icon{font-size:18px;margin-bottom:0;align-self:flex-start;line-height:1;display:block}
+.goods-pane .item-card .ic-name{font-size:12px;line-height:1.3}
+.goods-pane .item-card .ic-cat{font-size:10px;line-height:1.2}
+.goods-pane .item-card .ic-price{font-size:14px;margin:1px 0;line-height:1.2}
+.goods-pane .item-card .ic-change{line-height:1.2}
+.goods-pane .item-card .ic-limit{line-height:1.2}
+.goods-pane .item-card .ic-cargo-info{line-height:1.2}
+.goods-pane .item-card .ic-price2{margin:2px 0}
 .item-card:hover{border-color:var(--text3);background:var(--cardHover)}
-.item-card.expanded{border-color:var(--accent);background:var(--cardHover)}
+.item-card:active{border-color:var(--buy)}
+.item-card.expanded{border-color:var(--text3);background:var(--cardHover)}
 .item-card .ic-icon{font-size:28px;display:block;margin-bottom:4px}
 .item-card .ic-name{font-size:13px;font-weight:600;color:var(--text)}
 .item-card .ic-cat{font-size:10px;color:var(--text3)}
@@ -230,11 +331,11 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 
 /* ===== 数量滑块 ===== */
 .qty-slider{display:flex;align-items:center;gap:4px;margin:6px 0}
-.qty-slider .qty-arrow{width:26px;height:26px;border:none;border-radius:4px;background:var(--panel);color:var(--text);cursor:pointer;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;transition:0.15s}
+.qty-slider .qty-arrow{width:22px;height:22px;border:none;border-radius:4px;background:var(--panel);color:var(--text);cursor:pointer;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;transition:0.15s}
 .qty-slider .qty-arrow:hover{background:var(--cardHover)}
-.qty-slider input[type=range]{flex:1;height:6px;-webkit-appearance:none;background:var(--panel);border-radius:3px;outline:none;cursor:pointer}
+.qty-slider input[type=range]{flex:1;min-width:0;height:6px;-webkit-appearance:none;background:var(--panel);border-radius:3px;outline:none;cursor:pointer}
 .qty-slider input[type=range]::-webkit-slider-thumb{width:20px;height:20px;-webkit-appearance:none;background:var(--accent);border-radius:50%;cursor:pointer;border:2px solid #fff}
-.qty-val{font-weight:700;font-size:16px;min-width:40px;text-align:center;color:var(--text)}
+.qty-val{font-weight:700;font-size:14px;min-width:34px;text-align:center;color:var(--text)}
 
 /* ===== Toast（居中偏上长条形） ===== */
 #toast-container{position:fixed;top:12%;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none}
@@ -245,7 +346,7 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 @keyframes toastIn{from{transform:translateY(-16px);opacity:0}to{transform:translateY(0);opacity:1}}
 
 /* ===== 居中确认弹窗 ===== */
-.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.65);z-index:9998;display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s}
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.65);z-index:200000;display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s;pointer-events:auto}
 .modal-box{background:var(--panel);border-radius:var(--radius);padding:24px;max-width:380px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,0.6);text-align:center}
 .modal-box h3{font-size:17px;margin-bottom:6px}
 .modal-box p{color:var(--text2);font-size:13px;margin:8px 0 16px;white-space:pre-line}

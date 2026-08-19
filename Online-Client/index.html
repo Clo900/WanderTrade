@@ -18,14 +18,14 @@
 <div id="auth-overlay" class="auth-overlay" style="display: none;">
 <div class="auth-box">
   <h2>🏰 艾尔希亚跑商</h2>
-  <div class="auth-sub">内测阶段，请注册账号进入全王国</div>
+  <div class="auth-sub">单机模式 · 存档保存在当前浏览器</div>
   <div class="auth-field"><label>用户名</label><input type="text" id="auth-user" placeholder="3~12 个字符" maxlength="12" autocomplete="off"></div>
   <div class="auth-field"><label>密码</label><input type="password" id="auth-pass" placeholder="至少 4 位" maxlength="32" autocomplete="off"></div>
   <div class="auth-err" id="auth-err"></div>
-  <div class="auth-btns" id="auth-btns-register" style="display: none;">
+  <div class="auth-btns" id="auth-btns-register" style="">
     <button class="btn btn-primary" onclick="doRegister()">🚀 注册并进入</button>
   </div>
-  <div class="auth-btns" id="auth-btns-login" style="">
+  <div class="auth-btns" id="auth-btns-login" style="display: none;">
     <button class="btn btn-primary" onclick="doLogin()">🔑 登录</button>
   </div>
   <!-- 在线连接失败时才显示。切换到单机模式必须由玩家主动选择。 -->
@@ -33,7 +33,7 @@
     <button class="btn btn-primary" onclick="location.reload()">🔄 重试在线连接</button>
     <button class="btn" onclick="Runtime.switchTo('standalone')">💾 进入单机模式</button>
   </div>
-  <div class="auth-toggle">没有账号？<span onclick="toggleAuth('register')">点此注册</span></div>
+  <div class="auth-toggle">已有账号？<span onclick="toggleAuth('login')">点此登录</span></div>
 </div>
 </div>
 <div id="app">
@@ -42,20 +42,22 @@
     <div class="tb-row">
       <div class="tb-cell" title="网络状态"><span class="tb-label">⚡</span><span class="tb-val">⚪</span></div>
       <div class="tb-cell tb-loc"><span class="tb-loc-name"><span class="dot"></span>绿田村</span></div>
-      <div class="tb-cell"><span class="tb-label">Day</span><span class="tb-val">1</span></div>
+      <div class="tb-cell"><span class="tb-label">Day</span><span class="tb-val">24</span></div>
     </div>
     <div class="tb-row">
       <div class="tb-cell"><span class="tb-label">🚛 货舱</span><span class="tb-val">0/30</span></div>
       <div class="tb-cell"><span class="tb-label">🧳 旅客</span><span class="tb-val">0/4</span></div>
       <div class="tb-cell"><span class="tb-label">⭐ 本城声望</span><span class="tb-val" style="color:var(--gold)">Lv0</span></div>
-      <div class="tb-cell tb-ops"><span class="tb-gold">💰 10,000</span></div>
+      <div class="tb-cell tb-ops"><span class="tb-gold">💰 931,999</span></div>
     </div>
     <div class="tb-row tb-row-user">
       <div class="tb-user-meta">
-        <span class="tb-user-chip" title="当前运行模式">🌐 在线</span>
-        <span class="tb-user-chip" title="当前账号">👤 <b></b></span>
+        <span class="tb-user-chip" title="当前运行模式">💾 单机</span>
+        <span class="tb-user-chip" title="当前账号">👤 <b>111</b></span>
+        
       </div>
       <div class="tb-user-actions">
+        <button class="t-logout" onclick="exportLocalSave()" title="导出当前单机存档">导出</button><button class="t-logout" onclick="importLocalSave()" title="导入并覆盖当前单机存档">导入</button>
         <button class="tb-theme" onclick="toggleTheme()" title="切换到深色">🌙 深色</button>
         <button class="t-logout" onclick="doLogout()" title="退出当前账号">登出</button>
       </div>
@@ -63,16 +65,16 @@
   </div>
 <nav>
   <button data-tab="map" class="active">🗺 地图</button>
-  <button data-tab="city">🏙 城市</button>
-  <button data-tab="vehicle">🚛🏪 载具仓库</button>
+  <button data-tab="city" class="">🏙 城市</button>
+  <button data-tab="vehicle" class="">🚛🏪 载具仓库</button>
   <button data-tab="achrank">🏆📊 成就排行</button>
 </nav>
-<div id="content"><div id="tutorial-board"><div class="tutorial-panel"><div class="tut-head">🎓 新手引导</div>
-    <div class="tut-body">欢迎来到全王国！跟随 5 步学会跑商：<b>买物资 → 接任务 → 前往目的地 → 完成任务 → 卖物资</b></div>
-    <div class="tut-btns"><button class="btn btn-primary" onclick="startTutorial()">🚀 开始引导</button></div></div></div><div id="event-board"></div>
-  <div id="view-map" class="active"><div class="map-wrap"><div style="padding:60px 0;text-align:center;color:var(--text3);font-size:13px">🗺 地图加载中…</div><span style="display:none"><svg viewBox="0 0 1050 580"><line x1="91.875" y1="30" x2="215.625" y2="84.73684210526315" class="road-line"></line><line x1="91.875" y1="30" x2="30" y2="139.4736842105263" class="road-line"></line><line x1="215.625" y1="84.73684210526315" x2="200.15625" y2="276.3157894736842" class="road-line"></line><line x1="30" y1="139.4736842105263" x2="200.15625" y2="276.3157894736842" class="road-line"></line><line x1="91.875" y1="30" x2="432.1875" y2="112.10526315789474" class="road-line"></line><line x1="30" y1="139.4736842105263" x2="246.5625" y2="495.2631578947369" class="road-line"></line><line x1="200.15625" y1="276.3157894736842" x2="370.3125" y2="385.7894736842105" class="road-line"></line><line x1="432.1875" y1="112.10526315789474" x2="741.5625" y2="221.57894736842107" class="road-line"></line><line x1="432.1875" y1="112.10526315789474" x2="586.875" y2="276.3157894736842" class="road-line"></line><line x1="246.5625" y1="495.2631578947369" x2="586.875" y2="276.3157894736842" class="road-line"></line><line x1="246.5625" y1="495.2631578947369" x2="370.3125" y2="385.7894736842105" class="road-line"></line><line x1="370.3125" y1="385.7894736842105" x2="586.875" y2="276.3157894736842" class="road-line"></line><line x1="370.3125" y1="385.7894736842105" x2="617.8125" y2="440.5263157894737" class="road-line"></line><line x1="586.875" y1="276.3157894736842" x2="896.25" y2="331.0526315789474" class="road-line"></line><line x1="741.5625" y1="221.57894736842107" x2="896.25" y2="331.0526315789474" class="road-line"></line><line x1="741.5625" y1="221.57894736842107" x2="1020" y2="57.368421052631575" class="road-line"></line><line x1="896.25" y1="331.0526315789474" x2="1020" y2="57.368421052631575" class="road-line"></line><line x1="586.875" y1="276.3157894736842" x2="1020" y2="57.368421052631575" class="road-line"></line><line x1="617.8125" y1="440.5263157894737" x2="432.1875" y2="112.10526315789474" class="road-line"></line><line x1="370.3125" y1="385.7894736842105" x2="679.6875" y2="550" class="road-line"></line><line x1="1020" y1="57.368421052631575" x2="679.6875" y2="550" class="road-line"></line><text x="153.75" y="54.368421052631575" class="road-label">2里</text><text x="60.9375" y="81.73684210526315" class="road-label">2里</text><text x="207.890625" y="177.5263157894737" class="road-label">2里</text><text x="115.078125" y="204.89473684210526" class="road-label">2里</text><text x="262.03125" y="68.05263157894737" class="road-label">10里</text><text x="138.28125" y="314.36842105263156" class="road-label">12里</text><text x="285.234375" y="328.0526315789474" class="road-label">14里</text><text x="586.875" y="163.84210526315792" class="road-label">15里</text><text x="509.53125" y="191.21052631578948" class="road-label">20里</text><text x="416.71875" y="382.7894736842105" class="road-label">16里</text><text x="308.4375" y="437.5263157894737" class="road-label">14里</text><text x="478.59375" y="328.0526315789474" class="road-label">18里</text><text x="494.0625" y="410.1578947368421" class="road-label">22里</text><text x="741.5625" y="300.68421052631584" class="road-label">25里</text><text x="818.90625" y="273.3157894736842" class="road-label">20里</text><text x="880.78125" y="136.47368421052633" class="road-label">40里</text><text x="958.125" y="191.21052631578948" class="road-label">35里</text><text x="803.4375" y="163.8421052631579" class="road-label">60里</text><text x="525" y="273.3157894736842" class="road-label">25里</text><text x="525" y="464.89473684210526" class="road-label">50里</text><text x="849.84375" y="300.6842105263158" class="road-label">45里</text><circle cx="91.875" cy="30" r="10" class="city-node current tier-village" data-city="greentown"></circle><circle cx="215.625" cy="84.73684210526315" r="10" class="city-node tier-village" data-city="rivertown"></circle><circle cx="30" cy="139.4736842105263" r="10" class="city-node tier-village" data-city="milltown"></circle><circle cx="200.15625" cy="276.3157894736842" r="10" class="city-node tier-village" data-city="pasturetown"></circle><circle cx="432.1875" cy="112.10526315789474" r="12" class="city-node tier-town" data-city="oaktown"></circle><circle cx="741.5625" cy="221.57894736842107" r="12" class="city-node tier-town" data-city="ironfort"></circle><circle cx="370.3125" cy="385.7894736842105" r="12" class="city-node tier-town" data-city="saltbay"></circle><circle cx="246.5625" cy="495.2631578947369" r="12" class="city-node tier-town" data-city="purplefield"></circle><circle cx="617.8125" cy="440.5263157894737" r="12" class="city-node tier-town" data-city="windoasis"></circle><circle cx="896.25" cy="331.0526315789474" r="12" class="city-node tier-town" data-city="moonvalley"></circle><circle cx="586.875" cy="276.3157894736842" r="16" class="city-node tier-capital" data-city="dawncapital"></circle><circle cx="1020" cy="57.368421052631575" r="12" class="city-node tier-frontier" data-city="frostfort"></circle><circle cx="679.6875" cy="550" r="12" class="city-node tier-special" data-city="starfall"></circle><text x="91.875" y="54" class="city-label">绿田村</text><text x="215.625" y="108.73684210526315" class="city-label">溪木村</text><text x="30" y="163.4736842105263" class="city-label">磨坊村</text><text x="200.15625" y="300.3157894736842" class="city-label">牧歌村</text><text x="432.1875" y="138.10526315789474" class="city-label">橡木镇</text><text x="741.5625" y="247.57894736842107" class="city-label">铁砧堡</text><text x="370.3125" y="411.7894736842105" class="city-label">盐湾港</text><text x="246.5625" y="521.2631578947369" class="city-label">紫穗原</text><text x="617.8125" y="466.5263157894737" class="city-label">风语绿洲</text><text x="896.25" y="357.0526315789474" class="city-label">月影谷</text><text x="586.875" y="306.3157894736842" class="city-label">晨曦王都</text><text x="1020" y="83.36842105263158" class="city-label">霜岭堡</text><text x="679.6875" y="576" class="city-label">星陨城</text></svg></span></div></div>
-  <div id="view-city"></div>
-  <div id="view-vehicle"></div>
+<div id="content">
+  <div id="tutorial-board"></div>
+  <div id="event-board"></div>
+  <div id="view-map" class="active"></div>
+  <div id="view-city" class=""></div>
+  <div id="view-vehicle" class=""></div>
   <div id="view-achrank"></div>
 </div>
 </div>
@@ -80,10 +82,19 @@
 <script src="src/app/runtime.js"></script>
 <script src="src/core/state.js"></script>
 <script src="src/core/event-bus.js"></script>
-<script src="src/core/ui-primitives.js"></script>
+<!-- cache-bust: 修复弹窗无法点击/无法关闭 -->
+<script src="src/core/ui-primitives.js?v=921"></script>
 <script src="src/core/data.js"></script>
+<script src="src/economy/source-pricing.js"></script>
+<script src="src/economy/price-exceptions.js"></script>
 <script src="src/economy/price-engine.js"></script>
 <script src="src/economy/events.js"></script>
+<script src="src/economy/trade-graph.js"></script>
+<script src="src/economy/tax.js"></script>
+<!-- cache-bust: 修复 tradeDraft 非空误判 -->
+<script src="src/economy/trade-draft.js?v=921"></script>
+<script src="src/economy/trade-validate.js"></script>
+<script src="src/economy/trade-preview.js"></script>
 <script src="src/gameplay/pathing-core.js"></script>
 <script>
 /* ================================================
@@ -96,6 +107,8 @@ State.init({
   timeScale: 1, gameStartTime: Date.now(),
   vehicle: {level:1,speed:5,durability:100,durabilityMax:100,passengers:0,core:{lv:0,speed:0,dura:0},wagons:[{cur:{id:'w0',type:'balanced',lv:1},owned:{balanced_1:true}}]},
   cargo: {}, buyPrice: {}, lots: {}, visitStamp: {},
+  // vNext：中转面板（交易单），buy/sell 分离；任何锚点变化将触发清空
+  tradeDraft: {buy:{cityId:null,day:null,hub:null,items:{}},sell:{cityId:null,day:null,hub:null,items:{}}},
   cityStocks: {}, lastStockRefill: Date.now(),
   warehouses: {}, reputation: {},
   materials: {gear:0,repair_kit:0,fuel_tank:0,engine:0},
@@ -105,6 +118,28 @@ State.init({
   stats: {bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0},
   achievements: {}, visitedCities: ['greentown'],
   __savedAt: 0, __loaded: false
+});
+
+// ===== 清理误注入的调试 DOM（避免阻塞点击） =====
+// 注意：这些误注入节点可能出现在文档末尾（在本脚本执行之后才被浏览器解析出来），
+// 所以要在 DOMContentLoaded 后再清理一次。
+function cleanupInjectedDom(){
+  try{
+    // 删除“没有绑定事件”的静态 modal overlay（会导致弹窗无法点击关闭）
+    document.querySelectorAll('.modal-overlay').forEach(function(ov){
+      const ok = ov.querySelector('.btn-ok');
+      const cancel = ov.querySelector('.btn-cancel');
+      if(ok && cancel && ok.onclick==null && cancel.onclick==null){
+        ov.remove();
+      }
+    });
+    // 删除浏览器检查器注入的辅助层（class 名包含 trae-browser-inspect-）
+    document.querySelectorAll('[class*=\"trae-browser-inspect-\"]').forEach(function(el){ el.remove(); });
+  }catch(e){}
+}
+document.addEventListener('DOMContentLoaded', function(){
+  cleanupInjectedDom();
+  setTimeout(cleanupInjectedDom, 0);
 });
 
 // ===== 状态订阅 + EventBus 桥接（v9.0） =====
@@ -123,6 +158,27 @@ State.subscribe('traveling', function(traveling){
   }else{
     EventBus.emit(EventBus.EVENTS.TRAVEL_ARRIVE, {});
   }
+});
+
+// ===== vNext：中转面板锚点变化 → 提示并清空（buy/sell 两个 draft 同时清空） =====
+let __draftLastHub = (window.TradeGraph&&TradeGraph.hub)?TradeGraph.hub(State.get('day')):0;
+function clearDraftOnAnchorChange(reason){
+  if(!window.TradeDraft||!TradeDraft.anyNonEmpty||!TradeDraft.anyNonEmpty())return;
+  showModal('⚠ 物价已更新',
+    `由于游戏日/中枢点/城市/面板发生变化，为避免按旧价成交，已清空中转面板内容。`,
+    '知道了',()=>{
+      TradeDraft.clearAll(reason||'anchor-change');
+      // 若当前在城市页，立即刷新市场区域
+      if(currentTab==='city')renderMarketCards();
+    });
+}
+State.subscribe('location', function(){
+  clearDraftOnAnchorChange('location');
+});
+State.subscribe('day', function(day){
+  const h=(window.TradeGraph&&TradeGraph.hub)?TradeGraph.hub(day):Math.floor((Math.max(1,day)-1)/12);
+  if(h!==__draftLastHub){ __draftLastHub=h; clearDraftOnAnchorChange('hub'); }
+  else clearDraftOnAnchorChange('day');
 });
 
 // 事件图鉴（始终展示全部14条定义，不受城市限制）
@@ -391,6 +447,7 @@ function applySaved(saved){
     State.set('repairDisc', saved.repairDisc);
     State.set('intel', saved.intel||{unlocked:{},log:[]});
     State.set('knownEvents', saved.knownEvents||{});
+    State.set('tradeDraft', saved.tradeDraft||{buy:{cityId:null,day:null,hub:null,items:{}},sell:{cityId:null,day:null,hub:null,items:{}}});
     State.set('justArrived', saved.justArrived||false);
     State.set('tutorial', saved.tutorial||{step:6});
     State.set('__savedAt', saved.__savedAt||Date.now());
@@ -411,6 +468,21 @@ function applyWorld(world){
   if(!world)return;
   if(world.basePrices)BASE_PRICES=world.basePrices;
   if(world.purchaseLimits)PURCHASE_LIMITS=world.purchaseLimits;
+  // vNext：经济距离（后台距离）与表现路网解耦。经济系统使用 world.tradeRoads（不影响地图/旅行）。
+  try{
+    if(world.tradeRoads && window.TradeGraph && TradeGraph.setRoads){
+      TradeGraph.setRoads(world.tradeRoads);
+    }
+  }catch(e){}
+  // P1/P3：产地买入差异化与卖出封顶/封底（world 下发覆盖默认，缺省则用模块默认值）
+  try{
+    if(world.sourceConfig && window.SourcePricing && SourcePricing.setSourceConfig){
+      SourcePricing.setSourceConfig(world.sourceConfig);
+    }
+    if(world.sellExceptions && window.PriceExceptions && PriceExceptions.setExceptions){
+      PriceExceptions.setExceptions(world.sellExceptions);
+    }
+  }catch(e){}
   State.batch(function(){
     if(world.worldStart)State.set('gameStartTime', world.worldStart);
     if(world.timeScale)State.set('timeScale', world.timeScale);
@@ -439,7 +511,7 @@ async function startOnline(){
   if(w.world)applyWorld(w.world);
   else{
     // 兜底：服务器尚未自动建世界时由客户端创建
-    const created={basePrices:BASE_PRICES,purchaseLimits:PURCHASE_LIMITS,worldStart:Date.now()};
+    const created={basePrices:BASE_PRICES,purchaseLimits:PURCHASE_LIMITS,tradeRoads:window.ROADS||[],worldStart:Date.now(),sourceConfig:(window.SourcePricing&&SourcePricing.DEFAULT_SOURCE_CONFIG)||{},sellExceptions:(window.PriceExceptions&&PriceExceptions.DEFAULT_SELL_EXCEPTIONS)||{}};
     const r=await NET.post('/api/world',created);
     if(!r||!r.ok){ONLINE=false;return false;}
     applyWorld(created);
@@ -1234,12 +1306,18 @@ function consumeLots(gid,qty){
   State.set('lots', lots);
   return{revenue:revenue,sameQty:sameQty,arbitrage:arbitrage};
 }
-function buyItem(itemId,qty){
-  advanceDay();if(GS.traveling)return{ok:false,msg:'旅行中不可交易'};
+function buyItem(itemId,qty,opts){
+  opts=opts||{};
+  if(!opts.skipAdvance)advanceDay();
+  if(GS.traveling)return{ok:false,msg:'旅行中不可交易'};
   const city=GS.location,cityObj=getCity(city);
   if(!getBuyableGoods(city).includes(itemId))return{ok:false,msg:'该城不可购买此物资（声望不足或非本城货物）'};
   const price=getDayPrice(city,itemId,GS.day);if(!price)return{ok:false,msg:'价格数据异常'};
-  const total=price*qty;if(GS.gold<total)return{ok:false,msg:'资金不足'};
+  const total=price*qty;
+  const taxRate=(window.Tax&&Tax.getRate)?Tax.getRate(getRepLevel(city)):0;
+  const tax=(window.Tax&&Tax.calc)?Tax.calc(total,taxRate):0;
+  const pay=total+tax;
+  if(GS.gold<pay)return{ok:false,msg:'资金不足'};
   const stock=getCurStock(city,itemId);if(qty>stock)return{ok:false,msg:'库存不足'};
   if(getCargoFree()<qty)return{ok:false,msg:'载具容量不足'};
   const oldQty=GS.cargo[itemId]||0,oldCost=GS.buyPrice[itemId]||0;
@@ -1258,19 +1336,26 @@ function buyItem(itemId,qty){
     cs[city][itemId] = stock-qty;
     State.set('cityStocks', cs);
   });
-  State.set('gold', GS.gold-total);
-  EventBus.emit(EventBus.EVENTS.ITEM_BOUGHT, {itemId:itemId, qty:qty, price:price, total:total});
+  State.set('gold', GS.gold-pay);
+  EventBus.emit(EventBus.EVENTS.ITEM_BOUGHT, {itemId:itemId, qty:qty, price:price, total:total, taxRate:taxRate, tax:tax, pay:pay});
   const repGain=qty;
   addRep(city,repGain);
   statAdd('bought',qty);
   if(GS.tutorial&&GS.tutorial.step===1&&ITEMS[itemId].cat==='basic')advanceTutorial(1);
-  return{ok:true,msg:`购入${qty}件${getItem(itemId).name}${repGain>0?` · ⭐本城声望 +${repGain}`:''}`};
+  const taxNote=tax>0?` · 税${fmt(tax)}（${Math.round(taxRate*100)}%）`:'';
+  return{ok:true,msg:`购入${qty}件${getItem(itemId).name}${taxNote}${repGain>0?` · ⭐本城声望 +${repGain}`:''}`};
 }
-function sellItem(itemId,qty){
-  advanceDay();if(GS.traveling)return{ok:false,msg:'旅行中不可交易'};
+function sellItem(itemId,qty,opts){
+  opts=opts||{};
+  if(!opts.skipAdvance)advanceDay();
+  if(GS.traveling)return{ok:false,msg:'旅行中不可交易'};
   const held=GS.cargo[itemId]||0;if(held<qty)return{ok:false,msg:'持有不足'};
   const sPrice=getSellPrice(GS.location,itemId,GS.day);if(!sPrice)return{ok:false,msg:'价格异常'};
   const{revenue,sameQty,arbitrage}=consumeLots(itemId,qty);
+  const city=GS.location;
+  const taxRate=(window.Tax&&Tax.getRate)?Tax.getRate(getRepLevel(city)):0;
+  const tax=(window.Tax&&Tax.calc)?Tax.calc(revenue,taxRate):0;
+  const net=revenue-tax;
   const remaining=held-qty;
   State.batch(function(){
     var cargo = State.get('cargo') || {};
@@ -1284,14 +1369,15 @@ function sellItem(itemId,qty){
     State.set('cargo', cargo);
     State.set('buyPrice', buyPrice);
   });
-  State.set('gold', GS.gold+revenue);
-  EventBus.emit(EventBus.EVENTS.ITEM_SOLD, {itemId:itemId, qty:qty, revenue:revenue});
+  State.set('gold', GS.gold+net);
+  EventBus.emit(EventBus.EVENTS.ITEM_SOLD, {itemId:itemId, qty:qty, revenue:revenue, taxRate:taxRate, tax:tax, net:net});
   const repGain=Math.floor(revenue/1000);
   addRep(GS.location,repGain);
   statAdd('sold',qty);statAdd('income',revenue);
   if(GS.tutorial&&GS.tutorial.step===5)advanceTutorial(5);
   const sameNote=sameQty>0?`（其中${sameQty}件同城同次买入按${arbitrage?'当前买入价60%':'买入价80%'}结算）`:'';
-  return{ok:true,msg:`售出${qty}件${getItem(itemId).name}，得${fmt(revenue)}金${sameNote}${repGain>0?` · ⭐本城声望 +${repGain}`:''}`};
+  const taxNote=tax>0?` · 税${fmt(tax)}（${Math.round(taxRate*100)}%）`:'';
+  return{ok:true,msg:`售出${qty}件${getItem(itemId).name}，得${fmt(net)}金${taxNote}${sameNote}${repGain>0?` · ⭐本城声望 +${repGain}`:''}`};
 }
 function startTravel(destId){
   advanceDay();if(GS.traveling)return{ok:false,msg:'已在旅行中'};
@@ -2345,19 +2431,32 @@ function updateTravelUI(){
 function renderCity(){
   const loc=GS.location,city=getCity(loc);
   const chartable=getChartableItems();
-  let html=`<div class="city-layout"><div class="city-left">`;
-  html+=`<div class="chart-panel"><h4>📈 行情走势 <select id="chart-select" onchange="onChartSelect()"><option value="">-- 选择物资 --</option>`;
+  // v9.1：城市市场布局参考“交易所”样式：左侧为物价图，右侧为中转面板 + 物品列表
+  let html=`<div class="city-layout">`;
+  html+=`<div class="market-panel market-split">`;
+  html+=`<div class="market-tabs"><button class="buy-tab active" onclick="switchMarket('buy')">🛒 购入</button><button class="sell-tab" onclick="switchMarket('sell')">💰 售出</button></div>`;
+  html+=`<div class="market-body">`;
+  // 左侧：物价图（填充“空缺区域”）
+  html+=`<div class="market-chart"><div class="chart-panel"><h4>📈 行情走势 <select id="chart-select" onchange="onChartSelect()"><option value="">-- 选择物资 --</option>`;
   for(let gid of chartable){const it=getItem(gid);html+=`<option value="${gid}" ${gid===_chartItem?'selected':''}>${it.icon} ${it.name}</option>`}
   html+=`</select></h4><div class="chart-time">${[30,60,120].map(d=>`<button data-days="${d}" class="${_chartDays===d?'active':''}">${d}日</button>`).join('')}</div>`;
-  html+=`<canvas id="price-chart" height="300" style="width:100%"></canvas><div class="chart-stats" id="chart-stats"></div></div></div>`;
-  html+=`<div class="city-right"><div class="market-panel">`;
-  html+=`<div class="market-tabs"><button class="buy-tab active" onclick="switchMarket('buy')">🛒 购入</button><button class="sell-tab" onclick="switchMarket('sell')">💰 售出</button></div>`;
-  html+=`<div class="market-cards" id="market-cards"></div></div></div></div>`;
+  html+=`<canvas id="price-chart" height="360" style="width:100%"></canvas><div class="chart-stats" id="chart-stats"></div></div></div>`;
+  // 右侧：交易面板（左：物资列表｜右：购物车与详情/确认）
+  html+=`<div class="market-trade"><div class="trade-pane">`;
+  html+=`  <div class="goods-pane"><div class="pane-title">物资列表</div><div class="market-cards" id="market-cards"></div></div>`;
+  html+=`  <div class="side-pane"><div id="trade-draft"></div></div>`;
+  html+=`</div></div>`;
+  html+=`</div></div></div>`;
   // 情报所（与市场同级；门票购买后查看周边城市事件）
   html+=renderIntel();
   // 任务板（与情报所同级）
   html+=renderTaskBoard();
-  setTimeout(()=>{renderMarketCards();if(_chartItem)drawChart();},0);
+  setTimeout(()=>{
+    renderMarketCards();
+    refreshChartSelectForMarketTab();
+    if(_chartItem)drawChart();
+    else syncMarketHeightToChart();
+  },0);
   return html;
 }
 // ===== 车站面板（载具仓库页顶部：保养/维修/升级 + 车厢管理） =====
@@ -2737,15 +2836,39 @@ function renderIntel(){
   </div>`;
 }
 function getChartableItems(){
-  const loc=GS.location,city=getCity(loc),wh=GS.warehouses[loc],s=new Set([...city.goods]);
+  const loc=GS.location,city=getCity(loc);
+  // vNext：列表随“购入/售出”切换
+  if(marketTab==='buy'){
+    return getBuyableGoods(loc);
+  }
+  // 售出：仅车厢持有（不含仓库）
+  const s=new Set();
   for(let k of Object.keys(GS.cargo))if(GS.cargo[k]>0)s.add(k);
-  if(wh)for(let k of Object.keys(wh.items))if(wh.items[k]>0)s.add(k);return[...s];
+  return[...s];
 }
 function onChartSelect(){const sel=document.getElementById('chart-select');_chartItem=sel.value||null;if(_chartItem)drawChart()}
-function switchMarket(tab){marketTab=tab;renderMarketCards()}
+function switchMarket(tab){
+  if(tab===marketTab)return;
+  // vNext：中转面板有内容时，切换买卖也必须提示并清空（清空 buy/sell 两个 draft）
+  if(window.TradeDraft&&TradeDraft.anyNonEmpty&&TradeDraft.anyNonEmpty()){
+    showModal('⚠ 物价已更新',
+      `中转面板中仍有未确认的交易单。\n为避免按旧价成交，切换面板将清空中转面板内容。`,
+      '知道了',()=>{
+        TradeDraft.clearAll('tab-switch');
+        marketTab=tab;
+        renderMarketCards();
+        refreshChartSelectForMarketTab();
+      });
+    return;
+  }
+  marketTab=tab;
+  renderMarketCards();
+  refreshChartSelectForMarketTab();
+}
 function renderMarketCards(){
   const loc=GS.location,city=getCity(loc),cont=document.getElementById('market-cards');
   if(!cont)return;
+  renderTradeDraftPanel();
   document.querySelector('.buy-tab')?.classList.toggle('active',marketTab==='buy');
   document.querySelector('.sell-tab')?.classList.toggle('active',marketTab==='sell');
   const items=[];
@@ -2756,20 +2879,18 @@ function renderMarketCards(){
       items.push({gid,it,price,ch,stock,max,type:'buy'});
     }
   }else{
-    const wh=GS.warehouses[loc],seen=new Set();
+    // vNext：售出仅显示车厢持有（不含仓库）
     for(let gid of Object.keys(GS.cargo)){if(!GS.cargo[gid])continue;
       const it=getItem(gid),price=getDayPrice(loc,gid,GS.day),sPrice=getSellPrice(loc,gid,GS.day);
+      const sYest=getSellPrice(loc,gid,Math.max(1,GS.day-1));
+      const ch=sYest&&sPrice?sPrice-sYest:0;
       if(!price)continue;
-      const whHeld=wh?.items?.[gid]||0;items.push({gid,it,price,sPrice,held:GS.cargo[gid],whHeld,type:'sell'});seen.add(gid);
-    }
-    if(wh)for(let gid of Object.keys(wh.items)){if(seen.has(gid)||!wh.items[gid])continue;
-      const it=getItem(gid),price=getDayPrice(loc,gid,GS.day),sPrice=getSellPrice(loc,gid,GS.day);
-      if(!price)continue;items.push({gid,it,price,sPrice,held:0,whHeld:wh.items[gid],type:'sell'});
+      items.push({gid,it,price,sPrice,ch,held:GS.cargo[gid],cost:GS.buyPrice[gid]||price,type:'sell'});
     }
   }
   let html='';
   for(let r of items){
-    const isExp=expandedCard===r.gid;
+    const isExp = expandedCard===r.gid;
     const chCls=r.ch>0?'up':(r.ch<0?'down':'flat'),chStr=r.ch>0?`+${r.ch}`:(r.ch<0?r.ch:0);
     html+=`<div class="item-card${isExp?' expanded':''}" data-gid="${r.gid}" onclick="toggleCard('${r.gid}')">`;
     html+=`<span class="ic-icon">${r.it.icon}</span><span class="ic-name">${r.it.name}</span>`;
@@ -2779,14 +2900,19 @@ function renderMarketCards(){
       html+=`<div class="ic-change ${chCls}">${chStr}</div>`;
       html+=`<div class="ic-limit">库存 ${r.stock}/${r.max}</div>`;
       html+=`<div class="ic-cargo-info">🚛 ${getUsedCargo()+getTaskCargoUsed()}/${getVehicleCapacity()}</div>`;
-      const afford=Math.floor(GS.gold/r.price);
+      const afford=Math.floor(GS.gold/Math.max(1,r.price||1));
       const maxBuy=Math.min(r.stock, afford, getCargoFree());
-      html+=`<div class="ic-detail">${qtySliderHTML(r.gid,maxBuy,Math.min(1,maxBuy))}<div class="row"><button class="btn-action btn-buy" onclick="event.stopPropagation();doAction('buy','${r.gid}')">确认购入</button></div></div>`;
+      if(maxBuy<=0){
+        html+=`<div class="ic-detail"><div class="row" style="color:var(--text3)">无法购入（资金/货舱/库存不足）</div></div>`;
+      }else{
+        html+=`<div class="ic-detail">${qtySliderHTML(r.gid,maxBuy,Math.min(1,maxBuy))}<div class="row"><button class="btn-action btn-buy" onclick="event.stopPropagation();draftFromSlider('buy','${r.gid}')">加入中转面板</button></div></div>`;
+      }
     }else{
-      const cost=GS.buyPrice[r.gid]||r.price;
-      html+=`<div class="ic-price2"><div class="ic-cost">成本：${fmt(cost)}</div><div class="ic-sell">当前售价：${fmt(r.sPrice)}</div></div>`;
-      html+=`<div class="ic-cargo-info">🚛 ${r.held}件 ${r.whHeld>0?`<span class="wh-badge">仓${r.whHeld}</span>`:''}</div>`;
-      html+=`<div class="ic-detail">${qtySliderHTML(r.gid,r.held,Math.min(1,r.held))}<div class="row"><button class="btn-action btn-sell" onclick="event.stopPropagation();doAction('sell','${r.gid}')">确认售出</button></div></div>`;
+      html+=`<div class="ic-price sell">${fmt(r.sPrice)}</div>`;
+      html+=`<div class="ic-change ${chCls}">${chStr}</div>`;
+      html+=`<div class="ic-limit">持有 ${r.held}件 · 成本 ${fmt(r.cost)}</div>`;
+      html+=`<div class="ic-cargo-info">🚛 ${getUsedCargo()+getTaskCargoUsed()}/${getVehicleCapacity()}</div>`;
+      html+=`<div class="ic-detail">${qtySliderHTML(r.gid,r.held,Math.min(1,r.held))}<div class="row"><button class="btn-action btn-sell" onclick="event.stopPropagation();draftFromSlider('sell','${r.gid}')">加入中转面板</button></div></div>`;
     }
     html+=`</div>`;
   }
@@ -2798,7 +2924,217 @@ function renderMarketCards(){
     if(first){_chartItem=first.gid;const sel=document.getElementById('chart-select');if(sel)sel.value=_chartItem;drawChart();}
   }
 }
-function toggleCard(gid){expandedCard=expandedCard===gid?null:gid;renderMarketCards();if(_chartItem)drawChart()}
+function toggleCard(gid){
+  expandedCard = (expandedCard===gid)?null:gid;
+  renderMarketCards();
+  if(_chartItem)drawChart();
+}
+function refreshChartSelectForMarketTab(){
+  const sel=document.getElementById('chart-select');if(!sel)return;
+  const items=getChartableItems();
+  const old=_chartItem;
+  let html=`<option value="">-- 选择物资 --</option>`;
+  for(const gid of items){const it=getItem(gid);html+=`<option value="${gid}" ${gid===old?'selected':''}>${it.icon} ${it.name}</option>`}
+  sel.innerHTML=html;
+  if(old && items.includes(old)){ _chartItem=old; }
+  else{ _chartItem=items[0]||null; if(_chartItem)sel.value=_chartItem; }
+  if(_chartItem)drawChart(); else {document.getElementById('chart-stats').innerHTML='';}
+}
+function renderTradeDraftPanel(){
+  const box=document.getElementById('trade-draft');if(!box)return;
+  if(!window.TradeDraft)return;
+  const td=TradeDraft.getDraftState();
+  const mode=marketTab;
+  const d=td[mode];
+  const entries=[];
+  if(d && d.items)for(const gid of Object.keys(d.items)){const q=parseInt(d.items[gid])||0;if(q>0)entries.push({gid,qty:q});}
+  if(!entries.length){
+    // 中转面板为空时也保留详情面板：具体数据按 0 / 空 显示
+    const used0=getUsedCargo(),cap0=getVehicleCapacity();
+    const pre0 = window.TradePreview ? (mode==='buy'?TradePreview.previewBuy(d):TradePreview.previewSell(d)) : null;
+    const rate0 = pre0 ? pre0.taxRate : (window.Tax?Tax.getRate(getRepLevel(GS.location)):0);
+    const cargoLine0 = `货舱 ${used0}/${cap0}${mode==='buy'?'（+0）':'（-0）'}`;
+    const subLine0 = mode==='buy' ? '小计 0' : '收入 0';
+    const taxLine0 = mode==='buy'
+      ? `税率 ${Math.round(rate0*100)}% · 税额 0 · 应付 <b>0</b>`
+      : `税率 ${Math.round(rate0*100)}% · 税额 0 · 到手 <b>0</b>`;
+    box.innerHTML=`<div class="trade-side">
+      <div class="trade-cart-panel empty">购物车为空：从左侧物资列表加入后，可一次性确认成交</div>
+      <div class="trade-summary-panel">
+        <div class="ts-row"><span class="ts-label">${cargoLine0}</span></div>
+        <div class="ts-row"><span class="ts-label">${subLine0}</span></div>
+        <div class="ts-row"><span class="ts-label">${taxLine0}</span></div>
+        <button class="btn btn-primary td-confirm" onclick="confirmDraft('${mode}')">${mode==='buy'?'确认购入':'确认售出'}</button>
+      </div>
+    </div>`;
+    return;
+  }
+  const pre = window.TradePreview ? (mode==='buy'?TradePreview.previewBuy(d):TradePreview.previewSell(d)) : null;
+  const plannedQty = entries.reduce((s,e)=>s+e.qty,0);
+  const used=getUsedCargo(),cap=getVehicleCapacity();
+  const afterUsed = mode==='buy' ? (used+plannedQty) : Math.max(0, used-plannedQty);
+  const cargoLine = `货舱 ${afterUsed}/${cap}${mode==='buy'?`（+${plannedQty}）`:`（-${plannedQty}）`}`;
+  const totalLine = mode==='buy'
+    ? `税率 ${Math.round(pre.taxRate*100)}% · 税额 ${fmt(pre.tax)} · 应付 <b>${fmt(pre.total)}</b>`
+    : `税率 ${Math.round(pre.taxRate*100)}% · 税额 ${fmt(pre.tax)} · 到手 <b>${fmt(pre.net)}</b>`;
+  let rows='';
+  for(const e of entries){
+    const it=getItem(e.gid);
+    const max = mode==='buy'? Math.min(getCurStock(GS.location,e.gid), Math.floor(GS.gold/Math.max(1,(getDayPrice(GS.location,e.gid,GS.day)||1))), getCargoFree()+e.qty) : (GS.cargo[e.gid]||0);
+    rows+=`<div class="td-row">
+      <span class="td-name">${it.icon} ${it.name}</span>
+      <input class="td-qty" type="number" min="0" max="${max}" value="${e.qty}" onchange="onDraftQtyChange('${mode}','${e.gid}',this.value)">
+      <button class="td-del" onclick="onDraftRemove('${mode}','${e.gid}')">移除</button>
+    </div>`;
+  }
+  box.innerHTML=`<div class="trade-side">
+    <div class="trade-cart-panel">
+      <div class="td-head">🧾 中转购物车（${mode==='buy'?'购入':'售出'} · ${entries.length}种）<button class="td-clear" onclick="clearDraftManual()">清空</button></div>
+      <div class="td-list">${rows}</div>
+    </div>
+    <div class="trade-summary-panel">
+      <div class="ts-row"><span class="ts-label">${cargoLine}</span></div>
+      <div class="ts-row"><span class="ts-label">${mode==='buy'?`小计 ${fmt(pre.subtotal)}`:`收入 ${fmt(pre.revenue)}`}</span></div>
+      <div class="ts-row"><span class="ts-label">${totalLine}</span></div>
+      <button class="btn btn-primary td-confirm" onclick="confirmDraft('${mode}')">${mode==='buy'?'确认购入':'确认售出'}</button>
+    </div>
+  </div>`;
+}
+function onDraftQtyChange(mode,gid,val){
+  const q=Math.max(0,parseInt(val)||0);
+  TradeDraft.add(mode,gid,q);
+  renderMarketCards();
+}
+function onDraftRemove(mode,gid){
+  TradeDraft.remove(mode,gid);
+  renderMarketCards();
+}
+function clearDraftManual(){
+  if(!TradeDraft.anyNonEmpty())return;
+  showModal('清空中转面板','确认清空中转面板中的全部内容？','清空',()=>{TradeDraft.clearAll('manual');renderMarketCards();});
+}
+function draftFromSlider(mode,gid){
+  if(!window.TradeDraft)return;
+  // 若中转面板已有内容，但锚点变化（游戏日/中枢/城市）则按规则提示并清空后再加入
+  if(TradeDraft.anyNonEmpty()){
+    const td=TradeDraft.getDraftState();
+    const d0=td.buy, d1=td.sell;
+    const now=TradeDraft.anchorForNow();
+    const bad = (d0 && d0.items && Object.keys(d0.items).length && (d0.cityId!==now.cityId || d0.hub!==now.hub || d0.day!==now.day))
+      || (d1 && d1.items && Object.keys(d1.items).length && (d1.cityId!==now.cityId || d1.hub!==now.hub || d1.day!==now.day));
+    if(bad){
+      showModal('⚠ 物价已更新',`由于游戏日/中枢点/城市发生变化，为避免按旧价成交，已清空中转面板内容。`,'知道了',()=>{TradeDraft.clearAll('anchor');doDraftAdd();});
+      return;
+    }
+  }
+  doDraftAdd();
+  function doDraftAdd(){
+    const qty=getSliderVal(gid);
+    // 购入时校验货舱容量：阻止超出容量的加入操作
+    if(mode==='buy'){
+      const cap=getVehicleCapacity();
+      const used=getUsedCargo()+getTaskCargoUsed();
+      const td0=TradeDraft.getDraftState();
+      const dBuy=td0&&td0.buy?td0.buy:null;
+      let plannedOther=0;
+      if(dBuy && dBuy.items){
+        for(const k of Object.keys(dBuy.items)){
+          if(k===gid) continue;
+          plannedOther += parseInt(dBuy.items[k])||0;
+        }
+      }
+      const totalPlanned = plannedOther + qty;
+      if(used + totalPlanned > cap){
+        const free=Math.max(0, cap-used);
+        showModal('⚠ 货舱容量不足',
+          `当前货舱剩余 ${free} 格，中转面板已有 ${plannedOther} 件，本次计划加入 ${qty} 件，合计 ${totalPlanned} 件，已超出容量 ${cap} 格。`,
+          '知道了');
+        return;
+      }
+    }
+    TradeDraft.add(mode,gid,qty);
+    toast('已加入中转面板','ok');
+    renderMarketCards();
+  }
+}
+async function confirmDraft(mode){
+  if(GS.traveling)return toast('旅行中不可交易','info');
+  advanceDay(); // 确认时推进一次游戏日（与单笔交易口径一致）
+  if(!window.TradeDraft||!window.TradeValidate||!window.TradePreview)return toast('模块未就绪','err');
+  const td=TradeDraft.getDraftState();
+  const draft=td[mode];
+  if(mode==='buy'){
+    const v=TradeValidate.validateBuyDraft(draft);
+    if(!v.ok)return toast(v.msg,'err');
+    const msg=`物品种类：${v.list.length}\n小计：${fmt(v.subtotal)}\n税率：${Math.round(v.taxRate*100)}%\n税额：${fmt(v.tax)}\n应付总额：${fmt(v.total)}`;
+    showModal('🧾 确认购入（中转面板）',msg,'确认购入',async()=>{
+      const ok = await execBuyDraft(v.list);
+      if(ok){TradeDraft.clearAll('buy-confirm');render();}
+    });
+    return;
+  }
+  // sell
+  const vs=TradeValidate.validateSellDraft(draft);
+  if(!vs.ok)return toast(vs.msg,'err');
+  const warns=TradeValidate.sameVisitWarningsSell(vs.list);
+  const proceed = async()=>{
+    const pre=TradePreview.previewSell(draft);
+    const msg=`物品种类：${pre.list.length}\n预计收入：${fmt(pre.revenue)}\n税率：${Math.round(pre.taxRate*100)}%\n税额：${fmt(pre.tax)}\n预计到手：${fmt(pre.net)}`;
+    showModal('🧾 确认售出（中转面板）',msg,'确认售出',async()=>{
+      const ok = await execSellDraft(pre.list);
+      if(ok){TradeDraft.clearAll('sell-confirm');render();}
+    });
+  };
+  if(warns.length){
+    const rows=warns.map(w=>`- ${w.name}：同城同次 ${w.sameQty}件，将按买入价60%（${fmt(w.unit60)}/件）结算`).join('\n');
+    showModal('⚠️ 同城倒卖警告',`以下物品命中“同城同次 + 顺价套利”惩罚：\n${rows}\n\n仍要继续吗？`,'继续售出',proceed);
+    return;
+  }
+  proceed();
+}
+
+async function execBuyDraft(list){
+  const city=GS.location;
+  if(ONLINE){
+    const user=localStorage.getItem(AUTH_KEY)||'';
+    const r=await NET.post('/api/tradeBatch',{user,city,dir:'buy',items:list.map(x=>({item:x.gid,qty:x.qty}))});
+    if(!r||!r.ok){toast('在线库存扣减失败：'+(r&&r.err?r.err:'网络错误'),'err');return false;}
+    if(r.serverAt)GS.__lastServerAt=r.serverAt; // 防止后续自动保存覆盖服务器变更
+    if(r.stocks){
+      const cs=State.get('cityStocks')||{};
+      cs[city]=r.stocks;
+      State.set('cityStocks',cs);
+    }
+  }
+  // 本地落地（一次确认，多物品成交；单笔交易不再重复推进游戏日）
+  for(const it of list){
+    const rr=buyItem(it.gid,it.qty,{skipAdvance:true});
+    if(!rr.ok){toast('购入失败：'+rr.msg,'err');return false;}
+  }
+  toast('✅ 已完成购入（中转面板）','ok');
+  return true;
+}
+
+async function execSellDraft(list){
+  const city=GS.location;
+  if(ONLINE){
+    const user=localStorage.getItem(AUTH_KEY)||'';
+    const r=await NET.post('/api/tradeBatch',{user,city,dir:'sell',items:list.map(x=>({item:x.gid,qty:x.qty}))});
+    if(!r||!r.ok){toast('在线库存回补失败：'+(r&&r.err?r.err:'网络错误'),'err');return false;}
+    if(r.serverAt)GS.__lastServerAt=r.serverAt;
+    if(r.stocks){
+      const cs=State.get('cityStocks')||{};
+      cs[city]=r.stocks;
+      State.set('cityStocks',cs);
+    }
+  }
+  for(const it of list){
+    const rr=sellItem(it.gid,it.qty,{skipAdvance:true});
+    if(!rr.ok){toast('售出失败：'+rr.msg,'err');return false;}
+  }
+  toast('✅ 已完成售出（中转面板）','ok');
+  return true;
+}
 function doAction(type,gid){
   const qty=getSliderVal(gid);
   if(type==='buy'){const r=buyItem(gid,qty);toast(r.msg,r.ok?'ok':'err');if(r.ok){delete sliderVals[gid];render();}return;}
@@ -2833,29 +3169,103 @@ function onSliderRelease(){window._draggingGid=null;if(window._pendingRefresh){w
 // ===== 折线图 =====
 function drawChart(){
   if(!_chartItem)return;const canvas=document.getElementById('price-chart');if(!canvas)return;
-  // 自适应宽度：填充左侧面板，避免右侧留白
-  const parent=canvas.parentElement;
-  const targetW=Math.max(320,parent.clientWidth-20);
-  if(Math.abs(canvas.width-targetW)>1){canvas.width=targetW;}
-  canvas.height=300;
+  // 画布尺寸完全由 CSS 决定（固定高度 360px），避免因 bitmap 尺寸变化导致折线图变大变小
+  const cssW=canvas.clientWidth||canvas.parentElement.clientWidth||320;
+  const cssH=canvas.clientHeight||360;
+  if(canvas.width!==cssW)canvas.width=cssW;
+  if(canvas.height!==cssH)canvas.height=cssH;
   const loc=GS.location,hist=getPriceHistory(loc,_chartItem,_chartDays);
   const ctx=canvas.getContext('2d'),W=canvas.width,H=canvas.height,padL=55,padR=25,padT=20,padB=35;
   ctx.clearRect(0,0,W,H);ctx.fillStyle='#0d1b2a';ctx.fillRect(0,0,W,H);
   if(hist.length<2)return;
-  const buyPrices=hist.map(h=>h.price),sellPrices=hist.map(h=>h.sell),allP=[...buyPrices,...sellPrices];
+  const isBuyView = (marketTab==='buy');
+  const buyPrices=hist.map(h=>h.price);
+  const sellPrices=hist.map(h=>h.sell);
+  const allP = isBuyView ? [...buyPrices, ...sellPrices] : [...sellPrices];
   const minP=Math.min(...allP),maxP=Math.max(...allP),range=maxP-minP||1;
   const pw=(W-padL-padR)/(hist.length-1),by=y=>padT+(H-padT-padB)*(1-(y-minP)/range),bx=i=>padL+i*pw;
   ctx.strokeStyle='#1a1a3a';ctx.lineWidth=0.5;for(let i=0;i<=4;i++){const y=padT+(H-padT-padB)*i/4;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke()}
-  ctx.beginPath();ctx.strokeStyle='#ff9f43';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);for(let i=0;i<hist.length;i++){const x=bx(i),y=by(hist[i].sell);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)}ctx.stroke();ctx.setLineDash([]);
-  ctx.beginPath();ctx.strokeStyle='#26d98b';ctx.lineWidth=2;for(let i=0;i<hist.length;i++){const x=bx(i),y=by(hist[i].price);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)}ctx.stroke();
-  const last=hist[hist.length-1];ctx.beginPath();ctx.arc(bx(hist.length-1),by(last.price),5,0,Math.PI*2);ctx.fillStyle='#26d98b';ctx.fill();ctx.beginPath();ctx.arc(bx(hist.length-1),by(last.sell),4,0,Math.PI*2);ctx.fillStyle='#ff9f43';ctx.fill();
+  // 售出线（一直画）
+  ctx.beginPath();
+  ctx.strokeStyle='#ff9f43';
+  ctx.lineWidth=isBuyView?1.5:2;
+  if(isBuyView)ctx.setLineDash([4,3]);
+  for(let i=0;i<hist.length;i++){const x=bx(i),y=by(hist[i].sell);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)}
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // 购入线（仅购入页面展示）
+  if(isBuyView){
+    ctx.beginPath();
+    ctx.strokeStyle='#26d98b';
+    ctx.lineWidth=2;
+    for(let i=0;i<hist.length;i++){const x=bx(i),y=by(hist[i].price);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)}
+    ctx.stroke();
+  }
+  const last=hist[hist.length-1];
+  if(isBuyView){
+    ctx.beginPath();ctx.arc(bx(hist.length-1),by(last.price),5,0,Math.PI*2);ctx.fillStyle='#26d98b';ctx.fill();
+    ctx.beginPath();ctx.arc(bx(hist.length-1),by(last.sell),4,0,Math.PI*2);ctx.fillStyle='#ff9f43';ctx.fill();
+  }else{
+    ctx.beginPath();ctx.arc(bx(hist.length-1),by(last.sell),5,0,Math.PI*2);ctx.fillStyle='#ff9f43';ctx.fill();
+  }
   ctx.fillStyle='#8b95a5';ctx.font='10px sans-serif';for(let i=0;i<=4;i++){const y=padT+(H-padT-padB)*i/4;ctx.fillText(fmt(Math.round(maxP-(maxP-minP)*i/4)),2,y+4)}
   const steps=hist.length<=30?5:(hist.length<=60?8:12);for(let i=0;i<hist.length;i+=Math.ceil(hist.length/steps))ctx.fillText(hist[i].day,bx(i),H-padB+14);
-  ctx.font='10px sans-serif';ctx.fillStyle='#26d98b';ctx.fillRect(W-160,padT,10,3);ctx.fillStyle='#ff9f43';ctx.fillRect(W-80,padT,10,3);ctx.fillStyle='#8b95a5';ctx.fillText('买入价',W-147,padT-2);ctx.fillText('卖出价',W-67,padT-2);
-  const curBuy=last.price,curSell=last.sell,buyPct=Math.round((hist.length-buyPrices.filter(p=>p>curBuy).length)/hist.length*100);
-  const trend=getTrend(GS.location,_chartItem),spreadPct=Math.round((1-curSell/curBuy)*100);
+  const trend=getTrend(GS.location,_chartItem, isBuyView ? 'buy' : 'sell');
   const cls=trend.cls==='up'?'color:var(--buy)':(trend.cls==='down'?'color:var(--red)':'color:var(--text2)');
-  document.getElementById('chart-stats').innerHTML=`<span class="stat">买入 <b class="buy">${fmt(curBuy)}</b></span><span class="stat">卖出 <b class="sell">${fmt(curSell)}</b> (${spreadPct}%off)</span><span class="stat">${_chartDays}日最低 <b>${fmt(Math.min(...buyPrices))}</b></span><span class="stat">${_chartDays}日最高 <b>${fmt(Math.max(...buyPrices))}</b></span><span class="stat">分位 <b>${buyPct}%</b></span><span class="stat" style="${cls}">${trend.label}</span>`;
+  const tDay=Math.max(1,GS.day+1);
+  const estBuy=getDayPrice(GS.location,_chartItem,tDay);
+  const estSell=getSellPrice(GS.location,_chartItem,tDay);
+  if(isBuyView){
+    // 购入页：同时展示买入价与卖出价变化
+    ctx.font='10px sans-serif';
+    ctx.fillStyle='#26d98b';ctx.fillRect(W-160,padT,10,3);
+    ctx.fillStyle='#ff9f43';ctx.fillRect(W-80,padT,10,3);
+    ctx.fillStyle='#8b95a5';
+    ctx.fillText('买入价',W-147,padT-2);
+    ctx.fillText('卖出价',W-67,padT-2);
+    const curBuy=last.price,curSell=last.sell;
+    const spreadPct=curBuy?Math.round((1-curSell/curBuy)*100):0;
+    const deltaBuy=(estBuy!=null?estBuy-curBuy:0);
+    document.getElementById('chart-stats').innerHTML=
+      `<span class="stat">买入 <b class="buy">${fmt(curBuy)}</b></span>`+
+      `<span class="stat">卖出 <b class="sell">${fmt(curSell)}</b> (${spreadPct}%off)</span>`+
+      `<span class="stat">${_chartDays}日买入最低 <b>${fmt(Math.min(...buyPrices))}</b></span>`+
+      `<span class="stat">${_chartDays}日买入最高 <b>${fmt(Math.max(...buyPrices))}</b></span>`+
+      `<span class="stat" style="${cls}">${trend.label}</span>`+
+      `<span class="stat">预计明日买入 <b class="buy">${fmt(estBuy||0)}</b> (${deltaBuy>=0?'+':''}${fmt(deltaBuy)})</span>`;
+  }else{
+    // 售出页：只展示售价变化
+    const curSell=last.sell;
+    const deltaSell=(estSell!=null?estSell-curSell:0);
+    document.getElementById('chart-stats').innerHTML=
+      `<span class="stat">卖出 <b class="sell">${fmt(curSell)}</b></span>`+
+      `<span class="stat">${_chartDays}日最低 <b>${fmt(Math.min(...sellPrices))}</b></span>`+
+      `<span class="stat">${_chartDays}日最高 <b>${fmt(Math.max(...sellPrices))}</b></span>`+
+      `<span class="stat" style="${cls}">${trend.label}</span>`+
+      `<span class="stat">预计明日卖出 <b class="sell">${fmt(estSell||0)}</b> (${deltaSell>=0?'+':''}${fmt(deltaSell)})</span>`;
+  }
+  syncMarketHeightToChart();
+}
+
+// 以左侧“物价表 + 下方小标签”为唯一高度基准，锁定 .market-body 高度。
+// 右侧面板严格按该高度填充，超出部分由各自内部滚动承担（避免出现折线图下方冗余空白）。
+let __mh_inited=false;
+function syncMarketHeightToChart(){
+  const body=document.querySelector('.market-body');
+  const chart=document.querySelector('.market-chart .chart-panel');
+  if(!body || !chart) return;
+
+  // 使用 requestAnimationFrame，等 canvas 与 stats 更新后再取高度
+  requestAnimationFrame(()=>{
+    const cs=getComputedStyle(body);
+    const pad=(parseFloat(cs.paddingTop)||0)+(parseFloat(cs.paddingBottom)||0);
+    const h=Math.ceil(chart.getBoundingClientRect().height + pad);
+    if(h>0) body.style.height=h+'px';
+  });
+
+  if(__mh_inited) return;
+  __mh_inited=true;
+  window.addEventListener('resize', ()=>syncMarketHeightToChart());
 }
 
 // ===== 载具仓库面板（车站面板置顶，载具栏与仓库栏在下方） =====
@@ -2926,7 +3336,7 @@ genTasks(GS.location);
 normalizeVehicleDurability(); // 新账号按耐久公式补满
 migrateLots(); // 新账号批次结构初始化
 if(!GS.visitStamp[GS.location])GS.visitStamp[GS.location]=1; // 初始停留批次
-document.querySelector('nav button[data-tab="map"]').classList.add('active');currentTab='map';render();
+document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));document.querySelector('nav button[data-tab="map"]').classList.add('active');currentTab='map';render();
 // 指令台：全局挂载，可键盘调用
 window.runCmd=runCmd;
 // 地图交互（缩放/拖拽，事件委托一次性绑定）
@@ -2982,6 +3392,7 @@ else{(async()=>{
     <button id="chat-hist-btn" onclick="toggleChatHist()">查看历史</button>
   </div>
 </div>
+
 
 
 

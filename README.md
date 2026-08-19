@@ -8,6 +8,7 @@
 
 - 在 13 座城市之间规划路线并开展贸易
 - 交易 31 种商品，利用城市价差和市场周期获利
+- 中转面板（购物车）一次确认多物品成交，并按本城声望计算交易税
 - 应对公共市场事件与旅途随机事件
 - 装配、升级不同类型的车厢和载具核心
 - 接取送货、载客等任务，提升城市声望
@@ -100,9 +101,14 @@ JSON 文件存储
 - `core/ui-primitives.js`：Toast、弹窗等基础交互
 - `economy/price-engine.js`：价格计算与市场周期
 - `economy/events.js`：公共事件系统
+- `economy/trade-graph.js`：经济距离（world 下发，独立于表现路网）
+- `economy/tax.js`：交易税务（随本城声望减税，最低 3%）
+- `economy/trade-draft.js`：中转面板交易单（一次确认多物品成交）
+- `economy/trade-validate.js`：交易单预校验与惩罚提示汇总
+- `economy/trade-preview.js`：交易单汇总预览（仅总额展示）
 - `gameplay/pathing-core.js`：路径搜索与距离计算
 
-静态样式已从 `index.html` 抽离到 `styles/theme.css`（主题变量）与 `styles/app.css`（布局与组件），脚本按 `runtime → state → event-bus → ui-primitives → data → price-engine → events → pathing-core` 顺序加载。
+静态样式已从 `index.html` 抽离到 `styles/theme.css`（主题变量）与 `styles/app.css`（布局与组件），脚本按 `runtime → state → event-bus → ui-primitives → data → price-engine → events → trade-graph → tax → trade-draft → trade-validate → trade-preview → pathing-core` 顺序加载。
 
 服务端基于 PowerShell 与 `.NET HttpListener`，负责：
 
