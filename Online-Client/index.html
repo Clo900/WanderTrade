@@ -1140,16 +1140,8 @@ function fitAfterSlot(i,type,lv){
   if(type){cap+=getWagonCap({type,lv});pass+=getWagonPass({type,lv});}
   return{cap,pass};
 }
-// 接取任务后：为任务提供容量的车厢不可被卸载/替换（防止换车厢卡容量）
-function isWagonLocked(i){
-  const w=(GS.vehicle.wagons||[])[i];
-  if(!w||!w.cur)return false;
-  const hasCargo=(GS.tasks.active||[]).some(t=>t.capType==='cargo'&&!t.delivered);
-  const hasPass=(GS.tasks.active||[]).some(t=>t.capType==='pass'&&!t.delivered);
-  if(hasCargo&&getWagonCap(w.cur)>0)return true;
-  if(hasPass&&getWagonPass(w.cur)>0)return true;
-  return false;
-}
+// v9.x：车厢更换/卸载不再因任务“硬锁定”，而是在执行操作时做容量合法性校验：
+// 若卸下/更换后会导致【玩家货物 + 旅客 + 任务占用】超出新容量，则拒绝并提示。
 function wagonKey(type,lv){return type+'_'+lv}
 function getOwnedCount(w){return w&&w.owned?Object.keys(w.owned).length:0}
 function isOwned(w,type,lv){return !!(w&&w.owned&&w.owned[wagonKey(type,lv)])}
@@ -1178,6 +1170,15 @@ function getTaskCargoUsed(){return (GS.tasks.active||[]).filter(t=>t.capType==='
 function getTaskPassUsed(){return (GS.tasks.active||[]).filter(t=>t.capType==='pass'&&!t.delivered).reduce((s,t)=>s+t.qty,0)}
 function getCargoFree(){return getVehicleCapacity()-getUsedCargo()-getTaskCargoUsed()}
 function getPassFree(){return getPassCapacity()-getPassUsed()-getTaskPassUsed()}
+function wagonRequired(){
+  return{
+    cargo: getUsedCargo()+getTaskCargoUsed(),
+    pass:  getPassUsed()+getTaskPassUsed()
+  };
+}
+function wagonFitMsg(req,fit){
+  return `当前占用：货舱 ${req.cargo} / 旅客 ${req.pass}\n操作后容量：货舱 ${fit.cap} / 旅客 ${fit.pass}\n\n请先转移/卖出货物或完成任务释放占用后再操作。`;
+}
 // 注：getMaxStock 唯一实现在"库存上限"定义处（含声望加成与顺价收紧）；此处无重复定义（v8.12 清理死代码）
 function getCurStock(cityId,itemId){return Math.min(GS.cityStocks[cityId]?.[itemId]||0,getMaxStock(cityId,itemId))}
 
@@ -2516,12 +2517,11 @@ function renderWagons(){
       if(sp!==1)caps.push(`时速×${sp}`);
       caps.push(`损耗×${T.dur[cur.lv-1]}`);
       caps.push(`耐久+${T.hp[cur.lv-1]}`);
-      const locked=isWagonLocked(i);
       cards+=`<div class="wagon-card" style="border-color:${T.color}">
-        <div class="task-top"><span class="wagon-name" style="color:${T.color}">${T.icon} ${T.name} Lv${cur.lv}${locked?' <span style="font-size:10px;color:var(--red)">任务占用中</span>':''}</span><button class="task-x" onclick="unloadWagon(${i})" title="${locked?'任务占用中，不可卸载':'卸下车厢'}" ${locked?'disabled style="opacity:0.4;cursor:not-allowed"':''}>⬇</button></div>
+        <div class="task-top"><span class="wagon-name" style="color:${T.color}">${T.icon} ${T.name} Lv${cur.lv}</span><button class="task-x" onclick="unloadWagon(${i})" title="卸下车厢">⬇</button></div>
         <div class="task-meta">${caps.join(' · ')}</div>
         <div class="task-meta" style="font-size:10px;color:var(--text3)">已解锁 ${ownedN} 种车厢 · 免费更换</div>
-        <button class="btn station-btn" style="background:${locked?'var(--card)':'var(--accent)'};color:${locked?'var(--text3)':'#111'};margin-top:8px" onclick="${locked?'':`replaceWagon(${i})`}" ${locked?'disabled':''}>${locked?'🔒 任务占用中':'🔁 更换车厢'}</button>
+        <button class="btn station-btn" style="background:var(--accent);color:#111;margin-top:8px" onclick="replaceWagon(${i})">🔁 更换车厢</button>
       </div>`;
     }else if(ownedN>0){
       cards+=`<div class="wagon-card wagon-slot-empty" onclick="replaceWagon(${i})">
@@ -2583,15 +2583,15 @@ function backToWagonTypes(i){
 }
 function buyWagon(i,type,lv){
   if(i<0||i>=getWagonSlots())return toast('车厢位不存在','err');
-  if(isWagonLocked(i))return toast('该车厢正为已接任务提供容量，暂不可更换','err');
   var veh = State.get('vehicle') || {};
   veh.wagons = veh.wagons || [];
   const slot=veh.wagons[i]||{cur:null,owned:{}};
   if(!veh.wagons[i])veh.wagons[i]=slot;
   const key=wagonKey(type,lv);
   const fit=fitAfterSlot(i,type,lv);
-  if(getUsedCargo()+getTaskCargoUsed()>fit.cap)return toast('货舱空间不足：现有货物超出该车厢容量，请先转移/卖出','err');
-  if(getPassUsed()+getTaskPassUsed()>fit.pass)return toast('旅客仓空间不足：现有旅客超出该车厢容量，请先完成任务','err');
+  const req=wagonRequired();
+  if(req.cargo>fit.cap)return showModal('🚫 无法更换车厢','货舱空间不足。\n\n'+wagonFitMsg(req,fit),'知道了',()=>{});
+  if(req.pass>fit.pass)return showModal('🚫 无法更换车厢','旅客仓空间不足。\n\n'+wagonFitMsg(req,fit),'知道了',()=>{});
   const hp=WAGON_TYPES[type].hp[lv-1]||0;
   if(isOwned(slot,type,lv)){
     slot.cur={id:'w'+Date.now()+i,type,lv};
@@ -2617,15 +2617,15 @@ function buyWagon(i,type,lv){
 // 卸下车厢（仅解除装配，解锁进度保留；载具必须保留至少一个已装配车厢）
 function unloadWagon(i){
   if(GS.traveling)return toast('旅行中不可操作','info');
-  if(getWagons().length<=1)return toast('载具必须保留至少一个车厢','err');
+  if(getWagons().length<=1)return showModal('🚫 无法卸下车厢','载具必须保留至少一个已装配车厢。','知道了',()=>{});
   var veh = State.get('vehicle') || {};
   veh.wagons = veh.wagons || [];
   const w=veh.wagons[i];
   if(!w||!w.cur)return;
-  if(isWagonLocked(i))return toast('该车厢正为已接任务提供容量，暂不可卸载','err');
   const fit=fitAfterSlot(i);
-  if(getUsedCargo()+getTaskCargoUsed()>fit.cap)return toast('货舱空间不足：请先转移/卖出货物再卸下车厢','err');
-  if(getPassUsed()+getTaskPassUsed()>fit.pass)return toast('旅客仓空间不足：请先完成任务让旅客下车再卸下车厢','err');
+  const req=wagonRequired();
+  if(req.cargo>fit.cap)return showModal('🚫 无法卸下车厢','货舱空间不足。\n\n'+wagonFitMsg(req,fit),'知道了',()=>{});
+  if(req.pass>fit.pass)return showModal('🚫 无法卸下车厢','旅客仓空间不足。\n\n'+wagonFitMsg(req,fit),'知道了',()=>{});
   w.cur=null;
   veh.wagons[i] = w;
   State.set('vehicle', veh);
