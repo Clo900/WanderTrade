@@ -118,7 +118,9 @@ nav button:hover{color:var(--text);background:rgba(255,255,255,0.03)}
 .task-board-active{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;min-height:160px;align-items:flex-start}
 .task-board-active .task-card{flex:0 0 260px}
 .task-active-empty{display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px;background:var(--bg);border:1px dashed var(--text3);border-radius:var(--radius-sm);min-height:110px}
-/* 可接任务区：固定宽度卡片一字排开，不自适应宽度，超出横向滑动 */
+/* 可接任务区：5 个任务均分横向空间，不滚动 */
+.task-open-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+/* 车厢卡片：固定宽度一字排开，超出横向滑动 */
 .task-board-grid{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px}
 .task-card{position:relative;background:var(--panel);border:1px solid var(--text3);border-radius:var(--radius-sm);padding:10px 12px;display:flex;flex-direction:column;gap:6px;flex:0 0 240px;min-height:170px;justify-content:space-between}
 .task-top{display:flex;justify-content:space-between;align-items:center}
@@ -126,8 +128,21 @@ nav button:hover{color:var(--text);background:rgba(255,255,255,0.03)}
 .task-refresh,.task-x{background:none;border:none;cursor:pointer;font-size:14px;color:var(--text2);padding:2px 4px;line-height:1}
 .task-refresh:hover,.task-x:hover{color:var(--gold)}
 .task-desc{font-size:13px;line-height:1.5;min-height:38px}
+.task-time{font-size:12px;font-weight:700;color:var(--travel)}
+/* 24h 违约记录提示（v9.3 惩罚体系） */
+.task-bad-warn{font-size:12px;font-weight:700;color:var(--red);background:rgba(255,60,60,0.08);border:1px solid var(--red);border-radius:var(--radius-sm);padding:8px 10px;margin-bottom:8px}
+.task-bad-info{font-size:12px;color:var(--text2);background:var(--bg);border:1px dashed var(--text3);border-radius:var(--radius-sm);padding:8px 10px;margin-bottom:8px}
 .task-meta{font-size:11px;color:var(--text3)}
 .task-reward{font-size:12px;color:var(--gold)}
+/* 任务倒计时与进度条（v9.x 限时系统） */
+.task-cd-wrap{margin:2px 0}
+.task-cd{font-size:11px;color:var(--text2);line-height:1.4;transition:color 0.2s}
+.task-cd.cd-ok{color:var(--green)}
+.task-cd.cd-warn{color:#d99a00}
+.task-cd.cd-danger{color:var(--red)}
+.task-cd.cd-dead{color:var(--text3)}
+.task-bar{height:4px;background:var(--bg);border-radius:2px;overflow:hidden;margin-top:3px}
+.task-bar-fill{height:100%;background:var(--accent);border-radius:2px;transition:width 0.5s linear}
 .task-slot-empty{border-style:dashed;background:var(--bg)}
 .task-slot-empty-inner{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text3);font-size:12px;gap:4px}
 /* ===== 车厢管理 ===== */

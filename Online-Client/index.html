@@ -96,6 +96,10 @@
 <script src="src/economy/trade-validate.js"></script>
 <script src="src/economy/trade-preview.js"></script>
 <script src="src/gameplay/pathing-core.js"></script>
+<script src="src/gameplay/task-config.js"></script>
+<script src="src/gameplay/task-timer.js"></script>
+<script src="src/gameplay/task-bad-record.js"></script>
+<script src="src/economy/task-reward.js"></script>
 <script>
 /* ================================================
  * 游戏引擎
@@ -112,7 +116,7 @@ State.init({
   cityStocks: {}, lastStockRefill: Date.now(),
   warehouses: {}, reputation: {},
   materials: {gear:0,repair_kit:0,fuel_tank:0,engine:0},
-  tasks: {board:[],active:[]}, traveling: null, pendingEvent: null, repairDisc: null,
+  tasks: {board:[],active:[]}, taskBadLog: {abandonAt:[],failAt:[]}, traveling: null, pendingEvent: null, repairDisc: null,
   intel: {unlocked:{},log:[]}, knownEvents: {},
   justArrived: false, tutorial: {step:0},
   stats: {bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0},
@@ -442,6 +446,7 @@ function applySaved(saved){
     State.set('visitedCities', saved.visitedCities||[State.get('location')]);
     State.set('materials', saved.materials||{gear:0,repair_kit:0,fuel_tank:0,engine:0});
     State.set('tasks', saved.tasks||{board:[],active:[]});
+    State.set('taskBadLog', saved.taskBadLog||{abandonAt:[],failAt:[]});
     State.set('traveling', saved.traveling);
     State.set('pendingEvent', saved.pendingEvent);
     State.set('repairDisc', saved.repairDisc);
@@ -463,6 +468,7 @@ function applySaved(saved){
   }
   normalizeVehicleDurability();
   migrateLots();
+  normalizeTasksState();
 }
 function applyWorld(world){
   if(!world)return;
@@ -735,6 +741,7 @@ function resetGameState(){
     State.set('reputation', {});
     State.set('materials', {gear:0,repair_kit:0,fuel_tank:0,engine:0});
     State.set('tasks', {board:[],active:[]});
+    State.set('taskBadLog', {abandonAt:[],failAt:[]});
     State.set('traveling', null);
     State.set('pendingEvent', null);
     State.set('repairDisc', null);
@@ -1388,6 +1395,8 @@ function startTravel(destId){
   if(getDurability()<=0)return{ok:false,msg:'车辆耐久不足，请先维修'};
   const realSec=Math.round(sp.distance/getVehicleSpeed()*60);
   const durLoss=calcDurabilityLoss(sp.distance);
+  // T1：离开接取城市时，为 from===当前城 且未启动的任务启动倒计时（按出发时实际时速快照计算）
+  startTaskTimers(GS.location);
   const veh = GS.vehicle;
   State.batch(function(){
     veh.durability = Math.max(0, veh.durability-durLoss);
@@ -1547,18 +1556,26 @@ const RARITY_TABLE=[
   [0.42,0.34,0.19,0.05]   // Lv4+
 ];
 function getRarity(id){return TASK_RARITY.find(r=>r.id===id)||TASK_RARITY[0]}
-function rollRarity(){
-  // 稀有度按城市梯度封顶：新手村仅普通/稀有（无史诗传说）、初期无传说、中期起开放传说
+// 计算当前城市的稀有度权重 [普通, 稀有, 史诗, 传说]（不含不良记录惩罚）
+// 稀有度按城市梯度封顶：新手村仅普通/稀有（无史诗传说）、初期无传说、中期起开放传说
+function rarityWeights(){
   const st=cityStage(GS.location);
-  if(st===1)return Math.random()<0.72?TASK_RARITY[0]:TASK_RARITY[1];
-  if(st===2){const r=Math.random();return r<0.60?TASK_RARITY[0]:(r<0.90?TASK_RARITY[1]:TASK_RARITY[2]);}
+  if(st===1)return[0.72,0.28,0,0];
+  if(st===2)return[0.60,0.30,0.10,0];
   let rep=Math.min(4,getRepLevel(GS.location));
   const c=getCity(GS.location);
   if(c&&c.tier==='capital')rep=Math.min(4,rep+1); // 王都基础稀有度更高（更高级的城市有更高级的任务）
   if(st===3)rep=Math.min(3,rep); // 中期最高到 Lv3 档（传说权重 3%）
-  const table=RARITY_TABLE[Math.floor(rep)];
-  let r=Math.random(),acc=0;
-  for(let i=0;i<TASK_RARITY.length;i++){acc+=table[i];if(r<acc)return TASK_RARITY[i];}
+  return RARITY_TABLE[Math.floor(rep)].slice();
+}
+function rollRarity(){
+  const w=rarityWeights();
+  // 24h 不良记录：抑制史诗/传说刷新权重（付费刷新不提高概率，无法被绕开）
+  const debuff=TaskBadRecord.getDebuff(TaskBadRecord.getLog(), TaskConfig.TASK_BAD_RECORD_CONFIG);
+  if(debuff){w[2]*=debuff.rareWeightMult;w[3]*=debuff.rareWeightMult;}
+  const sum=w.reduce(function(a,b){return a+b;},0)||1;
+  let r=Math.random()*sum,acc=0;
+  for(let i=0;i<TASK_RARITY.length;i++){acc+=w[i];if(r<acc)return TASK_RARITY[i];}
   return TASK_RARITY[0];
 }
 // 素材产出：稀有 20% / 史诗 45% / 传说 80%；普通任务不产素材
@@ -1591,6 +1608,7 @@ function rollPassQty(R,cityId){
   else n=1+Math.floor(Math.random()*3);
   return Math.round(n*mul);
 }
+// 生成任务的限时字段初始值（T1：未离开接取城，不计时）
 function rollTask(cityId,seq){
   const R=rollRarity();
   const st=cityStage(cityId);
@@ -1603,23 +1621,58 @@ function rollTask(cityId,seq){
   const unit=[100,350,1000,3000][st-1];
   const ext=[40,80,150,250][st-1]; // 按件附加（deliver 每件；escort 每人 ×5）
   const dist=(shortestPath(cityId,to.id)||{distance:20}).distance;
-  const gold=Math.round(dist*unit*R.goldMul),rep=R.repMul;
+  const baseGold=Math.round(dist*unit*R.goldMul),rep=R.repMul;
   const mats=rollMat(R);
+  const quality=TaskReward.rollQuality(R.id, TaskConfig);
   const id='t'+Date.now()+seq+Math.floor(Math.random()*999);
+  const base={
+    id:id, rarity:R.id, quality:quality,
+    from:cityId, to:to.id, dist:dist, rewardRep:rep, rewardMats:mats, delivered:false,
+    timerStarted:false, speedSnapshot:null, timeLimitSeconds:null, deadlineTimestamp:null, status:'active'
+  };
   if(Math.random()<0.5){
     const goods=getCity(cityId).goods;
     const gid=goods.length?goods[Math.floor(Math.random()*goods.length)]:null;
     if(gid){ // 空货物城（如未开放的特殊城）走送客分支，避免取到 undefined 崩溃
       const qty=5+Math.floor(Math.random()*15);
-      return{id,rarity:R.id,type:'deliver',capType:'cargo',from:cityId,to:to.id,item:gid,qty,
-        rewardGold:gold+qty*ext,rewardRep:rep+Math.floor(qty/2),rewardMats:mats,
-        desc:`运送${getItem(gid).icon}${getItem(gid).name}×${qty}至${getCityName(to.id)}（${dist}里）`,delivered:false};
+      const rewardGoldBase=baseGold+qty*ext;
+      base.type='deliver';base.capType='cargo';base.item=gid;base.qty=qty;
+      base.rewardGoldBase=rewardGoldBase;
+      base.rewardGold=Math.floor(rewardGoldBase*TaskReward.qualityMult(quality,TaskConfig));
+      base.rewardRep=rep+Math.floor(qty/2);
+      base.desc=`运送${getItem(gid).icon}${getItem(gid).name}×${qty}至${getCityName(to.id)}（${dist}里）`;
+      return base;
     }
   }
   const pq=rollPassQty(R,cityId); // 送客人数按稀有度+城市等级（按人计酬 ext×5/人）
-  return{id,rarity:R.id,type:'escort',capType:'pass',from:cityId,to:to.id,item:null,qty:pq,
-    rewardGold:gold+pq*ext*5,rewardRep:rep,rewardMats:mats,
-    desc:`护送${pq}位商客至${getCityName(to.id)}（${dist}里 · 占旅客仓${pq}格）`,delivered:false};
+  const rewardGoldBase=baseGold+pq*ext*5;
+  base.type='escort';base.capType='pass';base.item=null;base.qty=pq;
+  base.rewardGoldBase=rewardGoldBase;
+  base.rewardGold=Math.floor(rewardGoldBase*TaskReward.qualityMult(quality,TaskConfig));
+  base.desc=`护送${pq}位商客至${getCityName(to.id)}（${dist}里 · 占旅客仓${pq}格）`;
+  return base;
+}
+// 旧存档任务补齐新字段（quality 默认 C，rewardGoldBase 缺失时回退 rewardGold）
+function normalizeTask(t){
+  if(!t)return t;
+  if(!t.quality)t.quality='C';
+  if(t.rewardGoldBase==null)t.rewardGoldBase=t.rewardGold||0;
+  if(t.rewardGold==null)t.rewardGold=Math.floor(t.rewardGoldBase*TaskReward.qualityMult(t.quality,TaskConfig));
+  if(t.timerStarted==null)t.timerStarted=false;
+  if(t.speedSnapshot==null)t.speedSnapshot=null;
+  if(t.timeLimitSeconds==null)t.timeLimitSeconds=null;
+  if(t.deadlineTimestamp==null)t.deadlineTimestamp=null;
+  if(t.status==null)t.status='active';
+  return t;
+}
+function normalizeTasksState(){
+  var tasks=State.get('tasks')||{board:[],active:[]};
+  tasks.board=(tasks.board||[]).map(function(slot){
+    if(slot&&slot.t)slot.t=normalizeTask(slot.t);
+    return slot;
+  });
+  tasks.active=(tasks.active||[]).map(normalizeTask);
+  State.set('tasks', tasks);
 }
 // 任务板 slot：{id, state:'task'|'empty', t, refreshCount}
 function genTasks(cityId){
@@ -1692,40 +1745,146 @@ function acceptTask(sid){
 function abandonTask(tid){
   if(GS.traveling)return toast('旅行中不可操作','info');
   const t=(GS.tasks.active||[]).find(x=>x.id===tid);if(!t)return;
-  showModal('🚫 放弃任务',`确定放弃「${t.desc}」吗？\n${t.capType==='pass'?'商客将下车，旅客仓空间会释放。':'任务货物将被清空，货舱空间会释放。'}`,
+  const penalty=TaskReward.abandonPenalty(t.rewardGoldBase||t.rewardGold||0, TaskConfig);
+  showModal('🚫 放弃任务',
+    `确定放弃「${t.desc}」吗？\n将扣除违约金 ${fmt(penalty)} 金币\n${t.capType==='pass'?'商客将下车，旅客仓空间会释放。':'任务货物将被清空，货舱空间会释放。'}`,
     '确认放弃',()=>{
-      var tasks = State.get('tasks') || {};
-      tasks.active = (tasks.active||[]).filter(function(x){return x.id!==tid;});
-      State.set('tasks', tasks);
-      toast('任务已放弃','info');render();saveNow();
+      const goldBefore=GS.gold,deducted=Math.min(goldBefore,penalty);
+      State.batch(function(){
+        State.set('gold', goldBefore-deducted);
+        var tasks = State.get('tasks') || {};
+        tasks.active = (tasks.active||[]).filter(function(x){return x.id!==tid;});
+        State.set('tasks', tasks);
+      });
+      TaskBadRecord.record('abandon', Date.now(), TaskConfig.TASK_BAD_RECORD_CONFIG);
+      const badCount=TaskBadRecord.count(TaskBadRecord.getLog());
+      const debuff=TaskBadRecord.getDebuff(TaskBadRecord.getLog(), TaskConfig.TASK_BAD_RECORD_CONFIG);
+      let msg=`任务已放弃，扣除违约金 ${fmt(deducted)} 金币 · 24h 违约记录 ${badCount} 次`;
+      if(debuff)msg+=` · 任务金币×${debuff.goldMult}，史诗/传说刷新×${debuff.rareWeightMult}`;
+      toast(msg,'info');render();saveNow();
     });
 }
 function completeTask(tid){
   if(GS.traveling)return toast('旅行中不可操作','info');
   const t=(GS.tasks.active||[]).find(x=>x.id===tid);if(!t)return;
   if(!t.delivered)return toast('尚未抵达目的地，无法领取奖励','info');
-  State.set('gold', GS.gold+t.rewardGold);
-  addRep(t.from,t.rewardRep);
-  if(t.rewardMats&&t.rewardMats.length){
-    var mats = State.get('materials') || {};
-    for(const m of t.rewardMats)mats[m.id]=(mats[m.id]||0)+m.qty;
-    State.set('materials', mats);
+  const now=Date.now();
+  const status=TaskTimer.resolveStatus(now, t.deadlineTimestamp, TaskConfig.TASK_TIME_CONFIG.LATE_GRACE_SECONDS);
+  const settle=TaskReward.settleTask(t.rewardGold||0, t.rewardGoldBase||t.rewardGold||0, t.rewardRep||0, t.rewardMats||[], status, TaskConfig);
+  const goldBefore=GS.gold;
+  if(settle.failed){
+    // 严重超时：失败 + 罚金 + 计入 24h 不良记录（不扣声望）
+    const deducted=Math.min(goldBefore, settle.penalty);
+    State.batch(function(){
+      State.set('gold', goldBefore-deducted);
+      var tasks = State.get('tasks') || {};
+      tasks.active = (tasks.active||[]).filter(function(x){return x.id!==tid;});
+      State.set('tasks', tasks);
+    });
+    TaskBadRecord.record('fail', now, TaskConfig.TASK_BAD_RECORD_CONFIG);
+    const badCount=TaskBadRecord.count(TaskBadRecord.getLog());
+    const debuff=TaskBadRecord.getDebuff(TaskBadRecord.getLog(), TaskConfig.TASK_BAD_RECORD_CONFIG);
+    let fmsg=`❌ 任务超时失败！扣除违约金 ${fmt(deducted)} 金币 · 24h 违约记录 ${badCount} 次`;
+    if(debuff)fmsg+=` · 任务金币×${debuff.goldMult}，史诗/传说刷新×${debuff.rareWeightMult}`;
+    toast(fmsg,'err');
+    render();saveNow();
+    return;
   }
+  // 准时/迟到发放（迟到：仅 30% 金币，声望/素材归零）
   State.batch(function(){
+    State.set('gold', goldBefore+settle.gold);
+    if(settle.rep>0)addRep(t.from, settle.rep);
+    if(settle.mats&&settle.mats.length){
+      var mats = State.get('materials') || {};
+      for(const m of settle.mats)mats[m.id]=(mats[m.id]||0)+m.qty;
+      State.set('materials', mats);
+    }
     var tasks = State.get('tasks') || {};
-    tasks.active = (tasks.active||[]).filter(x=>x.id!==tid);
+    tasks.active = (tasks.active||[]).filter(function(x){return x.id!==tid;});
     State.set('tasks', tasks);
   });
-  EventBus.emit(EventBus.EVENTS.TASK_COMPLETE, {taskId:tid, rewardGold:t.rewardGold});
-  const matTxt=(t.rewardMats||[]).map(m=>`${getMat(m.id).icon}${getMat(m.id).name}×${m.qty}`).join('、');
+  EventBus.emit(EventBus.EVENTS.TASK_COMPLETE, {taskId:tid, rewardGold:settle.gold});
+  const matTxt=(settle.mats||[]).map(m=>`${getMat(m.id).icon}${getMat(m.id).name}×${m.qty}`).join('、');
   statAdd('tasks',1);
   if(GS.tutorial&&GS.tutorial.step===4)advanceTutorial(4);
-  toast(`任务完成！+${fmt(t.rewardGold)}金 ⭐${getCityName(t.from)}声望+${t.rewardRep}${matTxt?' '+matTxt:''}`,'ok');
+  if(status==='late'){
+    toast(`⚠️ 送达延误，仅获 30% 金币 +${fmt(settle.gold)} 金（声望/素材取消）`,'info');
+  }else{
+    toast(`任务完成！+${fmt(settle.gold)}金 ⭐${getCityName(t.from)}声望+${settle.rep}${matTxt?' '+matTxt:''}`,'ok');
+  }
   render();saveNow();
 }
+// T1：离开接取城市时启动相关任务倒计时（按出发时实际时速快照计算，之后换车厢不回改时限）
+function startTaskTimers(fromCityId){
+  var tasks = State.get('tasks') || {};
+  var changed = false;
+  const speed = getVehicleSpeed();
+  for(const t of (tasks.active||[])){
+    if(t.timerStarted) continue;
+    if(t.from !== fromCityId) continue;
+    const dist = (shortestPath(t.from, t.to)||{distance:0}).distance;
+    const timeLimit = TaskTimer.computeTimeLimit(dist, speed, TaskConfig.TASK_TIME_CONFIG);
+    t.timerStarted = true;
+    t.speedSnapshot = speed;
+    t.timeLimitSeconds = timeLimit;
+    t.deadlineTimestamp = TaskTimer.computeDeadline(Date.now(), timeLimit);
+    t.status = 'active';
+    changed = true;
+  }
+  if(changed) State.set('tasks', tasks);
+}
+// 秒数 → X分X秒 / X秒
+function fmtClock(s){
+  s = Math.max(0, Math.floor(s));
+  const m = Math.floor(s/60), sec = s%60;
+  return m>0 ? `${m}分${sec}秒` : `${sec}秒`;
+}
+// 计算单个任务的倒计时展示状态（初始渲染与每秒刷新共用，避免口径漂移）
+function taskCdState(t, now){
+  if(!t.timerStarted || !t.deadlineTimestamp){
+    return {text:`时限：${taskTimeLimitMinutes(t)} 分钟（未出发，不计时）`, cls:'', pct:null};
+  }
+  const status = TaskTimer.resolveStatus(now, t.deadlineTimestamp, TaskConfig.TASK_TIME_CONFIG.LATE_GRACE_SECONDS);
+  const remain = TaskTimer.remainingSeconds(now, t.deadlineTimestamp);
+  const total = t.timeLimitSeconds || 1;
+  const pct = Math.max(0, Math.min(1, remain/total));
+  let text, cls;
+  if(status==='ontime'){
+    if(pct>0.6){text=`⏱️ ${fmtClock(remain)} · 🟢 时间充裕`;cls='cd-ok';}
+    else if(pct>0.3){text=`⏱️ ${fmtClock(remain)} · 🟡 时间适中`;cls='cd-ok';}
+    else if(pct>0.1){text=`⏱️ ${fmtClock(remain)} · 🟠 即将到期`;cls='cd-warn';}
+    else{text=`⏱️ ${fmtClock(remain)} · 🔴 紧急`;cls='cd-danger';}
+  }else if(status==='late'){
+    const over = Math.max(0, Math.ceil((now - t.deadlineTimestamp)/1000));
+    text=`⚠️ 已延误 ${over} 秒 · 仅30%金币`;cls='cd-danger';
+  }else{
+    text='❌ 已失效（严重超时）';cls='cd-dead';
+  }
+  return {text:text, cls:cls, pct:status==='ontime'?pct:0};
+}
+// 已接任务倒计时每秒局部刷新（不重建内容区，避免城市页闪烁）
+function updateTaskTimers(){
+  const now = Date.now();
+  for(const t of (GS.tasks.active||[])){
+    const el = document.getElementById('task-cd-'+t.id);
+    if(!el) continue;
+    const st = taskCdState(t, now);
+    el.textContent = st.text;
+    el.className = 'task-cd' + (st.cls ? ' '+st.cls : '');
+    const bar = document.getElementById('task-bar-'+t.id);
+    if(bar){ bar.style.width = (st.pct == null ? 100 : st.pct*100) + '%'; }
+  }
+}
 // 生成任务卡（mode='active' 已接 / 'open' 可接；open 需传 slotId 用于刷新/接取）
+// 预计时限：按当前实际时速估算（接取后实际在离城时按出发时速快照正式计算）
+function taskTimeLimitMinutes(t){
+  const dist = t.dist != null ? t.dist : (shortestPath(t.from, t.to)||{distance:0}).distance;
+  const sec = TaskTimer.computeTimeLimit(dist, getVehicleSpeed(), TaskConfig.TASK_TIME_CONFIG);
+  return Math.max(1, Math.round(sec/60));
+}
 function taskCardHtml(t,mode,slotId){
   const R=getRarity(t.rarity);
+  const Q=t.quality||'C';
   const matTxt=(t.rewardMats||[]).map(m=>getMat(m.id).icon+getMat(m.id).name+'×'+m.qty).join(' ');
   const capTxt=t.capType==='cargo'?`任务货物占货舱 ${t.qty} 格`:`旅客占旅客仓 ${t.qty} 格`;
   let reason='';
@@ -1740,16 +1899,37 @@ function taskCardHtml(t,mode,slotId){
   const mainBtn=mode==='active'
     ?`<button class="btn btn-primary station-btn" onclick="completeTask('${t.id}')" ${t.delivered?'':'disabled'} style="margin-top:8px">✅ 领取奖励</button>`
     :`<button class="btn station-btn" style="background:${canAccept?'var(--accent)':'var(--card)'};color:${canAccept?'#111':'var(--text3)'}" onclick="acceptTask('${slotId}')" ${canAccept?'':'disabled'}>${canAccept?'📥 接取':'⛔ '+reason}</button>`;
+  const timeLine=mode==='open'
+    ?`<div class="task-time">⏱️ 时限：${taskTimeLimitMinutes(t)} 分钟</div>`
+    :'';
+  const cdState=mode==='active'?taskCdState(t, Date.now()):null;
+  const cd=cdState
+    ?`<div class="task-cd-wrap"><div class="task-cd${cdState.cls?' '+cdState.cls:''}" id="task-cd-${t.id}">${cdState.text}</div><div class="task-bar"><div class="task-bar-fill" id="task-bar-${t.id}" style="width:${cdState.pct==null?100:cdState.pct*100}%"></div></div></div>`
+    :'';
   return `<div class="task-card rarity-${t.rarity}" style="border-color:${R.color}">
-    <div class="task-top"><span class="task-rarity" style="color:${R.color}">${R.name}</span>${topBtn}</div>
+    <div class="task-top"><span class="task-rarity" style="color:${R.color}">${R.name} · 品质${Q}</span>${topBtn}</div>
     <div class="task-desc">${t.desc}</div>
+    ${timeLine}
     <div class="task-meta">📍${getCityName(t.from)} → 🏁${getCityName(t.to)} · ${capTxt}${mode==='active'&&t.delivered?' · 已抵达':''}${t.to==='starfall'?' · <span style="color:var(--red)">目的地暂未开放</span>':''}</div>
     <div class="task-reward">💰${fmt(t.rewardGold)} · ⭐${t.rewardRep}声望${matTxt?' · '+matTxt:''}</div>
+    ${cd}
     ${mainBtn}
   </div>`;
 }
 function renderTaskBoard(){
   const act=GS.tasks.active||[];
+  // 24h 违约记录提示（放弃 + 严重超时；达 10/20/30 触发临时减益）
+  const badLog=TaskBadRecord.getLog();
+  const badCount=TaskBadRecord.count(badLog);
+  const debuff=TaskBadRecord.getDebuff(badLog, TaskConfig.TASK_BAD_RECORD_CONFIG);
+  let badWarn='';
+  if(badCount>0){
+    if(debuff){
+      badWarn=`<div class="task-bad-warn">⚠️ 24h 违约记录 ${badCount} 次：任务金币 ×${debuff.goldMult} · 史诗/传说刷新权重 ×${debuff.rareWeightMult}</div>`;
+    }else{
+      badWarn=`<div class="task-bad-info">📋 24h 违约记录 ${badCount} 次（放弃/超时；累计达 10/20/30 时任务收益下降、高级任务刷新率降低）</div>`;
+    }
+  }
   // 上层：已接任务（多任务，无任务也保留高度占位）
   const upper=act.length
     ?`<div class="task-board-active">${act.map(t=>taskCardHtml(t,'active')).join('')}</div>`
@@ -1767,8 +1947,9 @@ function renderTaskBoard(){
     }
     return taskCardHtml(slot.t,'open',slot.id);
   }).join('');
-  const grid=rows?`<div class="task-board-grid">${rows}</div>`:`<div class="empty">今日暂无委托</div>`;
+  const grid=rows?`<div class="task-open-grid">${rows}</div>`:`<div class="empty">今日暂无委托</div>`;
   return `<div class="station-panel"><h3>📋 任务板 <span style="font-size:12px;color:var(--text2)">抵达${getCityName(GS.location)}刷新 · 每任务免费刷新2次</span></h3>
+  ${badWarn}
   <div class="task-section-label">📌 已接取任务（${act.length}）</div>
   ${upper}
   <div class="task-divider"></div>
@@ -3327,6 +3508,8 @@ setInterval(()=>{
   // 事件横幅倒计时每秒刷新（不重渲染整个内容区）
   const eb=document.getElementById('event-board');
   if(eb)eb.innerHTML=renderEventBoard();
+  // 已接任务倒计时每秒局部刷新（仅城市页）
+  if(currentTab==='city')updateTaskTimers();
   // 旅行中：仅增量更新地图位置点与进度（不重建地图，避免城市页/路网动画闪烁）
   // 抵达时 advanceDay 返回 arrived → 上面已全量 render()
   if(!dragging&&GS.traveling&&currentTab==='map'){updateTravelUI();}
