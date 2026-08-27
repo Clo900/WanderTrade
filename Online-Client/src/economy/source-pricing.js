@@ -28,6 +28,18 @@
     fur:         { sourceCities:['frostfort'],   srcMult:0.86, otherMult:1.08 },
     ginseng:     { sourceCities:['frostfort'],   srcMult:0.90, otherMult:1.06 },
     ivory:       { sourceCities:['frostfort'],   srcMult:0.90, otherMult:1.06 },
+    // v9.5 新增特产产地
+    tea:         { sourceCities:['moonvalley'],  srcMult:0.90, otherMult:1.06 },
+    silk:        { sourceCities:['windoasis'],   srcMult:0.88, otherMult:1.06 },
+    amber:       { sourceCities:['frostfort'],   srcMult:0.90, otherMult:1.06 },
+    coral:       { sourceCities:['saltbay'],     srcMult:0.90, otherMult:1.06 },
+    dye:         { sourceCities:['purplefield'], srcMult:0.88, otherMult:1.05 },
+    wine:        { sourceCities:['purplefield'], srcMult:0.85, otherMult:1.05 },
+    jade:        { sourceCities:['moonvalley'],  srcMult:0.90, otherMult:1.06 },
+    stariron:    { sourceCities:['starfall'],    srcMult:0.90, otherMult:1.06 },
+    // v9.7 王都特产产地
+    celadon:     { sourceCities:['dawncapital'], srcMult:0.90, otherMult:1.06 },
+    tapestry:    { sourceCities:['dawncapital'], srcMult:0.90, otherMult:1.06 },
   };
 
   let config = Object.assign({}, DEFAULT_SOURCE_CONFIG);

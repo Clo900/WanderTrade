@@ -11,14 +11,15 @@
 
   /**
    * 计算总时限（秒）
-   * @param {number} distance 最短路径里数
-   * @param {number} speed    出发时实际时速（里/分钟）
-   * @param {object} cfg      TaskConfig.TASK_TIME_CONFIG
+   * @param {number} distance    最短路径里数
+   * @param {number} speed       出发时实际时速（里/分钟）
+   * @param {object} cfg         TaskConfig.TASK_TIME_CONFIG
+   * @param {number} urgencyMult 时效倍率（如 0.65/1.5；仅作用于路程时间，缓冲不缩放）
    */
-  function computeTimeLimit(distance, speed, cfg){
+  function computeTimeLimit(distance, speed, cfg, urgencyMult){
     const baseSeconds = speed > 0 ? (distance / speed) * 60 : 0;
     const factor = cfg.compactFactor(distance);
-    return Math.max(1, Math.round(baseSeconds * factor + cfg.TIME_BUFFER_SECONDS));
+    return Math.max(1, Math.round(baseSeconds * factor * (urgencyMult || 1) + cfg.TIME_BUFFER_SECONDS));
   }
 
   /**

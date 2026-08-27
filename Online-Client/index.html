@@ -84,11 +84,12 @@
 <script src="src/core/event-bus.js"></script>
 <!-- cache-bust: 修复弹窗无法点击/无法关闭 -->
 <script src="src/core/ui-primitives.js?v=921"></script>
-<script src="src/core/data.js"></script>
-<script src="src/economy/source-pricing.js"></script>
-<script src="src/economy/price-exceptions.js"></script>
-<script src="src/economy/price-engine.js"></script>
-<script src="src/economy/events.js"></script>
+<script src="src/core/data.js?v=971"></script>
+<script src="src/economy/source-pricing.js?v=971"></script>
+<script src="src/economy/price-exceptions.js?v=971"></script>
+<script src="src/economy/price-engine.js?v=971"></script>
+<script src="src/economy/demand-engine.js?v=971"></script>
+<script src="src/economy/events.js?v=971"></script>
 <script src="src/economy/trade-graph.js"></script>
 <script src="src/economy/tax.js"></script>
 <!-- cache-bust: 修复 tradeDraft 非空误判 -->
@@ -96,7 +97,7 @@
 <script src="src/economy/trade-validate.js"></script>
 <script src="src/economy/trade-preview.js"></script>
 <script src="src/gameplay/pathing-core.js"></script>
-<script src="src/gameplay/task-config.js"></script>
+<script src="src/gameplay/task-config.js?v=971"></script>
 <script src="src/gameplay/task-timer.js"></script>
 <script src="src/gameplay/task-bad-record.js"></script>
 <script src="src/economy/task-reward.js"></script>
@@ -121,7 +122,8 @@ State.init({
   justArrived: false, tutorial: {step:0},
   stats: {bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0},
   achievements: {}, visitedCities: ['greentown'],
-  __savedAt: 0, __loaded: false
+  __savedAt: 0, __loaded: false,
+  __clockOffset: 0 // v9.4：服务器时间校准偏移（ms）；单机为 0，在线由 serverNow 校准
 });
 
 // ===== 清理误注入的调试 DOM（避免阻塞点击） =====
@@ -244,10 +246,11 @@ function showPrivateEvent(){
   if(pe.type==='rob'){
     let val=0;for(const id in GS.cargo)val+=(GS.cargo[id]||0)*((GS.buyPrice[id])||0);
     const ransom=Math.round(val*0.2);
+    // v9.8：欠债系统——赎买允许欠债（金币不足也扣款为负），"硬抗损失"仍为备选
     showChoice('🏴 路遇劫匪',`损失 ${Math.round(pe.pct*100)}% 的货物（按各物资比例扣除）\n或花费 ${fmt(ransom)} 金币赎买免于损失`,
-      ransom>GS.gold?'强行突围':`赎买 ${fmt(ransom)} 金币`,'硬抗损失',()=>{
-        if(GS.gold>=ransom){State.set('gold',GS.gold-ransom);toast('破财消灾，货物保住','ok');}
-        else{applyCargoLoss(pe.pct);toast('突围失败，货物被劫','err');}
+      `赎买 ${fmt(ransom)} 金币`,'硬抗损失',()=>{
+        State.set('gold',GS.gold-ransom);
+        toast('破财消灾，货物保住'+(GS.gold<0?'（金币已负债，需卖货或完成任务还清）':''),'ok');
         render();
       },()=>{applyCargoLoss(pe.pct);toast('货物被劫走一部分','err');render();});
   }else if(pe.type==='breakdown'){
@@ -362,10 +365,12 @@ async function fullSync(){
   const user=localStorage.getItem(AUTH_KEY);if(!user)return;
   const w=await NET.get('/api/world');
   if(w&&w.ok&&w.world){
+    if(typeof w.serverNow==='number')GS.__clockOffset=w.serverNow-Date.now(); // v9.4 时钟校准
     applyWorld(w.world);
     if(w.world.timeScale&&w.world.timeScale!==GS.timeScale)GS.timeScale=w.world.timeScale;
   }
   await syncPlayer(user); // v8.19：统一合并（服务器档 vs 本机离线档，取新）
+  settleOverdueTasks(); // v9.4：上线结算离线期间严重超时的任务
   advanceDay();render();
 }
 // v8.19：玩家存档"服务器↔本机"合并——本机离线档较新则恢复并上传（保留离线完成的教程/任务进度），否则恢复服务器档
@@ -418,16 +423,44 @@ function toggleAuth(mode){
   document.querySelector('.auth-toggle').innerHTML=mode==='register'?'已有账号？<span onclick="toggleAuth(\'login\')">点此登录</span>':'没有账号？<span onclick="toggleAuth(\'register\')">点此注册</span>';
   document.getElementById('auth-err').textContent='';
 }
+// v9.7.2：旧世界表合并补缺——以新代码表为底、旧存档值优先（保留单机"刷新不重洗"承诺）；
+// 新代码有而旧表缺的物资（v9.5/v9.7 扩充的 20 种）用代码值补齐，避免价格显示 0 / 物价表空。
+function mergeWorldTable(oldT,newT){
+  const out={};
+  for(const c of CITIES){
+    const oldC=(oldT&&oldT[c.id])||{},newC=(newT&&newT[c.id])||{};
+    out[c.id]={};
+    for(const k of Object.keys(newC))out[c.id][k]=(oldC[k]!==undefined)?oldC[k]:newC[k];
+  }
+  return out;
+}
+// ===== 存档版本化（v9.7.2） =====
+// 存档携带结构版本 __saveSchema；代码升级导致存档语义变化时，按版本执行迁移管线，
+// 根治"旧档数据在新代码下行为异常"（如 v9.7.2 前的旧价格表缺新增物资 → 价格 0 / 物价表空）。
+// 版本基线：972 = v9.7.2（世界表/库存与代码对齐已作为 applySaved 运行时行为内置）。
+const SAVE_SCHEMA = 972;
+// 迁移注册表：{ 目标版本: 迁移函数(saved, ctx) }。未来结构变更在此追加新版本与迁移函数，
+// applySaved 会对 存档版本 < SAVE_SCHEMA 的旧档按版本顺序补齐执行。
+const SAVE_MIGRATIONS = { 972: null };
+// 返回存档当前版本；旧档无版本视为 0。执行迁移（当前 972 无独立迁移函数）。
+function migrateSaveSchema(saved){
+  let sv = typeof saved.__saveSchema==='number' ? saved.__saveSchema : 0;
+  if(sv >= SAVE_SCHEMA) return sv;
+  // 未来迁移示例（版本递增后在此追加）：
+  //   for(let v=sv+1; v<=SAVE_SCHEMA; v++){ const fn=SAVE_MIGRATIONS[v]; if(fn) fn(saved); }
+  return SAVE_SCHEMA;
+}
 function applySaved(saved){
   if(!saved)return;
+  migrateSaveSchema(saved); // v9.7.2：存档版本登记/迁移（旧档世界表补缺由下方运行时逻辑执行）
   State.batch(function(){
     // v8.26：存档无 day（在线剔除后）兜底 1，随后由世界锚点对齐
     State.set('day', typeof saved.day==='number'?saved.day:1);
-    State.set('gold', saved.gold);
-    State.set('location', saved.location);
+    State.set('gold', typeof saved.gold==='number'?saved.gold:10000);
+    State.set('location', saved.location || 'greentown');
     State.set('vehicle', saved.vehicle||{});
-    State.set('cargo', saved.cargo);
-    State.set('buyPrice', saved.buyPrice);
+    State.set('cargo', saved.cargo && typeof saved.cargo==='object' ? saved.cargo : {});
+    State.set('buyPrice', saved.buyPrice && typeof saved.buyPrice==='object' ? saved.buyPrice : {});
     State.set('lots', saved.lots||{});
     State.set('visitStamp', saved.visitStamp||{});
     State.set('cityStocks', saved.cityStocks||initCityStocks());
@@ -437,8 +470,14 @@ function applySaved(saved){
       if(saved.gameStartTime) State.set('gameStartTime', saved.gameStartTime);
       else State.set('gameStartTime', Date.now()-(Math.max(1,saved.day||1)-1)*(600000/(State.get('timeScale')||1)));
     }
-    if(saved.__basePrices)BASE_PRICES=saved.__basePrices;
-    if(saved.__purchaseLimits)PURCHASE_LIMITS=saved.__purchaseLimits;
+    // v9.7.1：在线模式世界价格/限购以服务器 world 为准，不再恢复本地存档携带的旧价格表
+    // （否则 v8.10 B1 的离线世界机制会把升级前的价格基准永久覆盖，造成"事件打折但价格仍偏高"的假象）
+    // v9.7.2：单机恢复旧表时按"旧值优先 + 新代码补缺"合并——旧物资价格不变（刷新不重洗），
+    //          v9.5/v9.7 新增物资缺失的基准/限购用代码值补齐，避免价格显示 0 / 物价表空
+    if(!ONLINE){
+      if(saved.__basePrices)BASE_PRICES=mergeWorldTable(saved.__basePrices,buildBasePrices());
+      if(saved.__purchaseLimits)PURCHASE_LIMITS=mergeWorldTable(saved.__purchaseLimits,buildLimits());
+    }
     State.set('warehouses', saved.warehouses||{});
     State.set('reputation', saved.reputation||{});
     State.set('stats', saved.stats||{bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0});
@@ -458,6 +497,19 @@ function applySaved(saved){
     State.set('__savedAt', saved.__savedAt||Date.now());
     State.set('__loaded', true);
   });
+  // v9.7.2：单机旧档补齐新增物资库存（需在 __purchaseLimits 合并后），否则新增物资库存为 0 无法交易
+  var csStocks = State.get('cityStocks');
+  if(csStocks){
+    for(const c of CITIES){
+      csStocks[c.id] = csStocks[c.id] || {};
+      for(const gid of c.goods){
+        if(csStocks[c.id][gid] == null) csStocks[c.id][gid] = PURCHASE_LIMITS[c.id]?.[gid] || 100;
+      }
+    }
+    State.set('cityStocks', csStocks);
+  }
+  // v9.7.2：登记存档结构版本（保存时随档写入；旧档下次保存即升级）
+  State.set('__saveSchema', SAVE_SCHEMA);
   // 车厢兜底（v7.9.1）：老存档/异常数据无 wagons 时补默认装配
   var veh = State.get('vehicle');
   if(veh){
@@ -488,6 +540,10 @@ function applyWorld(world){
     if(world.sellExceptions && window.PriceExceptions && PriceExceptions.setExceptions){
       PriceExceptions.setExceptions(world.sellExceptions);
     }
+    // v9.5：市场需求画像（拒收表/热门加成/冷淡折价/需求周期）下发
+    if(world.demandProfile && window.DemandEngine && DemandEngine.setConfig){
+      DemandEngine.setConfig(world.demandProfile);
+    }
   }catch(e){}
   State.batch(function(){
     if(world.worldStart)State.set('gameStartTime', world.worldStart);
@@ -514,6 +570,8 @@ async function startOnline(){
   if(window.__netStarted)return ONLINE;
   const w=await NET.get('/api/world');
   if(!w||!w.ok){ONLINE=false;return false;} // 失败可重试（如服务器尚未启动）
+  // v9.4：服务器时间校准（任务时限防作弊）
+  if(typeof w.serverNow==='number')GS.__clockOffset=w.serverNow-Date.now();
   if(w.world)applyWorld(w.world);
   else{
     // 兜底：服务器尚未自动建世界时由客户端创建
@@ -523,10 +581,11 @@ async function startOnline(){
     applyWorld(created);
   }
   ONLINE=true;window.__netStarted=true;
-  // 在线期间轮询世界：同步 timeScale 流速与 GM 广播
+  // 在线期间轮询世界：同步 timeScale 流速、时钟偏移与 GM 广播
   setInterval(async()=>{
     const w2=await NET.get('/api/world');
     if(w2&&w2.ok&&w2.world){
+      if(typeof w2.serverNow==='number')GS.__clockOffset=w2.serverNow-Date.now(); // v9.4 持续校准
       if(w2.world.timeScale&&w2.world.timeScale!==GS.timeScale){GS.timeScale=w2.world.timeScale;render();toast('⏱ 世界时间流速已调整为 ×'+w2.world.timeScale,'ok');}
       if(w2.world.lastBroadcast&&w2.world.lastBroadcast.ts&&(!window.__lastBc||window.__lastBc<w2.world.lastBroadcast.ts)){
         window.__lastBc=w2.world.lastBroadcast.ts;
@@ -623,7 +682,7 @@ async function doRegister(){
     if(!r||!r.ok)return authErr(r&&r.err?r.err:'注册失败（服务器不可用？）');
     const pl=await NET.get('/api/player/'+encodeURIComponent(u));
     if(pl&&pl.ok&&pl.gs)applySaved(pl.gs);
-    else if(pl&&pl.ok)GS.__loaded=true; // v8.25：服务器确认无档=新玩家，允许建档；网络失败（pl=null）不置 loaded
+    else if(pl&&pl.ok){GS.__loaded=true;State.set('__saveSchema',SAVE_SCHEMA);} // v8.25：服务器确认无档=新玩家；v9.7.2 登记存档版本
   }else{
     const users=getUsers();
     if(users.includes(u))return authErr('该用户名已被注册');
@@ -654,7 +713,7 @@ async function doLogin(){
     if(localStorage.getItem(GS_PREFIX+u+'_pwd')!==p)return authErr('密码错误');
     const saved=getStoredGS(u);
     if(saved)applySaved(saved);
-    else GS.__loaded=true; // v8.25：离线新玩家建档
+    else {GS.__loaded=true;State.set('__saveSchema',SAVE_SCHEMA);} // v8.25：离线新玩家建档；v9.7.2 登记存档版本
   }
   localStorage.setItem(AUTH_KEY,u);
   window.__gsReady=true; // v8.20：账号存档已确立，允许自动保存
@@ -754,8 +813,10 @@ function resetGameState(){
     State.set('visitedCities', ['greentown']);
     State.remove('__basePrices');
     State.remove('__purchaseLimits');
+    State.set('__saveSchema', SAVE_SCHEMA); // v9.7.2：新档登记存档结构版本
     State.set('__savedAt', 0);
     State.remove('__loaded');
+    State.set('__clockOffset', 0);
   });
 }
 
@@ -789,7 +850,7 @@ function achieveProgress(a){
     rep_3:Math.max(...CITIES.map(c=>getRepLevel(c.id)))/3,
     rep_3x3:CITIES.filter(c=>getRepLevel(c.id)>=3).length/3
   }[a.id];
-  return p===undefined?null:Math.min(1,p);
+  return p===undefined?null:Math.max(0,Math.min(1,p));
 }
 function fmtReward(r){
   const parts=[];
@@ -900,6 +961,7 @@ const CMD_HELP=[
   '/stock <城市id> <物品id> <数量> 设置自己在该城该物品的库存',
   '/day <天数>                    本地推进到指定天数（在线由世界天数主导）',
   '/gold                          查看当前金币',
+  '/time                          查看服务器时间校准状态（nowMs/clockOffset）',
   '/gm <密码> timescale <0.1~100> 世界时间流速倍率（全服生效，1=正式10分钟/日）',
   '/gm <密码> setday <天数>       设置世界天数（全服生效）',
   '/gm <密码> givegold <玩家> <金额> 给指定玩家发钱（在线存档生效）',
@@ -914,6 +976,7 @@ function runCmd(line){
   const arg=(i,d)=>{const v=parseFloat(p[i]);return isNaN(v)?d:v};
   if(c==='/help'||c==='/h'||c==='help'){CMD_HELP.forEach(x=>cmdOut(x));return;}
   if(c==='/gold'){cmdOut('💰 当前金币：'+GS.gold);return;}
+  if(c==='/time'){const off=GS.__clockOffset||0;cmdOut(`🕐 nowMs=${nowMs()} · clockOffset=${off>0?'+':''}${off}ms · 本地=${Date.now()}`);return;}
   if(c==='/addgold'){const n=Math.floor(arg(1,0));GS.gold+=n;cmdOut('💰 +'+n+' 金币 → '+GS.gold);render();return;}
   if(c==='/addcargo'){const it=(p[1]||''),n=Math.floor(arg(2,0));if(!it)return cmdOut('用法：/addcargo <物品id> <数量>');GS.cargo[it]=(GS.cargo[it]||0)+n;cmdOut('📦 +'+n+' '+it+'（现有 '+GS.cargo[it]+'）');render();return;}
   if(c==='/addmat'){const t=(p[1]||''),n=Math.floor(arg(2,0));if(!['gear','repair_kit','fuel_tank','engine'].includes(t))return cmdOut('材料类型：gear/repair_kit/fuel_tank/engine');GS.materials[t]=(GS.materials[t]||0)+n;cmdOut('🧰 +'+n+' '+t);render();return;}
@@ -1325,26 +1388,31 @@ function buyItem(itemId,qty,opts){
   const taxRate=(window.Tax&&Tax.getRate)?Tax.getRate(getRepLevel(city)):0;
   const tax=(window.Tax&&Tax.calc)?Tax.calc(total,taxRate):0;
   const pay=total+tax;
-  if(GS.gold<pay)return{ok:false,msg:'资金不足'};
-  const stock=getCurStock(city,itemId);if(qty>stock)return{ok:false,msg:'库存不足'};
-  if(getCargoFree()<qty)return{ok:false,msg:'载具容量不足'};
+  // C1：serverLedger 模式（在线服务端已结算）跳过资金/库存/容量校验与资金/货物/库存变更，仅做本地轻记账
+  if(!opts.serverLedger){
+    if(GS.gold<pay)return{ok:false,msg:'资金不足'};
+    const stock=getCurStock(city,itemId);if(qty>stock)return{ok:false,msg:'库存不足'};
+    if(getCargoFree()<qty)return{ok:false,msg:'载具容量不足'};
+  }
   const oldQty=GS.cargo[itemId]||0,oldCost=GS.buyPrice[itemId]||0;
   const newQty=oldQty+qty;
   const newCost=Math.round((oldCost*oldQty+total)/newQty);
   addLots(itemId,city,qty,price);
   State.batch(function(){
-    var cargo = State.get('cargo') || {};
     var buyPrice = State.get('buyPrice') || {};
-    cargo[itemId] = newQty;
     buyPrice[itemId] = newCost;
-    State.set('cargo', cargo);
     State.set('buyPrice', buyPrice);
-    var cs = State.get('cityStocks') || {};
-    if(!cs[city])cs[city]={};
-    cs[city][itemId] = stock-qty;
-    State.set('cityStocks', cs);
+    if(!opts.serverLedger){
+      var cargo = State.get('cargo') || {};
+      cargo[itemId] = newQty;
+      State.set('cargo', cargo);
+      var cs = State.get('cityStocks') || {};
+      if(!cs[city])cs[city]={};
+      cs[city][itemId] = getCurStock(city,itemId)-qty;
+      State.set('cityStocks', cs);
+    }
   });
-  State.set('gold', GS.gold-pay);
+  if(!opts.serverLedger)State.set('gold', GS.gold-pay);
   EventBus.emit(EventBus.EVENTS.ITEM_BOUGHT, {itemId:itemId, qty:qty, price:price, total:total, taxRate:taxRate, tax:tax, pay:pay});
   const repGain=qty;
   addRep(city,repGain);
@@ -1357,27 +1425,47 @@ function sellItem(itemId,qty,opts){
   opts=opts||{};
   if(!opts.skipAdvance)advanceDay();
   if(GS.traveling)return{ok:false,msg:'旅行中不可交易'};
-  const held=GS.cargo[itemId]||0;if(held<qty)return{ok:false,msg:'持有不足'};
-  const sPrice=getSellPrice(GS.location,itemId,GS.day);if(!sPrice)return{ok:false,msg:'价格异常'};
-  const{revenue,sameQty,arbitrage}=consumeLots(itemId,qty);
+  const held=GS.cargo[itemId]||0;
+  // C1：serverLedger 模式持仓校验已由服务端完成
+  if(!opts.serverLedger&&held<qty)return{ok:false,msg:'持有不足'};
+  const sPrice=getSellPrice(GS.location,itemId,GS.day);
+  if(!sPrice){
+    // v9.5：拒收提示（getSellPrice 对拒收物资返回 null）
+    if(window.DemandEngine){
+      const hubNow=Math.floor(GS.day/CENTRAL_PERIOD);
+      const ds=DemandEngine.getDemandState(GS.location,itemId,hubNow);
+      if(ds==='reject'){
+        const reason=DemandEngine.getRejectReason(GS.location,itemId)||'本城不收购此物资';
+        return{ok:false,msg:'本城无人收购：'+reason};
+      }
+    }
+    return{ok:false,msg:'价格异常'};
+  }
+  // C1：serverLedger 模式的批次结算结果（含惩罚）由调用方在服务端结算前真实计算并传入，此处复用避免二次扣 lots
+  const lr = opts.serverLedger ? (opts.lotsResult||{revenue:0,sameQty:0,arbitrage:false}) : consumeLots(itemId,qty);
+  const{revenue,sameQty,arbitrage}=lr;
   const city=GS.location;
   const taxRate=(window.Tax&&Tax.getRate)?Tax.getRate(getRepLevel(city)):0;
   const tax=(window.Tax&&Tax.calc)?Tax.calc(revenue,taxRate):0;
   const net=revenue-tax;
   const remaining=held-qty;
   State.batch(function(){
-    var cargo = State.get('cargo') || {};
     var buyPrice = State.get('buyPrice') || {};
-    if(remaining<=0){
-      delete cargo[itemId];
-      delete buyPrice[itemId];
+    if(opts.serverLedger){
+      if(!(GS.cargo[itemId]>0))delete buyPrice[itemId];
     }else{
-      cargo[itemId]=remaining;
+      var cargo = State.get('cargo') || {};
+      if(remaining<=0){
+        delete cargo[itemId];
+        delete buyPrice[itemId];
+      }else{
+        cargo[itemId]=remaining;
+      }
+      State.set('cargo', cargo);
     }
-    State.set('cargo', cargo);
     State.set('buyPrice', buyPrice);
   });
-  State.set('gold', GS.gold+net);
+  if(!opts.serverLedger)State.set('gold', GS.gold+net);
   EventBus.emit(EventBus.EVENTS.ITEM_SOLD, {itemId:itemId, qty:qty, revenue:revenue, taxRate:taxRate, tax:tax, net:net});
   const repGain=Math.floor(revenue/1000);
   addRep(GS.location,repGain);
@@ -1624,9 +1712,11 @@ function rollTask(cityId,seq){
   const baseGold=Math.round(dist*unit*R.goldMul),rep=R.repMul;
   const mats=rollMat(R);
   const quality=TaskReward.rollQuality(R.id, TaskConfig);
+  const urgency=TaskReward.rollUrgency(R.id, TaskConfig);
+  const goldMult=TaskReward.qualityMult(quality,TaskConfig)*TaskReward.getUrgency(urgency,TaskConfig).goldMult;
   const id='t'+Date.now()+seq+Math.floor(Math.random()*999);
   const base={
-    id:id, rarity:R.id, quality:quality,
+    id:id, rarity:R.id, quality:quality, urgency:urgency,
     from:cityId, to:to.id, dist:dist, rewardRep:rep, rewardMats:mats, delivered:false,
     timerStarted:false, speedSnapshot:null, timeLimitSeconds:null, deadlineTimestamp:null, status:'active'
   };
@@ -1638,7 +1728,7 @@ function rollTask(cityId,seq){
       const rewardGoldBase=baseGold+qty*ext;
       base.type='deliver';base.capType='cargo';base.item=gid;base.qty=qty;
       base.rewardGoldBase=rewardGoldBase;
-      base.rewardGold=Math.floor(rewardGoldBase*TaskReward.qualityMult(quality,TaskConfig));
+      base.rewardGold=Math.floor(rewardGoldBase*goldMult);
       base.rewardRep=rep+Math.floor(qty/2);
       base.desc=`运送${getItem(gid).icon}${getItem(gid).name}×${qty}至${getCityName(to.id)}（${dist}里）`;
       return base;
@@ -1648,7 +1738,7 @@ function rollTask(cityId,seq){
   const rewardGoldBase=baseGold+pq*ext*5;
   base.type='escort';base.capType='pass';base.item=null;base.qty=pq;
   base.rewardGoldBase=rewardGoldBase;
-  base.rewardGold=Math.floor(rewardGoldBase*TaskReward.qualityMult(quality,TaskConfig));
+  base.rewardGold=Math.floor(rewardGoldBase*goldMult);
   base.desc=`护送${pq}位商客至${getCityName(to.id)}（${dist}里 · 占旅客仓${pq}格）`;
   return base;
 }
@@ -1656,8 +1746,9 @@ function rollTask(cityId,seq){
 function normalizeTask(t){
   if(!t)return t;
   if(!t.quality)t.quality='C';
+  if(!t.urgency)t.urgency='standard';
   if(t.rewardGoldBase==null)t.rewardGoldBase=t.rewardGold||0;
-  if(t.rewardGold==null)t.rewardGold=Math.floor(t.rewardGoldBase*TaskReward.qualityMult(t.quality,TaskConfig));
+  if(t.rewardGold==null)t.rewardGold=Math.floor(t.rewardGoldBase*TaskReward.qualityMult(t.quality,TaskConfig)*TaskReward.getUrgency(t.urgency,TaskConfig).goldMult);
   if(t.timerStarted==null)t.timerStarted=false;
   if(t.speedSnapshot==null)t.speedSnapshot=null;
   if(t.timeLimitSeconds==null)t.timeLimitSeconds=null;
@@ -1749,7 +1840,8 @@ function abandonTask(tid){
   showModal('🚫 放弃任务',
     `确定放弃「${t.desc}」吗？\n将扣除违约金 ${fmt(penalty)} 金币\n${t.capType==='pass'?'商客将下车，旅客仓空间会释放。':'任务货物将被清空，货舱空间会释放。'}`,
     '确认放弃',()=>{
-      const goldBefore=GS.gold,deducted=Math.min(goldBefore,penalty);
+      // v9.8：欠债系统——放弃违约金全额扣除，可扣成负数
+      const goldBefore=GS.gold,deducted=penalty;
       State.batch(function(){
         State.set('gold', goldBefore-deducted);
         var tasks = State.get('tasks') || {};
@@ -1768,13 +1860,14 @@ function completeTask(tid){
   if(GS.traveling)return toast('旅行中不可操作','info');
   const t=(GS.tasks.active||[]).find(x=>x.id===tid);if(!t)return;
   if(!t.delivered)return toast('尚未抵达目的地，无法领取奖励','info');
-  const now=Date.now();
+  const now=nowMs();
   const status=TaskTimer.resolveStatus(now, t.deadlineTimestamp, TaskConfig.TASK_TIME_CONFIG.LATE_GRACE_SECONDS);
   const settle=TaskReward.settleTask(t.rewardGold||0, t.rewardGoldBase||t.rewardGold||0, t.rewardRep||0, t.rewardMats||[], status, TaskConfig);
   const goldBefore=GS.gold;
   if(settle.failed){
     // 严重超时：失败 + 罚金 + 计入 24h 不良记录（不扣声望）
-    const deducted=Math.min(goldBefore, settle.penalty);
+    // v9.8：欠债系统——罚金全额扣除，可扣成负数
+    const deducted=settle.penalty;
     State.batch(function(){
       State.set('gold', goldBefore-deducted);
       var tasks = State.get('tasks') || {};
@@ -1814,6 +1907,39 @@ function completeTask(tid){
   }
   render();saveNow();
 }
+// v9.4：任务时间权威——在线模式以服务器时间校准（serverNow → clockOffset），单机使用本地时间
+function nowMs(){return Date.now() + (GS.__clockOffset || 0)}
+// v9.4：严重超时自动失败（到点即失败，含离线上线结算）
+// 遍历已启动计时的任务：now > deadline + 宽限 → 执行失败结算（扣罚金、计不良记录、移除任务、汇总提示）
+function settleOverdueTasks(){
+  const now = nowMs();
+  const grace = TaskConfig.TASK_TIME_CONFIG.LATE_GRACE_SECONDS * 1000;
+  var tasks = State.get('tasks') || {};
+  var act = tasks.active || [];
+  const overdue = act.filter(function(t){ return t.timerStarted && t.deadlineTimestamp && now > t.deadlineTimestamp + grace; });
+  if(!overdue.length) return;
+  const cfg = TaskConfig.TASK_PENALTY_CONFIG;
+  let totalPenalty = 0;
+  const ids = new Set();
+  for(const t of overdue){
+    const penalty = Math.max(Math.round((t.rewardGoldBase || t.rewardGold || 0) * cfg.PENALTY_GOLD_RATE), cfg.MIN_PENALTY_GOLD);
+    // v9.8：欠债系统——罚金全额累计，可扣成负数
+    totalPenalty += penalty;
+    TaskBadRecord.record('fail', now, TaskConfig.TASK_BAD_RECORD_CONFIG);
+    ids.add(t.id);
+  }
+  tasks.active = act.filter(function(t){ return !ids.has(t.id); });
+  State.batch(function(){
+    State.set('gold', GS.gold - totalPenalty);
+    State.set('tasks', tasks);
+  });
+  const badCount = TaskBadRecord.count(TaskBadRecord.getLog());
+  const debuff = TaskBadRecord.getDebuff(TaskBadRecord.getLog(), TaskConfig.TASK_BAD_RECORD_CONFIG);
+  let msg = `❌ ${overdue.length} 个任务严重超时失败！共扣除违约金 ${fmt(totalPenalty)} 金币 · 24h 违约记录 ${badCount} 次`;
+  if(debuff) msg += ` · 任务金币×${debuff.goldMult}，史诗/传说刷新×${debuff.rareWeightMult}`;
+  toast(msg, 'err');
+  saveNow();
+}
 // T1：离开接取城市时启动相关任务倒计时（按出发时实际时速快照计算，之后换车厢不回改时限）
 function startTaskTimers(fromCityId){
   var tasks = State.get('tasks') || {};
@@ -1823,11 +1949,12 @@ function startTaskTimers(fromCityId){
     if(t.timerStarted) continue;
     if(t.from !== fromCityId) continue;
     const dist = (shortestPath(t.from, t.to)||{distance:0}).distance;
-    const timeLimit = TaskTimer.computeTimeLimit(dist, speed, TaskConfig.TASK_TIME_CONFIG);
+    const urgMult = TaskReward.getUrgency(t.urgency||'standard', TaskConfig).timeMult;
+    const timeLimit = TaskTimer.computeTimeLimit(dist, speed, TaskConfig.TASK_TIME_CONFIG, urgMult);
     t.timerStarted = true;
     t.speedSnapshot = speed;
     t.timeLimitSeconds = timeLimit;
-    t.deadlineTimestamp = TaskTimer.computeDeadline(Date.now(), timeLimit);
+    t.deadlineTimestamp = TaskTimer.computeDeadline(nowMs(), timeLimit);
     t.status = 'active';
     changed = true;
   }
@@ -1864,7 +1991,7 @@ function taskCdState(t, now){
 }
 // 已接任务倒计时每秒局部刷新（不重建内容区，避免城市页闪烁）
 function updateTaskTimers(){
-  const now = Date.now();
+  const now = nowMs();
   for(const t of (GS.tasks.active||[])){
     const el = document.getElementById('task-cd-'+t.id);
     if(!el) continue;
@@ -1876,15 +2003,18 @@ function updateTaskTimers(){
   }
 }
 // 生成任务卡（mode='active' 已接 / 'open' 可接；open 需传 slotId 用于刷新/接取）
-// 预计时限：按当前实际时速估算（接取后实际在离城时按出发时速快照正式计算）
+// 预计时限：按当前实际时速 + 时效档位倍率估算（接取后实际在离城时按出发时速快照正式计算）
 function taskTimeLimitMinutes(t){
   const dist = t.dist != null ? t.dist : (shortestPath(t.from, t.to)||{distance:0}).distance;
-  const sec = TaskTimer.computeTimeLimit(dist, getVehicleSpeed(), TaskConfig.TASK_TIME_CONFIG);
+  const urgMult = TaskReward.getUrgency(t.urgency||'standard', TaskConfig).timeMult;
+  const sec = TaskTimer.computeTimeLimit(dist, getVehicleSpeed(), TaskConfig.TASK_TIME_CONFIG, urgMult);
   return Math.max(1, Math.round(sec/60));
 }
 function taskCardHtml(t,mode,slotId){
   const R=getRarity(t.rarity);
   const Q=t.quality||'C';
+  const urgencyCfg=TaskReward.getUrgency(t.urgency||'standard', TaskConfig);
+  const urgencyTag=`<span class="task-urgency" style="color:${urgencyCfg.color}">${urgencyCfg.name}</span>`;
   const matTxt=(t.rewardMats||[]).map(m=>getMat(m.id).icon+getMat(m.id).name+'×'+m.qty).join(' ');
   const capTxt=t.capType==='cargo'?`任务货物占货舱 ${t.qty} 格`:`旅客占旅客仓 ${t.qty} 格`;
   let reason='';
@@ -1902,12 +2032,12 @@ function taskCardHtml(t,mode,slotId){
   const timeLine=mode==='open'
     ?`<div class="task-time">⏱️ 时限：${taskTimeLimitMinutes(t)} 分钟</div>`
     :'';
-  const cdState=mode==='active'?taskCdState(t, Date.now()):null;
+  const cdState=mode==='active'?taskCdState(t, nowMs()):null;
   const cd=cdState
     ?`<div class="task-cd-wrap"><div class="task-cd${cdState.cls?' '+cdState.cls:''}" id="task-cd-${t.id}">${cdState.text}</div><div class="task-bar"><div class="task-bar-fill" id="task-bar-${t.id}" style="width:${cdState.pct==null?100:cdState.pct*100}%"></div></div></div>`
     :'';
   return `<div class="task-card rarity-${t.rarity}" style="border-color:${R.color}">
-    <div class="task-top"><span class="task-rarity" style="color:${R.color}">${R.name} · 品质${Q}</span>${topBtn}</div>
+    <div class="task-top"><span class="task-rarity" style="color:${R.color}">${R.name} · 品质${Q}</span>${urgencyTag}${topBtn}</div>
     <div class="task-desc">${t.desc}</div>
     ${timeLine}
     <div class="task-meta">📍${getCityName(t.from)} → 🏁${getCityName(t.to)} · ${capTxt}${mode==='active'&&t.delivered?' · 已抵达':''}${t.to==='starfall'?' · <span style="color:var(--red)">目的地暂未开放</span>':''}</div>
@@ -1948,8 +2078,10 @@ function renderTaskBoard(){
     return taskCardHtml(slot.t,'open',slot.id);
   }).join('');
   const grid=rows?`<div class="task-open-grid">${rows}</div>`:`<div class="empty">今日暂无委托</div>`;
+  const legend=`<div class="task-legend">时限倍率：宽松 ×1.5 · 标准 ×1.15 · 紧急 ×0.85 · 加急 ×0.65（按当前时速估算，出发后锁定）</div>`;
   return `<div class="station-panel"><h3>📋 任务板 <span style="font-size:12px;color:var(--text2)">抵达${getCityName(GS.location)}刷新 · 每任务免费刷新2次</span></h3>
   ${badWarn}
+  ${legend}
   <div class="task-section-label">📌 已接取任务（${act.length}）</div>
   ${upper}
   <div class="task-divider"></div>
@@ -2057,7 +2189,7 @@ function renderTopbar(){
       <div class="tb-cell"><span class="tb-label">🚛 货舱</span><span class="tb-val">${used+getTaskCargoUsed()}/${cap}</span></div>
       <div class="tb-cell"><span class="tb-label">🧳 旅客</span><span class="tb-val">${getPassUsed()+getTaskPassUsed()}/${getPassCapacity()}</span></div>
       <div class="tb-cell"><span class="tb-label">⭐ 本城声望</span><span class="tb-val" style="color:var(--gold)">Lv${getRepLevel(GS.location)}</span></div>
-      <div class="tb-cell tb-ops"><span class="tb-gold">💰 ${fmt(GS.gold)}</span></div>
+      <div class="tb-cell tb-ops"><span class="tb-gold${GS.gold<0?' debt':''}">💰 ${fmt(GS.gold)}${GS.gold<0?'（欠债）':''}</span></div>
     </div>
     <div class="tb-row tb-row-user">
       <div class="tb-user-meta">
@@ -3061,19 +3193,23 @@ function renderMarketCards(){
     }
   }else{
     // vNext：售出仅显示车厢持有（不含仓库）
+    const hubNow=Math.floor(GS.day/CENTRAL_PERIOD);
     for(let gid of Object.keys(GS.cargo)){if(!GS.cargo[gid])continue;
-      const it=getItem(gid),price=getDayPrice(loc,gid,GS.day),sPrice=getSellPrice(loc,gid,GS.day);
+      const it=getItem(gid);if(!it)continue;
+      // v9.5：需求四档（hot/normal/cool/reject）
+      const ds=(window.DemandEngine&&DemandEngine.getDemandState)?DemandEngine.getDemandState(loc,gid,hubNow):'normal';
+      const sPrice=getSellPrice(loc,gid,GS.day);
       const sYest=getSellPrice(loc,gid,Math.max(1,GS.day-1));
       const ch=sYest&&sPrice?sPrice-sYest:0;
-      if(!price)continue;
-      items.push({gid,it,price,sPrice,ch,held:GS.cargo[gid],cost:GS.buyPrice[gid]||price,type:'sell'});
+      const rejectReason=ds==='reject'?((window.DemandEngine&&DemandEngine.getRejectReason(loc,gid))||'本城无人收购'):'';
+      items.push({gid,it,price:getDayPrice(loc,gid,GS.day),sPrice,ch,held:GS.cargo[gid],cost:GS.buyPrice[gid]||0,type:'sell',ds,rejectReason});
     }
   }
   let html='';
   for(let r of items){
     const isExp = expandedCard===r.gid;
     const chCls=r.ch>0?'up':(r.ch<0?'down':'flat'),chStr=r.ch>0?`+${r.ch}`:(r.ch<0?r.ch:0);
-    html+=`<div class="item-card${isExp?' expanded':''}" data-gid="${r.gid}" onclick="toggleCard('${r.gid}')">`;
+    html+=`<div class="item-card${isExp?' expanded':''}${r.ds==='reject'?' ic-reject':''}" data-gid="${r.gid}" onclick="toggleCard('${r.gid}')">`;
     html+=`<span class="ic-icon">${r.it.icon}</span><span class="ic-name">${r.it.name}</span>`;
     html+=`<span class="ic-cat">${r.it.cat==='basic'?'基础':'特产'}</span>`;
     if(r.type==='buy'){
@@ -3081,19 +3217,31 @@ function renderMarketCards(){
       html+=`<div class="ic-change ${chCls}">${chStr}</div>`;
       html+=`<div class="ic-limit">库存 ${r.stock}/${r.max}</div>`;
       html+=`<div class="ic-cargo-info">🚛 ${getUsedCargo()+getTaskCargoUsed()}/${getVehicleCapacity()}</div>`;
-      const afford=Math.floor(GS.gold/Math.max(1,r.price||1));
+      const afford=Math.max(0, Math.floor(GS.gold/Math.max(1,r.price||1)));
       const maxBuy=Math.min(r.stock, afford, getCargoFree());
       if(maxBuy<=0){
-        html+=`<div class="ic-detail"><div class="row" style="color:var(--text3)">无法购入（资金/货舱/库存不足）</div></div>`;
+        const why=GS.gold<0?'欠债中，无法购入（先卖货或完成任务还债）':'资金/货舱/库存不足';
+        html+=`<div class="ic-detail"><div class="row" style="color:${GS.gold<0?'var(--red)':'var(--text3)'}">${why}</div></div>`;
       }else{
         html+=`<div class="ic-detail">${qtySliderHTML(r.gid,maxBuy,Math.min(1,maxBuy))}<div class="row"><button class="btn-action btn-buy" onclick="event.stopPropagation();draftFromSlider('buy','${r.gid}')">加入中转面板</button></div></div>`;
       }
     }else{
-      html+=`<div class="ic-price sell">${fmt(r.sPrice)}</div>`;
+      // v9.5：拒收标红 + 需求标签
+      const dsTag = r.ds==='hot' ? `<span class="ic-ds ds-hot" title="本城正在高价收购">🔥 热门</span>`
+                 : r.ds==='cool' ? `<span class="ic-ds ds-cool" title="本城市场需求冷淡，收购价压低">🧊 冷淡</span>`
+                 : r.ds==='reject'? `<span class="ic-ds ds-reject" title="点击查看原因">🚫 无人收购</span>` : '';
+      const priceCell = r.ds==='reject'
+        ? `<div class="ic-price sell reject" onclick="event.stopPropagation();showModal('🚫 本城无人收购','<b>${r.it.name}</b>：${r.rejectReason||'本城不收购此物资'}', '知道了', ()=>{})">无人收购</div>`
+        : `<div class="ic-price sell">${fmt(r.sPrice)}</div>`;
+       html+=dsTag;
+       html+=`${priceCell}`;
       html+=`<div class="ic-change ${chCls}">${chStr}</div>`;
       html+=`<div class="ic-limit">持有 ${r.held}件 · 成本 ${fmt(r.cost)}</div>`;
       html+=`<div class="ic-cargo-info">🚛 ${getUsedCargo()+getTaskCargoUsed()}/${getVehicleCapacity()}</div>`;
-      html+=`<div class="ic-detail">${qtySliderHTML(r.gid,r.held,Math.min(1,r.held))}<div class="row"><button class="btn-action btn-sell" onclick="event.stopPropagation();draftFromSlider('sell','${r.gid}')">加入中转面板</button></div></div>`;
+      const sellBtn = r.ds==='reject'
+        ? `<button class="btn-action btn-sell disabled" onclick="event.stopPropagation();showModal('🚫 本城无人收购','<b>${r.it.name}</b>：${r.rejectReason||'本城不收购此物资'}', '知道了', ()=>{})">无法售出</button>`
+        : `<button class="btn-action btn-sell" onclick="event.stopPropagation();draftFromSlider('sell','${r.gid}')">加入中转面板</button>`;
+      html+=`<div class="ic-detail">${qtySliderHTML(r.gid,r.held,Math.min(1,r.held))}<div class="row">${sellBtn}</div></div>`;
     }
     html+=`</div>`;
   }
@@ -3161,7 +3309,7 @@ function renderTradeDraftPanel(){
   let rows='';
   for(const e of entries){
     const it=getItem(e.gid);
-    const max = mode==='buy'? Math.min(getCurStock(GS.location,e.gid), Math.floor(GS.gold/Math.max(1,(getDayPrice(GS.location,e.gid,GS.day)||1))), getCargoFree()+e.qty) : (GS.cargo[e.gid]||0);
+    const max = mode==='buy'? Math.min(getCurStock(GS.location,e.gid), Math.max(0, Math.floor(GS.gold/Math.max(1,(getDayPrice(GS.location,e.gid,GS.day)||1)))), getCargoFree()+e.qty) : (GS.cargo[e.gid]||0);
     rows+=`<div class="td-row">
       <span class="td-name">${it.icon} ${it.name}</span>
       <input class="td-qty" type="number" min="0" max="${max}" value="${e.qty}" onchange="onDraftQtyChange('${mode}','${e.gid}',this.value)">
@@ -3196,6 +3344,16 @@ function clearDraftManual(){
 }
 function draftFromSlider(mode,gid){
   if(!window.TradeDraft)return;
+  // v9.5：拒收物资不可加入售出中转
+  if(mode==='sell'&&window.DemandEngine){
+    const hubNow=Math.floor(GS.day/CENTRAL_PERIOD);
+    const ds=DemandEngine.getDemandState(GS.location,gid,hubNow);
+    if(ds==='reject'){
+      const reason=DemandEngine.getRejectReason(GS.location,gid)||'本城不收购此物资';
+      showModal('🚫 本城无人收购',`<b>${getItem(gid).name}</b>：${reason}`,'知道了');
+      return;
+    }
+  }
   // 若中转面板已有内容，但锚点变化（游戏日/中枢/城市）则按规则提示并清空后再加入
   if(TradeDraft.anyNonEmpty()){
     const td=TradeDraft.getDraftState();
@@ -3249,7 +3407,7 @@ async function confirmDraft(mode){
     if(!v.ok)return toast(v.msg,'err');
     const msg=`物品种类：${v.list.length}\n小计：${fmt(v.subtotal)}\n税率：${Math.round(v.taxRate*100)}%\n税额：${fmt(v.tax)}\n应付总额：${fmt(v.total)}`;
     showModal('🧾 确认购入（中转面板）',msg,'确认购入',async()=>{
-      const ok = await execBuyDraft(v.list);
+      const ok = await execBuyDraft(v.list, v.total);
       if(ok){TradeDraft.clearAll('buy-confirm');render();}
     });
     return;
@@ -3262,7 +3420,7 @@ async function confirmDraft(mode){
     const pre=TradePreview.previewSell(draft);
     const msg=`物品种类：${pre.list.length}\n预计收入：${fmt(pre.revenue)}\n税率：${Math.round(pre.taxRate*100)}%\n税额：${fmt(pre.tax)}\n预计到手：${fmt(pre.net)}`;
     showModal('🧾 确认售出（中转面板）',msg,'确认售出',async()=>{
-      const ok = await execSellDraft(pre.list);
+      const ok = await execSellDraft(pre.list, pre.net);
       if(ok){TradeDraft.clearAll('sell-confirm');render();}
     });
   };
@@ -3274,18 +3432,27 @@ async function confirmDraft(mode){
   proceed();
 }
 
-async function execBuyDraft(list){
+async function execBuyDraft(list,total){
   const city=GS.location;
   if(ONLINE){
     const user=localStorage.getItem(AUTH_KEY)||'';
-    const r=await NET.post('/api/tradeBatch',{user,city,dir:'buy',items:list.map(x=>({item:x.gid,qty:x.qty}))});
-    if(!r||!r.ok){toast('在线库存扣减失败：'+(r&&r.err?r.err:'网络错误'),'err');return false;}
+    // C1：服务端资金/持仓权威结算（校验库存+资金+价格范围），返回权威 gold/cargo/stocks
+    const r=await NET.post('/api/tradeBatch',{user,city,dir:'buy',items:list.map(x=>({item:x.gid,qty:x.qty})),total:Math.round(total||0)});
+    if(!r||!r.ok){toast('在线结算失败：'+(r&&r.err?r.err:'网络错误'),'err');return false;}
     if(r.serverAt)GS.__lastServerAt=r.serverAt; // 防止后续自动保存覆盖服务器变更
+    if(typeof r.gold==='number')State.set('gold',r.gold);
+    if(r.cargo)State.set('cargo',r.cargo);
     if(r.stocks){
       const cs=State.get('cityStocks')||{};
       cs[city]=r.stocks;
       State.set('cityStocks',cs);
     }
+    // 本地轻记账（lots/成本/声望/事件；资金与持仓以服务端为准）
+    for(const it of list){
+      buyItem(it.gid,it.qty,{skipAdvance:true,serverLedger:true});
+    }
+    toast('✅ 已完成购入（中转面板）','ok');
+    return true;
   }
   // 本地落地（一次确认，多物品成交；单笔交易不再重复推进游戏日）
   for(const it of list){
@@ -3296,18 +3463,28 @@ async function execBuyDraft(list){
   return true;
 }
 
-async function execSellDraft(list){
+async function execSellDraft(list,net){
   const city=GS.location;
   if(ONLINE){
     const user=localStorage.getItem(AUTH_KEY)||'';
-    const r=await NET.post('/api/tradeBatch',{user,city,dir:'sell',items:list.map(x=>({item:x.gid,qty:x.qty}))});
-    if(!r||!r.ok){toast('在线库存回补失败：'+(r&&r.err?r.err:'网络错误'),'err');return false;}
+    // C1：服务端持仓权威校验 + 记账，返回权威 gold/cargo/stocks
+    const r=await NET.post('/api/tradeBatch',{user,city,dir:'sell',items:list.map(x=>({item:x.gid,qty:x.qty})),net:Math.round(net||0)});
+    if(!r||!r.ok){toast('在线结算失败：'+(r&&r.err?r.err:'网络错误'),'err');return false;}
     if(r.serverAt)GS.__lastServerAt=r.serverAt;
+    if(typeof r.gold==='number')State.set('gold',r.gold);
+    if(r.cargo)State.set('cargo',r.cargo);
     if(r.stocks){
       const cs=State.get('cityStocks')||{};
       cs[city]=r.stocks;
       State.set('cityStocks',cs);
     }
+    // 本地轻记账：真实扣 lots（含惩罚）+ 成本/声望/事件
+    for(const it of list){
+      const lr=consumeLots(it.gid,it.qty);
+      sellItem(it.gid,it.qty,{skipAdvance:true,serverLedger:true,lotsResult:lr});
+    }
+    toast('✅ 已完成售出（中转面板）','ok');
+    return true;
   }
   for(const it of list){
     const rr=sellItem(it.gid,it.qty,{skipAdvance:true});
@@ -3316,9 +3493,31 @@ async function execSellDraft(list){
   toast('✅ 已完成售出（中转面板）','ok');
   return true;
 }
-function doAction(type,gid){
+async function doAction(type,gid){
   const qty=getSliderVal(gid);
-  if(type==='buy'){const r=buyItem(gid,qty);toast(r.msg,r.ok?'ok':'err');if(r.ok){delete sliderVals[gid];render();}return;}
+  if(type==='buy'){
+    // C1：单笔买入在线也走服务端权威结算
+    if(ONLINE){
+      const city=GS.location;
+      const price=getDayPrice(city,gid,GS.day)||0;
+      const total=price*qty;
+      const taxRate=(window.Tax&&Tax.getRate)?Tax.getRate(getRepLevel(city)):0;
+      const tax=(window.Tax&&Tax.calc)?Tax.calc(total,taxRate):0;
+      const pay=total+tax;
+      const user=localStorage.getItem(AUTH_KEY)||'';
+      const r=await NET.post('/api/tradeBatch',{user,city,dir:'buy',items:[{item:gid,qty}],total:Math.round(pay)});
+      if(!r||!r.ok){toast('在线结算失败：'+(r&&r.err?r.err:'网络错误'),'err');return;}
+      if(r.serverAt)GS.__lastServerAt=r.serverAt;
+      if(typeof r.gold==='number')State.set('gold',r.gold);
+      if(r.cargo)State.set('cargo',r.cargo);
+      if(r.stocks){const cs=State.get('cityStocks')||{};cs[city]=r.stocks;State.set('cityStocks',cs);}
+      const rr=buyItem(gid,qty,{skipAdvance:true,serverLedger:true});
+      toast(rr.msg,rr.ok?'ok':'err');
+      if(rr.ok){delete sliderVals[gid];render();}
+      return;
+    }
+    const r=buyItem(gid,qty);toast(r.msg,r.ok?'ok':'err');if(r.ok){delete sliderVals[gid];render();}return;
+  }
   // 卖出前：同城同次 + 本城买入价<卖出价（顺价可套利）时弹窗确认 60% 惩罚
   const info=getSameVisitArbitrage(gid,qty);
   if(info){
@@ -3330,7 +3529,26 @@ function doAction(type,gid){
   }
   doSell(gid,qty);
 }
-function doSell(gid,qty){
+async function doSell(gid,qty){
+  // C1：单笔卖出在线也走服务端权威结算
+  if(ONLINE){
+    const city=GS.location;
+    const lr=consumeLots(gid,qty); // 真实扣 lots（含惩罚），返回 revenue 供服务端记账
+    const taxRate=(window.Tax&&Tax.getRate)?Tax.getRate(getRepLevel(city)):0;
+    const tax=(window.Tax&&Tax.calc)?Tax.calc(lr.revenue,taxRate):0;
+    const net=lr.revenue-tax;
+    const user=localStorage.getItem(AUTH_KEY)||'';
+    const r=await NET.post('/api/tradeBatch',{user,city,dir:'sell',items:[{item:gid,qty}],net:Math.round(net)});
+    if(!r||!r.ok){toast('在线结算失败：'+(r&&r.err?r.err:'网络错误'),'err');return;}
+    if(r.serverAt)GS.__lastServerAt=r.serverAt;
+    if(typeof r.gold==='number')State.set('gold',r.gold);
+    if(r.cargo)State.set('cargo',r.cargo);
+    if(r.stocks){const cs=State.get('cityStocks')||{};cs[city]=r.stocks;State.set('cityStocks',cs);}
+    const rr=sellItem(gid,qty,{skipAdvance:true,serverLedger:true,lotsResult:lr});
+    toast(rr.msg,rr.ok?'ok':'err');
+    if(rr.ok){delete sliderVals[gid];render();}
+    return;
+  }
   const r=sellItem(gid,qty);
   toast(r.msg,r.ok?'ok':'err');
   if(r.ok){delete sliderVals[gid];render();}
@@ -3395,7 +3613,7 @@ function drawChart(){
   const cls=trend.cls==='up'?'color:var(--buy)':(trend.cls==='down'?'color:var(--red)':'color:var(--text2)');
   const tDay=Math.max(1,GS.day+1);
   const estBuy=getDayPrice(GS.location,_chartItem,tDay);
-  const estSell=getSellPrice(GS.location,_chartItem,tDay);
+  const estSell=getSellPriceBase(GS.location,_chartItem,tDay);   // v9.6：预计明日卖出走纯物价（走势预测，不含需求档位）
   if(isBuyView){
     // 购入页：同时展示买入价与卖出价变化
     ctx.font='10px sans-serif';
@@ -3415,14 +3633,20 @@ function drawChart(){
       `<span class="stat" style="${cls}">${trend.label}</span>`+
       `<span class="stat">预计明日买入 <b class="buy">${fmt(estBuy||0)}</b> (${deltaBuy>=0?'+':''}${fmt(deltaBuy)})</span>`;
   }else{
-    // 售出页：只展示售价变化
+    // 售出页：只展示售价变化（折线/预计基于纯物价；需求档位以独立标签提示成交修正）
     const curSell=last.sell;
     const deltaSell=(estSell!=null?estSell-curSell:0);
+    const _ds=(window.DemandEngine&&DemandEngine.getDemandState)?DemandEngine.getDemandState(GS.location,_chartItem,Math.floor(GS.day/CENTRAL_PERIOD)):'normal';
+    const _hotPct=Math.round(((window.DemandEngine&&DemandEngine.getHotBonus)?DemandEngine.getHotBonus(GS.location,_chartItem):(DemandEngine.HOT_BONUS||0.15))*100);
+    const dsNote=_ds==='hot'?`<span class="stat" style="color:#ff6b35">🔥 热门收购 +${_hotPct}%</span>`
+              :_ds==='cool'?`<span class="stat" style="color:#5a8ec9">🧊 需求冷淡 ×${DemandEngine.COOL_MULT||0.6}</span>`
+              :_ds==='reject'?`<span class="stat" style="color:var(--red)">🚫 本城拒收</span>`:'';
     document.getElementById('chart-stats').innerHTML=
       `<span class="stat">卖出 <b class="sell">${fmt(curSell)}</b></span>`+
       `<span class="stat">${_chartDays}日最低 <b>${fmt(Math.min(...sellPrices))}</b></span>`+
       `<span class="stat">${_chartDays}日最高 <b>${fmt(Math.max(...sellPrices))}</b></span>`+
       `<span class="stat" style="${cls}">${trend.label}</span>`+
+      dsNote+
       `<span class="stat">预计明日卖出 <b class="sell">${fmt(estSell||0)}</b> (${deltaSell>=0?'+':''}${fmt(deltaSell)})</span>`;
   }
   syncMarketHeightToChart();
@@ -3500,6 +3724,7 @@ let _tickCount=0;
 setInterval(()=>{
   _tickCount++;
   const arrived=advanceDay();
+  settleOverdueTasks(); // v9.4：到点自动失败（含倒计时刷新前的结算）
   const dragging=!!window._draggingGid;
   if(arrived&&!dragging){render();return;}
   if(arrived&&dragging){window._pendingRefresh=true;}

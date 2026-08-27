@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # Aierxiya Trade - Internal Test HTTP Server v4
 #   Server-runs-world: auto-creates world from default-world.json
 #   Stocks: per-player, refilled every 30 REAL minutes together;
@@ -92,6 +92,41 @@ function LoadWorld{
   if(Test-Path $worldFile){
     try{
       $w = Get-Content -Raw $worldFile | ConvertFrom-Json
+      # v9.7.1：世界配置版本检测——default-world.json 的 __schema 递增时自动重建世界配置。
+      # 仅刷新 basePrices/purchaseLimits/各经济配置；保留世界时间轴与运行时字段（玩家 Day 不重置）。
+      $dSchema = 0
+      try{
+        if(Test-Path $defaultWorldFile){
+          $d0 = Get-Content -Raw $defaultWorldFile | ConvertFrom-Json
+          if($d0.__schema){ $dSchema = [int]$d0.__schema }
+        }
+      }catch{ $dSchema = 0 }
+      $wSchema = 0
+      try{ if($w.__schema){ $wSchema = [int]$w.__schema } }catch{}
+      if($dSchema -gt 0 -and $wSchema -lt $dSchema){
+        try{
+          $d0 = Get-Content -Raw $defaultWorldFile | ConvertFrom-Json
+          $runtime = @{}
+          foreach($rk in @('worldStart','stockMode','timeScale','lastStockRefill','lastRefillDay','lastBroadcast','adminPass')){
+            if($null -ne $w.$rk){ $runtime[$rk] = $w.$rk }
+          }
+          $w = [pscustomobject]@{
+            __schema = $dSchema
+            tradeRoads = $(if($d0.tradeRoads){$d0.tradeRoads}else{@()})
+            sourceConfig = $(if($d0.sourceConfig){$d0.sourceConfig}else{@{}})
+            sellExceptions = $(if($d0.sellExceptions){$d0.sellExceptions}else{@{}})
+            demandProfile = $(if($d0.demandProfile){$d0.demandProfile}else{@{}})
+            basePrices = $d0.basePrices
+            purchaseLimits = $d0.purchaseLimits
+          }
+          foreach($rk in $runtime.Keys){ $w | Add-Member -MemberType NoteProperty -Name $rk -Value $runtime[$rk] -Force }
+          SaveWorld $w
+          Write-Host ('  INFO: world config schema '+$wSchema+' -> '+$dSchema+' (auto-rebuilt, timeline preserved)') -ForegroundColor Cyan
+          return $w
+        }catch{
+          Write-Host ('  WARN: schema rebuild failed, keep existing world (' + $_.Exception.Message + ')') -ForegroundColor Yellow
+        }
+      }
       # 迁移旧 world.json：补齐新字段
       $dirty = $false
       if(!$w.worldStart){
@@ -117,7 +152,7 @@ function LoadWorld{
         }
       }
       # P1/P3：产地买入差异化与卖出封顶/封底。缺失时从 default-world.json 补齐，兜底为空对象。
-      foreach($cfgName in @('sourceConfig','sellExceptions')){
+      foreach($cfgName in @('sourceConfig','sellExceptions','demandProfile')){
         if(!$w.$cfgName){
           try{
             if(Test-Path $defaultWorldFile){
@@ -303,19 +338,20 @@ while($running){
 
       if($action -eq 'world'){
         if($method -eq 'GET'){
-          SendJson @{ok=$true; world=(LoadWorld)}
+          # v9.4：返回服务器当前时间戳（serverNow），客户端据此校准任务时限，防本地改钟作弊
+          SendJson @{ok=$true; world=(LoadWorld); serverNow=[int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}
         }else{
           $b = ReadBody
           $w = LoadWorld
-          if($w){ SendJson @{ok=$true; world=$w} }
+          if($w){ SendJson @{ok=$true; world=$w; serverNow=[int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()} }
           elseif($b -and $b.basePrices){
             $new = [pscustomobject]@{
               worldStart=[int64]$b.worldStart; basePrices=$b.basePrices
               purchaseLimits=$b.purchaseLimits; tradeRoads=$b.tradeRoads; stockMode='perPlayer'; timeScale=1; lastStockRefill=0; adminPass=''
-              sourceConfig=$(if($b.sourceConfig){$b.sourceConfig}else{@{} }); sellExceptions=$(if($b.sellExceptions){$b.sellExceptions}else{@{} })
+              sourceConfig=$(if($b.sourceConfig){$b.sourceConfig}else{@{} }); sellExceptions=$(if($b.sellExceptions){$b.sellExceptions}else{@{} }); demandProfile=$(if($b.demandProfile){$b.demandProfile}else{@{} })
             }
             SaveWorld $new
-            SendJson @{ok=$true; world=$new}
+            SendJson @{ok=$true; world=$new; serverNow=[int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}
           }else{ SendJson @{ok=$false; err='bad world payload'} }
         }
       }
@@ -421,8 +457,27 @@ while($running){
             }
           }
           if(!$rec.gs.cityStocks -or !$rec.gs.cityStocks.$city){ SendJson @{ok=$false; err='unknown city'}; continue }
-          # 先全量校验 buy
+          # v9.7.3(C1)：服务端资金/持仓权威结算——客户端提交 total(buy 应付含税)/net(sell 税后到手)，
+          # 服务端校验资源守恒 + 价格范围，记账后返回权威 gold/cargo/stocks 供客户端覆盖（防透支/凭空卖出/极端改价）。
+          if($rec.gs.gold -eq $null){ $rec.gs | Add-Member -MemberType NoteProperty -Name gold -Value ([long]10000) -Force }
+          if($rec.gs.cargo -eq $null){ $rec.gs | Add-Member -MemberType NoteProperty -Name cargo -Value ([pscustomobject]@{}) -Force }
+          $total = [double]$b.total; $net = [double]$b.net
+          $amount = if($dir -eq 'buy'){ $total } else { $net }
+          if($amount -le 0){ SendJson @{ok=$false; err='bad amount'}; continue }
+          # 价格范围校验：amount 与 Σ(basePrices×qty) 比率须在 [0.3,3]，防"1 金买入"式极端改价
+          $expected = 0.0
+          foreach($it in $items){
+            $iid=[string]$it.item; $q=[int]$it.qty
+            $bp = $w.basePrices.$city.$iid
+            $expected += ([double]($(if($null -ne $bp){$bp}else{100})) * $q)
+          }
+          if($expected -gt 0){
+            $ratio = $amount / $expected
+            if($ratio -lt 0.3 -or $ratio -gt 3.0){ SendJson @{ok=$false; err='price mismatch'}; continue }
+          }
+          # 全量校验（buy=库存+资金；sell=持仓）
           if($dir -eq 'buy'){
+            if([double]$rec.gs.gold -lt $total){ SendJson @{ok=$false; err='gold insufficient'; need=[long]$total; gold=[long]$rec.gs.gold}; continue }
             foreach($it in $items){
               $iid=[string]$it.item; $q=[int]$it.qty
               if(!$iid -or $q -le 0){ SendJson @{ok=$false; err='bad item'}; continue 2 }
@@ -430,19 +485,37 @@ while($running){
               $stock=[int]$rec.gs.cityStocks.$city.$iid
               if($stock -lt $q){ SendJson @{ok=$false; err='stock shortage'; item=$iid; stock=$stock}; continue 2 }
             }
+          }else{
+            foreach($it in $items){
+              $iid=[string]$it.item; $q=[int]$it.qty
+              if(!$iid -or $q -le 0){ SendJson @{ok=$false; err='bad item'}; continue 2 }
+              $held=[int]$rec.gs.cargo.$iid
+              if($held -lt $q){ SendJson @{ok=$false; err='cargo shortage'; item=$iid; held=$held}; continue 2 }
+            }
           }
-          # 再一次性应用
+          # 一次性应用（gold / cargo / stocks）
+          if($dir -eq 'buy'){ $rec.gs.gold = [long]([double]$rec.gs.gold - $total) }
+          else{ $rec.gs.gold = [long]([double]$rec.gs.gold + $net) }
           foreach($it in $items){
             $iid=[string]$it.item; $q=[int]$it.qty
             if(!$iid -or $q -le 0){ continue }
-            $stock=[int]$rec.gs.cityStocks.$city.$iid
-            if($dir -eq 'buy'){ $rec.gs.cityStocks.$city.$iid = $stock - $q } else { $rec.gs.cityStocks.$city.$iid = $stock + $q }
+            if($dir -eq 'buy'){
+              $rec.gs.cityStocks.$city.$iid = ([int]$rec.gs.cityStocks.$city.$iid) - $q
+              $have=[int]$rec.gs.cargo.$iid
+              if($have -le 0 -and !($rec.gs.cargo.PSObject.Properties.Name -contains $iid)){ $rec.gs.cargo | Add-Member -MemberType NoteProperty -Name $iid -Value ([int]$q) -Force }
+              else{ $rec.gs.cargo.$iid = $have + $q }
+            }else{
+              $rec.gs.cityStocks.$city.$iid = ([int]$rec.gs.cityStocks.$city.$iid) + $q
+              $left=([int]$rec.gs.cargo.$iid) - $q
+              if($left -le 0){ $rec.gs.cargo.PSObject.Properties.Remove($iid) }
+              else{ $rec.gs.cargo.$iid = $left }
+            }
           }
           # 更新服务器版本戳，避免客户端自动保存覆盖本次库存变更
           $now = [int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
           if($rec.gs.__savedAt){ $rec.gs.__savedAt = $now }else{ $rec.gs | Add-Member -NotePropertyName __savedAt -NotePropertyValue $now -Force }
           $rec | ConvertTo-Json -Depth 30 | Set-Content -Path $pf -Encoding UTF8
-          SendJson @{ok=$true; stocks=$rec.gs.cityStocks.$city; serverAt=$now}
+          SendJson @{ok=$true; gold=[long]$rec.gs.gold; cargo=$rec.gs.cargo; stocks=$rec.gs.cityStocks.$city; serverAt=$now}
         }
       }
       elseif($action -eq 'register' -and $method -eq 'POST'){

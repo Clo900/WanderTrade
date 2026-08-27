@@ -1,6 +1,6 @@
 # 艾尔希亚跑商 · Code Wiki
 
-> 版本：v9.1 ｜ 生成日期：2026-08-19 ｜ 状态：内测就绪
+> 版本：v9.8 ｜ 生成日期：2026-08-28 ｜ 状态：内测就绪
 
 ---
 
@@ -18,6 +18,7 @@
   - [4.6 寻路核心模块 gameplay/pathing-core.js](#46-寻路核心模块-gameplaypathing-corejs)
   - [4.7 状态容器模块 core/state.js](#47-状态容器模块-corestatejs)
   - [4.8 事件总线模块 core/event-bus.js](#48-事件总线模块-coreevent-busjs)
+  - [4.9 需求引擎模块 economy/demand-engine.js](#49-需求引擎模块-economydemand-enginejs)
 - [5. 服务端模块详解](#5-服务端模块详解)
   - [5.1 HTTP 服务器 server.ps1](#51-http-服务器-serverps1)
   - [5.2 数据模型](#52-数据模型)
@@ -49,12 +50,12 @@
 
 ## 1. 项目总览
 
-**艾尔希亚跑商**（Aierxiya Trade）是一款基于浏览器的多人在线跑商贸易游戏。玩家扮演商队角色，在 13 座城市之间运输 31 种商品，通过低买高卖赚取金币，同时完成任务、收集情报、参与事件机遇。
+**艾尔希亚跑商**（Aierxiya Trade）是一款基于浏览器的多人在线跑商贸易游戏。玩家扮演商队角色，在 13 座城市之间运输 51 种商品（21 基础 + 30 特产），通过低买高卖赚取金币，同时完成任务、收集情报、参与事件机遇。
 
 | 属性 | 说明 |
 |------|------|
 | 项目名称 | 艾尔希亚跑商 (Aierxiya Trade) |
-| 版本 | v9.1 |
+| 版本 | v9.7 |
 | 项目类型 | Browser MMORPG（Web 多人跑商游戏） |
 | 技术栈 | 原生 HTML5 + CSS3 + JavaScript（客户端），PowerShell + .NET HttpListener（服务端） |
 | 数据库 | JSON 文件存档（world.json + players/*.json） |
@@ -63,7 +64,7 @@
 
 ### 核心玩法
 
-- **跑商贸易**：跨 13 城贩运 31 种商品，利用价差获利
+- **跑商贸易**：跨 13 城贩运 51 种商品，利用价差获利
 - **股票式价格引擎**：中枢周期（2 现实小时）驱动物价波动，包含突破、趋势、调控三个阶段
 - **公共事件系统**：44 条确定性事件（全服同步），影响价格、维修成本
 - **私人事件系统**：6 种旅途随机事件（劫匪、故障、偶遇行商等）
@@ -157,10 +158,20 @@ e:\WanderTrade\
 │       │   ├── data.js             # 静态数据 (城市/道路/物资)
 │       │   └── ui-primitives.js    # UI 基础组件 (toast/modal)
 │       ├── economy/
-│       │   ├── price-engine.js    # 价格引擎 (中枢/突破/趋势)
-│       │   └── events.js          # 事件系统 (44 条公共事件)
+│       │   ├── price-engine.js     # 价格引擎 (中枢/突破/趋势/需求四档接入)
+│       │   ├── demand-engine.js    # 需求引擎 v9.5 (热门/正常/冷淡/拒收 + 16h 轮换)
+│       │   ├── source-pricing.js   # P1 产地买入差异化
+│       │   ├── price-exceptions.js # P3 卖出封顶/封底
+│       │   ├── events.js           # 事件系统 (44 条公共事件)
+│       │   ├── tax.js              # 税务系统
+│       │   ├── trade-graph.js      # 经济距离图
+│       │   ├── trade-draft.js / trade-validate.js / trade-preview.js  # 中转交易单
+│       │   └── task-reward.js      # 任务奖励 (品质×时效)
 │       └── gameplay/
-│           └── pathing-core.js    # 寻路核心 (Dijkstra)
+│           ├── pathing-core.js     # 寻路核心 (Dijkstra)
+│           ├── task-config.js      # 任务配置
+│           ├── task-timer.js       # 任务时限 (T1 离城计时)
+│           └── task-bad-record.js  # 24h 不良记录
 │
 ├── Docs/
 │   ├── JS模块拆分首批迁移清单.md    # 首批模块拆分设计文档
@@ -253,7 +264,7 @@ AUTH_KEY;     // 登录标识
 
 格式：`[fromCityId, toCityId, distance]`，distance 为里数。
 
-**ITEMS**：31 种物资定义（11 基础 + 20 特产）
+**ITEMS**：51 种物资定义（21 基础 + 30 特产）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -329,7 +340,7 @@ AUTH_KEY;     // 登录标识
 | `getEffectiveBand(cityId, itemId, hub, salt, center)` | 累计漂移后的有效物价带 |
 | `priceFor(cityId, itemId, day, salt, center, multiplier)` | **核心求价函数**，事件乘数注入点 |
 | `getDayPrice(cityId, itemId, day)` | 获取买入价（含事件乘数） |
-| `getSellPrice(cityId, itemId, day)` | 获取卖出价（含价差率 + 事件乘数 + 声望加成） |
+| `getSellPrice(cityId, itemId, day)` | 获取卖出价（含价差率 + 事件乘数 + 声望加成 + **v9.5 需求四档修正**：拒收→null / 热门 ×(1+HOT_BONUS) / 冷淡 ×COOL_MULT，位于 P3 封顶/封底之前） |
 | `getPriceHistory(cityId, itemId, days)` | 获取历史价格序列 |
 | `getMarketPhase(cityId, itemId, day)` | 判定当前市场阶段（normal/breakout/trend/intervention） |
 | `getTrend(cityId, itemId, mode)` | 获取趋势标注（未来中枢价格变动指向；mode 区分买入/卖出，分别对应各自未来趋势） |
@@ -475,6 +486,55 @@ getActiveEvents() → getItemMult(city, item, mode) → priceFor() → 市场价
 - 业务事件（如 `DAMAGE_TAKEN`）由主文件在结算点 `EventBus.emit(...)` 发布，订阅方负责动画/音效等副作用。
 - 与 `State.subscribe` 分工：需要持久化的游戏数据放 `State`，跨模块的瞬时业务通知走 `EventBus`。
 
+### 4.9 需求引擎模块 economy/demand-engine.js
+
+**文件路径**：`Online-Client/src/economy/demand-engine.js`（v9.5 新增，v9.6 三档动态化）
+
+**职责**：实现"世界模拟"定位下的**市场需求档位**——非产出城市的特产按 16h 周期在 **热门/正常/冷淡** 三档间确定性轮换（v9.7 正常主导：候选需求城 [15/70/15]、普通城 [10/75/15]）；拒收（世界观个例）不受轮换影响；产出城/基础物资恒为正常收购。**物价优先**：趋势感知保证涨价期不冷淡，走势信息走纯物价口径。
+
+#### 核心配置（`DEFAULT_CONFIG`，可被 `world.demandProfile` 覆盖）
+
+| 配置 | 默认值 | 说明 |
+|------|--------|------|
+| `HOT_BONUS` | 0.15 | 候选需求城热门加成（v9.7 从 0.20 下调） |
+| `HOT_BONUS_OTHER` | 0.10 | 普通城热门加成（v9.7 新增，削弱近途暴利） |
+| `COOL_MULT` | 0.6 | 冷淡：×0.6 |
+| `PERIOD_HUBS` | 8 | 需求周期 = 8 中枢周期 = **16 现实小时** |
+| `TIER_WEIGHTS` | demand [15/70/15] / other [10/75/15] | 三档权重 [hot/normal/cool]（v9.7 正常主导） |
+| `TREND_ADJUST` | up: 涨不冷淡 / down: 向冷淡偏移 | 趋势感知修正（物价优先级更高） |
+| `rejects` | 静态表 | 拒收表（世界观锚点） |
+
+#### 关键函数
+
+| 函数 | 说明 |
+|------|------|
+| `setConfig(cfg)` | 下发配置（`applyWorld → DemandEngine.setConfig`，热生效） |
+| `getCandidates(itemId)` | 候选需求城 = `SPECIAL_PRICE_TABLE` 显式列出的城市（不含 rest 兜底） |
+| `getDemandHub(hub)` | 需求周期索引 = floor(hub / PERIOD_HUBS) |
+| `getTier(cityId, itemId, hub)` | 三档判定：权重随 纯物价趋势 修正（`getPriceDirection`）后按确定性种子取档 |
+| `getDemandState(cityId, itemId, hub)` | **核心判定**：拒收 > 本城 goods > 基础物资 > 非产出城市三档轮换 |
+| `getRejectReason(cityId, itemId)` | 拒收原因（售出面板弹窗展示） |
+| `getHotBonus(cityId, itemId)` | v9.7 热门加成按城市类型区分（候选需求城 0.15 / 普通城 0.10） |
+
+#### 与价格引擎的接入
+
+- `price-engine.js` 提取全局 `SPECIAL_PRICE_TABLE`（特产分城价格表，距离即价格），并导出 `window.SPECIAL_PRICE_TABLE`。
+- `getSellPrice`（**成交价**）在 P3 封顶/封底**之前**查询 `DemandEngine.getDemandState(city, item, hub)`：拒收 → 返回 null；热门 → ×(1+`getHotBonus`，候选需求城 0.15 / 普通城 0.10)；冷淡 → ×COOL_MULT；正常 → 无修正。
+- `getSellPriceBase`（**纯物价**，不含需求档位）供 `getTrend` / `getPriceHistory` / "预计明日卖出" 使用——走势信息与需求热度解耦。
+- `getPriceDirection(city, item, hub)`（纯物价未来方向，±3% 阈值）被 `demand-engine.getTier` 消费：**涨价期冷淡概率归零**，从机制上避免"物价在涨却不受欢迎"。
+- `HOT_BONUS` / `COOL_MULT` / `PERIOD_HUBS` 以 getter 暴露，保证 setConfig 后实时生效。
+
+#### 拒收表（默认，不受轮换影响）
+
+霜岭堡：fish / pearl / sailcloth / wine；月影谷：beer / wine；四新手村：8 件奢侈品（pearl / ivory / ginseng / moon_crystal / jade / amber / silk / coral）。
+
+#### 售出面板集成（index.html）
+
+- 售出卡片按需求档位标注：拒收标红（`ic-reject`）+ "无法售出"按钮 + 点击弹原因；热门 🔥 / 冷淡 🧊 标签（`ic-ds`）。
+- 售出图表 stat 增加需求档位提示（🔥 热门收购 +15%/+10%（按城市类型）/ 🧊 需求冷淡 ×0.6 / 🚫 本城拒收），与纯物价折线并列说明成交修正。
+- `draftFromSlider` 与 `sellItem` 对拒收拦截并弹窗提示原因。
+- 售出列表构建：`getDemandState(loc, gid, hubNow)`，拒收记录 `rejectReason`。
+
 ---
 
 ## 5. 服务端模块详解
@@ -501,10 +561,12 @@ server.ps1 [-Port 8080] [-Lan]
 2. **世界状态管理**：加载/保存世界数据，30 分钟自动补货
 3. **用户认证**：注册、登录、密码哈希
 4. **玩家存档**：读写玩家 JSON 存档，并发版本保护
-5. **交易记录**：买入/卖出库存扣减（per-player 模式）
+5. **交易结算**：买入/卖出全量结算——库存扣减/回补 + 资金/持仓权威记账（per-player 模式；v9.7.3 起 `/api/tradeBatch` 为经济权威接口，单笔在线交易也走该接口）
 6. **聊天室**：消息存储与增量拉取（保留最近 200 条）
 7. **排行榜**：全服 Top 20 统计
 8. **GM 后台**：世界时间流速、天数设置、发钱、广播
+
+> **v9.7.1 世界配置版本化**：`LoadWorld` 检测 `default-world.json` 的 `__schema`，若 `world.json.__schema < default.__schema` 则自动重建世界配置（仅刷新 `basePrices`/`purchaseLimits`/`tradeRoads`/`sourceConfig`/`sellExceptions`/`demandProfile`，保留 `worldStart`/`stockMode`/`timeScale`/`lastStockRefill`/`lastRefillDay`/`lastBroadcast`/`adminPass` 等运行时字段），玩家 Day 不重置。未来版本升级只需递增 `default-world.json` 的 `__schema`。
 
 ### 5.2 数据模型
 
@@ -512,9 +574,10 @@ server.ps1 [-Port 8080] [-Lan]
 
 ```jsonc
 {
+  "__schema": 971,                 // v9.7.1 世界配置版本（落后于 default-world.json 时自动重建）
   "worldStart": 1786480418213,    // 世界起始时间戳(ms)
-  "basePrices": {                 // 13城 × 30物 基础价
-    "greentown": { "grain": 139, "flour": 140, ... }
+  "basePrices": {                 // 13城 × 51物 基础价（v9.7.1 重建，含 v9.5 全部新物资）
+    "greentown": { "grain": 140, "flour": 140, ... }
   },
   "purchaseLimits": {             // 每城每物限购量
     "greentown": { "grain": 70, ... }
@@ -539,7 +602,7 @@ server.ps1 [-Port 8080] [-Lan]
   "salt": "随机盐值",
   "passHash": "SHA256(salt:password)",
   "gs": {
-    "gold": 50000,
+    "gold": 50000,            // 可为负数（v9.8 欠债系统：任务惩罚/劫匪赎买可扣成负债，负债时无法买入）
     "day": 1,
     "location": "greentown",
     "gameStartTime": 1786480418213,
@@ -563,6 +626,7 @@ server.ps1 [-Port 8080] [-Lan]
     "tutorial": { "step": 0, "viewedSteps": [...] },
     "stats": { "bought": 0, "sold": 0, "tasks": 0, "travels": 0, "distance": 0, "visits": 0, "income": 0, "upgrades": 0, "reps": 0 },
     "achievements": {},
+    "__saveSchema": 972,          // v9.7.2 存档结构版本（落后时 migrateSaveSchema 自动迁移）
     "__savedAt": 1786480418213,
     "__loaded": true
   }
@@ -577,7 +641,7 @@ server.ps1 [-Port 8080] [-Lan]
 | POST | `/api/world` | 客户端回退创建世界 |
 | GET | `/api/stocks?user=` | 获取玩家库存 |
 | POST | `/api/trade` | 交易（买入/卖出），body: `{user, city, item, qty, dir}` |
-| POST | `/api/tradeBatch` | 批量交易库存台账（原子），body: `{user, city, dir, items:[{item, qty}]}` |
+| POST | `/api/tradeBatch` | 批量交易**全量结算**（原子）：资金/持仓/库存权威，body: `{user, city, dir, items:[{item, qty}], total?, net?}`（buy 传 `total` 应付含税 / sell 传 `net` 税后到手），返回 `{gold, cargo, stocks, serverAt}` |
 | POST | `/api/register` | 注册，body: `{user, pass}` |
 | POST | `/api/login` | 登录，body: `{user, pass}` |
 | GET | `/api/player/{user}` | 获取玩家存档 |
@@ -621,15 +685,29 @@ server.ps1 [-Port 8080] [-Lan]
 - **在线模式**：客户端从服务器获取 `worldStart`，所有玩家时间完全同步
 - **单机模式**：统一客户端从本地存档 `gameStartTime` 恢复
 
+#### 价格基准权威链（v9.7.1）
+
+```
+服务器 world.json.basePrices（权威，含 __schema 版本）
+  → applyWorld() 覆盖 BASE_PRICES
+  → applySaved()【在线】不再恢复本地存档 __basePrices（避免旧价格表覆盖新基准）
+  → 单机离线：applySaved() 恢复本地 __basePrices（v8.10 B1：刷新不重洗，行为不变）
+```
+
+> **v9.7.1 修复**：在线模式 `applySaved` 的 `__basePrices`/`__purchaseLimits` 恢复加 `!ONLINE` 守卫——世界价格以服务器为准。此前本地存档旧价格表（v8.10 B1 遗留，无版本校验）会永久覆盖升级后的基准价，表现为"事件打折但价格仍偏高"（如 grain 154×0.85≈131 而非 140×0.85≈119）。
+
+> **v9.7.2 单机旧档合并补缺**：单机离线仍恢复本地旧价格表，但经 `mergeWorldTable(saved, buildBasePrices())` 合并——旧档值优先、新代码表补齐（旧 31 物档升级后自动补全 20 种新增物资，价格/库存不再为 0）。同时引入**存档结构版本化**：`SAVE_SCHEMA=972` + `migrateSaveSchema()`（`SAVE_MIGRATIONS` 迁移注册表），存档写入 `__saveSchema`，落后时逐级迁移；新增物资的 `cityStocks` 也会按 `purchaseLimits` 补缺。
+
 ### 6.2 价格引擎
 
-详见 [4.4 价格引擎模块](#44-价格引擎模块-economyprice-enginejs)。
+详见 [4.4 价格引擎模块](#44-价格引擎模块-economyprice-enginejs) 与 [4.9 需求引擎模块](#49-需求引擎模块-economydemand-enginejs)。
 
 **关键设计**：
 - 每件物资在每座城市有独立的确定性价格剧本
 - 价格由中枢周期驱动，游戏日内 ±2.5% 抖动
 - 事件通过 `multiplier` 参数注入价格，引擎本身不感知事件
 - 基础物资价格窄幅波动（±25%），特产品宽幅波动（±45%~60%）
+- **v9.7 需求档位**：非产出城市特产按 16h 周期三档确定性轮换（候选需求城 [15/70/15]、普通城 [10/75/15]，正常主导），热门 ×(1+0.15/0.10)、冷淡 ×0.6、世界观个例拒收；产出城/基础物资任何城市正常收购。近途无暴利（rest≈产地×1.06、显式需求城溢价封顶 ×1.5）；趋势感知（涨价期不冷淡）；趋势标注/折线图走纯物价（`getSellPriceBase`），需求档位仅作成交修正层。`SPECIAL_PRICE_TABLE` 为全局特产分城价格表（距离即价格，v9.7 含王都青瓷/织锦）。
 
 ### 6.3 事件系统
 
@@ -724,15 +802,22 @@ server.ps1 [-Port 8080] [-Lan]
 #### 任务品质（D/C/B/A/S）
 
 - 每个任务在稀有度之外再抽一个“品质”，品质影响金币倍率：D×0.85 / C×1.0 / B×1.15 / A×1.30 / S×1.45。
-- 品质分布随稀有度变化（普通偏 D/C，传说以 B/A 为主、S 概率更高）。
-- `rewardGoldBase`（稀有度已计入，不含品质）经品质倍率后得到 `rewardGold`（准时全额）。
+- 品质分布随稀有度变化（v9.4 放宽高稀有度低品质通道）：普通 40/35/15/10/0% → 传说 5/15/35/30/15%（传说 D 慢单保留）。
+- `rewardGoldBase`（稀有度已计入，不含品质/时效）经品质与时效倍率后得到 `rewardGold`（准时全额）。
+
+#### 时效档位（v9.4，独立维度）
+
+- 任务 = 稀有度（基础收益）× 品质（金币倍率）× 时效（时限倍率 + 金币加价）。
+- 档位：宽松 relax（时限 ×1.5、金币 ×0.97）/ 标准 standard（×1.15、×1.0）/ 紧急 urgent（×0.85、×1.1）/ 加急 rush（×0.65、×1.2）。
+- 抽取概率按稀有度：普通 46/44/9/1% → 传说 22/44/27/7%（v9.7 上调宽松、下调加急，标准仍为主体）。
+- 时效标签（仅文字+颜色，无图标）与稀有度/品质同行、向右靠齐；任务板顶部显示时效图例。
 
 #### 限时（T1）
 
 - 倒计时在玩家**首次离开接取城市**时启动，按出发时实际时速快照计算 `timeLimitSeconds` 与 `deadlineTimestamp`。
-- 时限公式：`distance/speed*60 × 紧凑系数（越远越紧）+ 120s 缓冲`。
+- 时限公式：`distance/speed*60 × 1.08（距离中性）× 时效倍率 + 120s 缓冲`（缓冲不随时效缩放）。
 - 换车厢不会回改时限（`speedSnapshot` 仅用于解释与一致性）。
-- UI 文案：可接任务卡显示 `⏱️ 时限：X 分钟`（按当前时速估算）；已接未出发显示 `时限：X 分钟（未出发，不计时）`；出发后显示实时倒计时与进度条。
+- UI 文案：可接任务卡显示 `⏱️ 时限：X 分钟`（按当前时速+时效倍率估算）；已接未出发显示 `时限：X 分钟（未出发，不计时）`；出发后显示实时倒计时与进度条。
 
 #### 结算梯度
 
@@ -749,12 +834,14 @@ server.ps1 [-Port 8080] [-Lan]
 - `badCount24h` 达到 10/20/30 时，任务金币倍率 ×0.95/0.85/0.70，史诗/传说刷新权重 ×0.9/0.7/0.4。
 - 反馈显示：放弃/超时失败 toast 显示 `24h 违约记录 N 次` 与已触发减益；任务板顶部常驻违约提示条（未达阈值灰色提示 / 已触发红色警示）。
 
+> **v9.8 欠债系统**：任务放弃违约金、严重超时失败罚金、自动超时结算（`settleOverdueTasks`）均改为**全额扣除**（移除原 `Math.min(gold,penalty)`/`Math.max(0,...)` 截断），玩家金币可被扣成负数（负债）；「路遇劫匪」赎买同样允许欠债（金币不足也扣款）。负债期间**无法买入物资**（`buyItem` `gold<pay` / `trade-validate` `gold<total` / 服务端 `tradeBatch` `gold<total` 三重校验），买入永远不会把金币扣成负数；卖出/任务奖励/成就奖励自动还债。UI：顶栏金币负数标红+「（欠债）」标记（`.tb-gold.debt`）、买入卡片显示"欠债中，无法购入"、中转买入上限 clamp ≥0、成就进度 clamp [0,1]。
+
 #### 任务板
 
 - 每城 5 个任务槽位
 - 每任务免费刷新 2 次，第 3 次起 1000 金逐次翻倍
 - 已接任务横向排列，支持多个并行
-- 付费刷新只改变次数/成本，不影响稀有度/品质分布
+- 付费刷新只改变次数/成本，不影响稀有度/品质/时效分布
 
 ### 6.7 情报所与声望
 
@@ -977,9 +1064,13 @@ Online-Client/index.html
 
 | 文件 | 说明 |
 |------|------|
-| `world.json` | 世界状态（删除=世界重建+时间轴重置） |
+| `world.json` | 世界状态（删除=世界重建+时间轴重置；`__schema` 落后时自动重建配置但保留时间轴） |
 | `players/*.json` | 玩家存档（所有账号） |
 | `chat.json` | 聊天记录 |
+
+> **v9.7.1 存档价格说明**：玩家存档中的 `gs.__basePrices`/`gs.__purchaseLimits` 是 v8.10 B1 单机离线世界机制的遗留字段——**在线模式已不再恢复**（世界价格以服务器为准），单机离线仍会恢复（刷新不重洗，v9.7.2 起经 `mergeWorldTable` 合并补缺）。上传服务器时会被剔除（世界数据随服务器，不随玩家档上传）。
+
+> **v9.7.3 服务端经济权威（C1）**：在线交易（含单笔）统一走 `POST /api/tradeBatch` 全量结算——服务端校验金额>0、价格比率 ∈ [0.3,3]（相对 `world.basePrices` 期望和）、buy 资金+库存充足、sell 持仓充足，然后一次性记账（gold/cargo/stocks）并返回权威 `{gold, cargo, stocks, serverAt}` 供客户端覆盖。客户端 `buyItem/sellItem` 在在线路径使用 `serverLedger` 轻记账：不再自行改 gold/cargo/stocks，仅本地记 lots/成本/声望/事件（sell 复用调用方真实批次结算结果 `lotsResult`），杜绝透支/凭空卖出/极端改价。
 
 #### 恢复世界时间轴
 
@@ -996,15 +1087,17 @@ runCmd("/gm <adminPass> setday <正确天数>")
 
 世界种子文件，定义 13 城的基础价格和限购量：
 
-- **basePrices**：每城 × 每物的基础价格
+- **__schema**：世界配置版本号（v9.7.1 起，`server.ps1` 据此自动重建旧 world）
+- **basePrices**：每城 × 每物的基础价格（13 城 × 51 物，v9.7.1 重建）
 - **purchaseLimits**：每城 × 每物的限购量（按城市等级梯度设计）
+- **tradeRoads / sourceConfig / sellExceptions / demandProfile**：经济距离与 v9.5/v9.7 经济配置
 - **物资分类**：
-  - 基础物资（11 种）：谷物、面粉、粗布、铁器、陶器、木杯、纸巾、肥皂、蜡烛、食盐、麻绳
-  - 特产品（20 种）：橡木、菌菇、野蜂蜜、铁锭、精钢刃、海鱼、珍珠、帆布、麦酒、羊毛、奶酪、香料、皮革、毛毯、药草、月光水晶、精油、毛皮、雪参、猛犸牙
+  - 基础物资（21 种）：谷物、面粉、粗布、铁器、陶器、木杯、纸巾、肥皂、蜡烛、食盐、麻绳、小米、块根、木材、黏土、玻璃、墨水、渔网、石料、焦油、亚麻
+  - 特产品（30 种）：橡木、菌菇、野蜂蜜、铁锭、精钢刃、海鱼、珍珠、帆布、麦酒、羊毛、奶酪、香料、皮革、毛毯、药草、月光水晶、精油、毛皮、雪参、猛犸牙、茶叶、丝绸、琥珀、珊瑚、染料、葡萄酒、玉器、星陨铁、青瓷、织锦
 
 ### world.json
 
-运行时世界状态，服务器启动时自动从 `default-world.json` 生成（若不存在）。
+运行时世界状态，服务器启动时自动从 `default-world.json` 生成（若不存在）；`__schema` 落后于 default 时自动重建配置（保留世界时间轴与运行时字段）。
 
 ---
 
@@ -1028,9 +1121,9 @@ runCmd("/gm <adminPass> setday <正确天数>")
 | frostfort | 霜岭堡 | frontier | 4 | 毛皮/雪参/猛犸牙 |
 | starfall | 星陨城 | special | 4 | 暂未开放 |
 
-### 31 种物资
+### 51 种物资
 
-#### 基础物资（11 种，cat: basic）
+#### 基础物资（21 种，cat: basic）
 
 | id | 名称 | 图标 | 基础价范围 |
 |----|------|------|-----------|
@@ -1045,8 +1138,18 @@ runCmd("/gm <adminPass> setday <正确天数>")
 | candle | 蜡烛 | 🕯 | ~90-110 |
 | salt | 食盐 | 🧂 | ~110-155 |
 | hemp | 麻绳 | 🪢 | ~65-90 |
+| millet | 小米 | 🌽 | ~100-150 |
+| roots | 块根 | 🥔 | ~80-120 |
+| lumber | 木材 | 🪵 | ~95-140 |
+| clay | 黏土 | 🟤 | ~60-90 |
+| glass | 玻璃 | 🔮 | ~155-225 |
+| ink | 墨水 | 🖋 | ~130-190 |
+| fishnet | 渔网 | 🕸 | ~110-165 |
+| stone | 石料 | 🪨 | ~120-175 |
+| tar | 焦油 | ⚫ | ~105-150 |
+| linen | 亚麻 | 🧺 | ~120-175 |
 
-#### 特产品（20 种，cat: special）
+#### 特产品（30 种，cat: special）
 
 | id | 名称 | 图标 | 基础价范围 | 主产地 |
 |----|------|------|-----------|--------|
@@ -1070,6 +1173,16 @@ runCmd("/gm <adminPass> setday <正确天数>")
 | fur | 毛皮 | 🦊 | 3600-5200 | frostfort |
 | ginseng | 雪参 | 🌱 | 20000-28000 | frostfort |
 | ivory | 猛犸牙 | 🦷 | 26000-36000 | frostfort |
+| tea | 茶叶 | 🍵 | 2200-3300 | moonvalley |
+| silk | 丝绸 | 🎀 | 9000-14000 | windoasis |
+| amber | 琥珀 | 🟠 | 6000-9000 | frostfort |
+| coral | 珊瑚 | 🪸 | 8000-12000 | saltbay |
+| dye | 染料 | 🎨 | 1500-2200 | purplefield |
+| wine | 葡萄酒 | 🍷 | 2800-4200 | purplefield |
+| jade | 玉器 | 🟢 | 15000-22500 | moonvalley |
+| stariron | 星陨铁 | ☄️ | 30000-45000 | starfall |
+| celadon | 青瓷 | 🍶 | 4000-6000 | dawncapital |
+| tapestry | 织锦 | 🖼 | 9000-13500 | dawncapital |
 
 ---
 

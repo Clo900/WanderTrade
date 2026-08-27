@@ -7,7 +7,7 @@
 ## 主要玩法
 
 - 在 13 座城市之间规划路线并开展贸易
-- 交易 31 种商品，利用城市价差和市场周期获利
+- 交易 51 种商品，利用城市价差和市场周期获利
 - 中转面板（购物车）一次确认多物品成交，并按本城声望计算交易税
 - 应对公共市场事件与旅途随机事件
 - 装配、升级不同类型的车厢和载具核心
@@ -127,6 +127,7 @@ WanderTrade/
 │  ├─ styles/               静态样式（theme.css 主题变量 / app.css 布局组件）
 │  └─ src/                  已拆分的客户端模块
 ├─ Docs/                    开发与迁移文档（拆分清单 / 地图索引 / 样式文件表）
+├─ scripts/e2e/             浏览器回归套件（puppeteer-core + 系统 Chrome，`E2E_URL` 端口参数化）
 ├─ server.ps1               在线版 HTTP 服务端
 ├─ start-server.bat         本机一键启动脚本
 ├─ setup-admin.ps1          局域网 URL ACL 注册脚本
@@ -177,6 +178,7 @@ State.batch(function () {
 进一步资料：
 
 - [代码与架构 Wiki](CODE_WIKI.md)
+- [浏览器回归套件说明](scripts/e2e/README.md)
 
 ## 资料
 
@@ -217,4 +219,4 @@ http://localhost:8080/api/world
 
 ## 项目状态
 
-当前版本 **v9.0**，处于持续开发和模块化整理阶段。核心玩法可以运行；客户端已拆出 8 个模块（`runtime`/`state`/`event-bus`/`ui-primitives`/`data`/`price-engine`/`events`/`pathing-core`），静态样式已全部外置到 `styles/` 并支持浅/深色主题切换。地图渲染与交互、任务、载具、在线同步等业务逻辑仍保留在 `Online-Client/index.html` 中，作为后续拆分批次。
+当前版本 **v9.8**，处于持续开发和模块化整理阶段。核心玩法可以运行；客户端已拆出 13+ 个模块（`runtime`/`state`/`event-bus`/`ui-primitives`/`data`/`price-engine`/`events`/`pathing-core`/`demand-engine`/`source-pricing`/`price-exceptions`/`tax`/`trade-*`/`task-*` 等），静态样式已全部外置到 `styles/` 并支持浅/深色主题切换。v9.5 起引入需求动态化与 51 种物资世界；v9.7.1 完成存档价格权威修复与世界配置版本化（`__schema`）；v9.7.2 完成新增物资价格合并补缺与存档结构版本化（`SAVE_SCHEMA`）；v9.7.3 上线服务端经济权威结算（`/api/tradeBatch` 全量结算 + 客户端 `serverLedger` 轻记账）并固化浏览器回归套件（`scripts/e2e/`）；v9.8 引入**欠债系统**（金币可为负数：任务惩罚/劫匪赎买可扣成负债，负债时无法买入物资，卖出/任务奖励自动还债，顶栏负数标红）。地图渲染与交互、载具、在线同步等业务逻辑仍保留在 `Online-Client/index.html` 中，作为后续拆分批次。

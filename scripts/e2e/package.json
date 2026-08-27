@@ -1,0 +1,12 @@
+{
+  "name": "wandertrade-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "艾尔希亚跑商 · 浏览器回归测试（puppeteer-core 复用系统 Chrome）",
+  "scripts": {
+    "test": "node regress.js"
+  },
+  "dependencies": {
+    "puppeteer-core": "^23.0.0"
+  }
+}

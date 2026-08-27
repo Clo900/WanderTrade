@@ -7,18 +7,23 @@ function buildBasePrices(){
     for(let k of Object.keys(ITEMS)){
       const it=ITEMS[k];
       if(it.cat==='basic'){
-        let v=0;switch(k){case'grain':v=150;break;case'flour':v=165;break;case'cloth':v=160;break;case'ironware':v=200;break;case'pottery':v=140;break;case'cup':v=90;break;case'tissue':v=85;break;case'soap':v=95;break;case'candle':v=100;break;case'salt':v=130;break;case'hemp':v=80;break;}
+        let v=0;switch(k){case'grain':v=150;break;case'flour':v=165;break;case'cloth':v=160;break;case'ironware':v=200;break;case'pottery':v=140;break;case'cup':v=90;break;case'tissue':v=85;break;case'soap':v=95;break;case'candle':v=100;break;case'salt':v=130;break;case'hemp':v=80;break;
+          // v9.5 新增基础物资
+          case'millet':v=120;break;case'roots':v=95;break;case'lumber':v=110;break;case'clay':v=70;break;case'glass':v=180;break;case'ink':v=150;break;case'fishnet':v=130;break;case'stone':v=140;break;case'tar':v=120;break;case'linen':v=140;break;}
         let adj=c.tier==='village'?0.9:(c.tier==='capital'?1.05:(c.id==='frostfort'?1.1:1.0));
         p[c.id][k]=Math.round(v*adj*(0.88+Math.random()*0.24));
       }else{p[c.id][k]=buildSpecialPrice(k,c.id);}
     }
   }return p;
 }
+// v9.5：特产价格表提取为全局常量（demand-engine 复用其"显式列出城市"作为候选需求城）
+// v9.7：rest≈产地×1.06（近途无暴利，税后无利）；显式需求城溢价封顶 ×1.5（越远/王都越贵，但不失控）
+const SPECIAL_PRICE_TABLE={
+  oak:{oaktown:3200,ironfort:3700,dawncapital:4600,moonvalley:4400,rest:3400},mushroom:{oaktown:1800,ironfort:2100,dawncapital:2500,rest:1900},honey:{oaktown:1600,ironfort:1850,dawncapital:2250,rest:1700},iron_ingot:{ironfort:3600,oaktown:4100,moonvalley:4700,frostfort:5000,dawncapital:5200,rest:3800},steel_blade:{ironfort:8000,oaktown:9000,moonvalley:10000,frostfort:11000,dawncapital:11500,rest:8500},fish:{saltbay:2000,pasturetown:2350,purplefield:2300,dawncapital:2700,windoasis:2800,rest:2100},pearl:{saltbay:12000,windoasis:15500,dawncapital:18000,frostfort:18500,rest:12700},sailcloth:{saltbay:2800,purplefield:3300,dawncapital:3800,rest:3000},beer:{purplefield:1500,milltown:1800,saltbay:1900,dawncapital:2100,rest:1600},wool:{purplefield:1700,milltown:1900,saltbay:2100,dawncapital:2300,rest:1800},cheese:{purplefield:1400,saltbay:1650,dawncapital:1900,rest:1500},spice:{windoasis:3200,saltbay:3900,oaktown:4200,dawncapital:4600,rest:3400},leather:{windoasis:2600,saltbay:3200,oaktown:3400,dawncapital:3700,rest:2800},carpet:{windoasis:6000,saltbay:7400,dawncapital:8800,rest:6400},herb:{moonvalley:2000,ironfort:2400,dawncapital:2900,frostfort:3000,rest:2100},moon_crystal:{moonvalley:18000,ironfort:22000,dawncapital:27000,frostfort:27000,rest:19000},oil:{moonvalley:9000,ironfort:10500,dawncapital:13000,rest:9500},fur:{frostfort:3600,moonvalley:5000,ironfort:5200,dawncapital:5400,rest:3800},ginseng:{frostfort:20000,moonvalley:28000,dawncapital:30000,rest:21200},ivory:{frostfort:26000,moonvalley:34000,dawncapital:39000,rest:27500},
+  // v9.5 新增特产 + v9.7 王都特产（celadon/tapestry，需求城市=显式列出的城市）
+  tea:{moonvalley:2200,purplefield:2900,saltbay:3100,dawncapital:3300,rest:2350},silk:{windoasis:9000,oaktown:11500,moonvalley:12500,dawncapital:13500,frostfort:14000,rest:9600},amber:{frostfort:6000,moonvalley:8200,dawncapital:9000,rest:6400},coral:{saltbay:8000,windoasis:10800,dawncapital:12000,rest:8500},dye:{purplefield:1500,saltbay:1900,oaktown:1950,windoasis:2100,dawncapital:2200,rest:1600},wine:{purplefield:2800,saltbay:3600,dawncapital:4200,rest:3000},jade:{moonvalley:15000,ironfort:19000,dawncapital:22500,frostfort:22000,rest:15900},stariron:{starfall:30000,dawncapital:45000,rest:31800},celadon:{dawncapital:4000,oaktown:5000,saltbay:5300,moonvalley:5800,frostfort:6000,rest:4300},tapestry:{dawncapital:9000,saltbay:11000,oaktown:11500,moonvalley:13000,frostfort:13500,rest:9600}};
 function buildSpecialPrice(iid,cid){
-  // v6.5 经济量级：中档特产 2000~6000（大几千），高档特产 1万~2万+
-  // 一车 500 格 × 万级特产 = 数百万流水；跨城价差提供跑商利润（一车几十万~几百万）
-  const s={oak:{oaktown:3200,ironfort:3600,dawncapital:5200,moonvalley:4400,rest:3800},mushroom:{oaktown:1800,rest:2400},honey:{oaktown:1600,rest:2200},iron_ingot:{ironfort:3600,oaktown:4400,dawncapital:5200,frostfort:4200,rest:4800},steel_blade:{ironfort:8000,oaktown:9500,dawncapital:11000,rest:9000},fish:{saltbay:2000,rest:3000},pearl:{saltbay:12000,dawncapital:18000,rest:15000},sailcloth:{saltbay:2800,rest:3800},beer:{purplefield:1500,rest:2100},wool:{purplefield:1700,rest:2400},cheese:{purplefield:1400,rest:2000},spice:{windoasis:3200,rest:4300},leather:{windoasis:2600,rest:3600},carpet:{windoasis:6000,rest:8000},herb:{moonvalley:2000,rest:2800},moon_crystal:{moonvalley:18000,dawncapital:26000,rest:22000},oil:{moonvalley:9000,rest:12500},fur:{frostfort:3600,rest:5200},ginseng:{frostfort:20000,rest:28000},ivory:{frostfort:26000,dawncapital:36000,rest:32000}};
-  const e=s[iid];if(!e)return 500;if(e[cid])return e[cid];return e.rest||500;
+  const e=SPECIAL_PRICE_TABLE[iid];if(!e)return 500;if(e[cid])return e[cid];return e.rest||500;
 }
 var BASE_PRICES=buildBasePrices();
 // 初始库存按城市等级与物资价值梯度设计（buildLimits；数值整十，方便计算声望加成后的库存上限）
@@ -149,17 +154,42 @@ function getDayPrice(cityId,itemId,day){
   const srcMult = (window.SourcePricing && SourcePricing.getBuyMult) ? SourcePricing.getBuyMult(cityId,itemId) : 1;
   return priceFor(cityId,itemId,day,0,undefined,getItemMult(cityId,itemId,day,'buy')*srcMult);
 }
-function getSellPrice(cityId,itemId,day){
+// —— 纯物价卖出价（不含需求档位）：供趋势标注 / 折线图 / 需求引擎趋势感知使用 ——
+function rawSellPrice(cityId,itemId,day){
   const base=BASE_PRICES[cityId]?.[itemId];if(base==null)return null;
-  const raw=Math.round(priceFor(cityId,itemId,day,100,Math.round(base*(1-getSpreadRate(cityId,day))),getItemMult(cityId,itemId,day,'sell'))*getRepSellBonus(cityId));
-  if(window.PriceExceptions && PriceExceptions.applySell){
-    return PriceExceptions.applySell(cityId,itemId,raw);
-  }
+  return Math.round(priceFor(cityId,itemId,day,100,Math.round(base*(1-getSpreadRate(cityId,day))),getItemMult(cityId,itemId,day,'sell'))*getRepSellBonus(cityId));
+}
+// 实际成交卖出价 = 纯物价 × 需求档位（v9.5 四档；v9.6 三档轮换）→ P3 封顶/封底
+function getSellPrice(cityId,itemId,day){
+  const raw=rawSellPrice(cityId,itemId,day);if(raw==null)return null;
+  const state=(window.DemandEngine&&DemandEngine.getDemandState)?DemandEngine.getDemandState(cityId,itemId,Math.floor(day/CENTRAL_PERIOD)):'normal';
+  if(state==='reject')return null;
+  let r=raw;
+  if(state==='hot')r=Math.round(r*(1+(DemandEngine.getHotBonus?DemandEngine.getHotBonus(cityId,itemId):DemandEngine.HOT_BONUS)));
+  else if(state==='cool')r=Math.round(r*DemandEngine.COOL_MULT);
+  if(window.PriceExceptions && PriceExceptions.applySell)return PriceExceptions.applySell(cityId,itemId,r);
+  return r;
+}
+// 纯物价卖出价（不含需求档位；含 P3 封顶/封底）
+function getSellPriceBase(cityId,itemId,day){
+  const raw=rawSellPrice(cityId,itemId,day);if(raw==null)return null;
+  if(window.PriceExceptions && PriceExceptions.applySell)return PriceExceptions.applySell(cityId,itemId,raw);
   return raw;
+}
+// 未来物价方向（纯物价口径，供需求引擎趋势感知）：1 涨 / 0 平 / -1 跌
+function getPriceDirection(cityId,itemId,hub){
+  const day=(hub||0)*CENTRAL_PERIOD+1;
+  const cur=getSellPriceBase(cityId,itemId,day);
+  const fut=getSellPriceBase(cityId,itemId,day+CENTRAL_PERIOD);
+  if(cur==null||fut==null)return 0;
+  const pct=(fut-cur)/cur;
+  if(pct>=0.03)return 1;
+  if(pct<=-0.03)return -1;
+  return 0;
 }
 function getPriceHistory(cityId,itemId,days=120){
   const h=[];for(let d=Math.max(1,GS.day-days+1);d<=GS.day;d++){
-    const p=getDayPrice(cityId,itemId,d),s=getSellPrice(cityId,itemId,d);
+    const p=getDayPrice(cityId,itemId,d),s=getSellPriceBase(cityId,itemId,d);
     if(p!==null&&s!==null)h.push({day:d,price:p,sell:s});
   }return h;
 }
@@ -174,10 +204,11 @@ function getMarketPhase(cityId,itemId,day){
   return{phase:'intervention'};
 }
 // —— 趋势标注：未来中枢价格变动指向（mode 区分买入/卖出，分别对应各自未来趋势） ——
+// v9.6：卖出侧基于纯物价（不含需求档位），趋势标注永远指向物价自身；需求热度由档位标签独立展示
 function getTrend(cityId,itemId,mode){
   if(!BASE_PRICES[cityId]||!BASE_PRICES[cityId][itemId])return{label:'数据不足',cls:''};
   const isSell = (mode==='sell');
-  const priceFn = isSell ? getSellPrice : getDayPrice;
+  const priceFn = isSell ? getSellPriceBase : getDayPrice;
   const day=GS.day;
   const cur=priceFn(cityId,itemId,day);
   // 趋势指向：未来一个中枢周期后的价格相对当前价的变动方向（宏观预案，非当前阶段/日内噪声）
@@ -192,11 +223,14 @@ function getTrend(cityId,itemId,mode){
 }
 window.BASE_PRICES = BASE_PRICES;
 window.PURCHASE_LIMITS = PURCHASE_LIMITS;
+window.SPECIAL_PRICE_TABLE = SPECIAL_PRICE_TABLE;
 window.buildBasePrices = buildBasePrices;
 window.buildSpecialPrice = buildSpecialPrice;
 window.buildLimits = buildLimits;
 window.getDayPrice = getDayPrice;
 window.getSellPrice = getSellPrice;
+window.getSellPriceBase = getSellPriceBase;
+window.getPriceDirection = getPriceDirection;
 window.getPriceHistory = getPriceHistory;
 window.getMarketPhase = getMarketPhase;
 window.getTrend = getTrend;

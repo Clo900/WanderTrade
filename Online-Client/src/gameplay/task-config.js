@@ -14,20 +14,42 @@
   const TASK_QUALITY_MULT = { D:0.85, C:1.00, B:1.15, A:1.30, S:1.45 };
 
   // 稀有度 → 品质分布（概率表，按 D/C/B/A/S 顺序）
+  // v9.4：放宽高稀有度的低品质通道（传说保留 D 慢单）
   const TASK_QUALITY_TABLE = {
-    common: { D:0.35, C:0.35, B:0.20, A:0.10, S:0.00 },
-    rare:   { D:0.25, C:0.35, B:0.25, A:0.14, S:0.01 },
-    epic:   { D:0.00, C:0.25, B:0.45, A:0.25, S:0.05 },
-    legend: { D:0.00, C:0.00, B:0.35, A:0.45, S:0.20 }
+    common: { D:0.40, C:0.35, B:0.15, A:0.10, S:0.00 },
+    rare:   { D:0.25, C:0.30, B:0.25, A:0.15, S:0.05 },
+    epic:   { D:0.10, C:0.25, B:0.35, A:0.20, S:0.10 },
+    legend: { D:0.05, C:0.15, B:0.35, A:0.30, S:0.15 }
   };
 
   // 限时配置（T1：离开接取城市时按出发时实际时速快照计算）
   const TASK_TIME_CONFIG = {
-    TIME_BUFFER_SECONDS: 120,      // 固定缓冲（装卸/操作延迟）
+    TIME_BUFFER_SECONDS: 120,      // 固定缓冲（装卸/操作延迟，不随时效缩放）
     LATE_GRACE_SECONDS: 300,       // 迟到宽限（超过截止仍可交单的窗口）
-    // 紧凑系数：越远越贴近理论时间（拉动动力车厢需求）
+    // 紧凑系数：距离中性（恒定 1.08）——时限差异主要由“时效档位”决定，
+    // 距离只保留“路程时间”本身的影响，避免远距任务被卡得过紧
     compactFactor: function(distance){
-      return Math.min(1.18, Math.max(1.02, 1.18 - 0.003 * distance));
+      return 1.08;
+    }
+  };
+
+  // 时效档位（v9.4 独立维度：类似外卖“配送时长 + 急单加价”）
+  // 每个任务在稀有度×品质之外再抽取一个时效档位；
+  // timeMult 只作用于“路程时间”部分（缓冲 120s 不缩放），goldMult 作用于奖励金币。
+  const TASK_URGENCY_CONFIG = {
+    tiers: [
+      { id:'relax',    name:'宽松', timeMult:1.50, goldMult:0.97, color:'var(--green)' },
+      { id:'standard', name:'标准', timeMult:1.15, goldMult:1.00, color:'var(--text2)' },
+      { id:'urgent',   name:'紧急', timeMult:0.85, goldMult:1.10, color:'#d99a00' },
+      { id:'rush',     name:'加急', timeMult:0.65, goldMult:1.20, color:'var(--red)' }
+    ],
+    // 稀有度 → 时效概率 [宽松, 标准, 紧急, 加急]（v9.7 上调慢单概率：宽松↑、加急↓，
+    // 鼓励玩家自主安排路线顺路交单；标准仍为主体）
+    probabilityByRarity: {
+      common: [0.46, 0.44, 0.09, 0.01],
+      rare:   [0.36, 0.46, 0.15, 0.03],
+      epic:   [0.28, 0.46, 0.21, 0.05],
+      legend: [0.22, 0.44, 0.27, 0.07]
     }
   };
 
@@ -56,6 +78,7 @@
     TASK_QUALITY_MULT: TASK_QUALITY_MULT,
     TASK_QUALITY_TABLE: TASK_QUALITY_TABLE,
     TASK_TIME_CONFIG: TASK_TIME_CONFIG,
+    TASK_URGENCY_CONFIG: TASK_URGENCY_CONFIG,
     TASK_PENALTY_CONFIG: TASK_PENALTY_CONFIG,
     TASK_BAD_RECORD_CONFIG: TASK_BAD_RECORD_CONFIG
   };

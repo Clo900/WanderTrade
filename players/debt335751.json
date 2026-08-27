@@ -1,0 +1,395 @@
+﻿{
+    "passHash":  "7652edcc6b809d485a72e5c65220790e7cc0269166b7345e0261c9ee341e8063",
+    "user":  "debt335751",
+    "gs":  {
+               "gold":  -10149,
+               "location":  "greentown",
+               "timeScale":  1,
+               "vehicle":  {
+                               "level":  1,
+                               "speed":  5,
+                               "durability":  135,
+                               "durabilityMax":  135,
+                               "passengers":  0,
+                               "core":  {
+                                            "lv":  0,
+                                            "speed":  0,
+                                            "dura":  0
+                                        },
+                               "wagons":  [
+                                              {
+                                                  "cur":  {
+                                                              "id":  "w0",
+                                                              "type":  "balanced",
+                                                              "lv":  1
+                                                          },
+                                                  "owned":  {
+                                                                "balanced_1":  true
+                                                            }
+                                              }
+                                          ]
+                           },
+               "cargo":  {
+
+                         },
+               "buyPrice":  {
+
+                            },
+               "lots":  {
+
+                        },
+               "visitStamp":  {
+                                  "greentown":  1
+                              },
+               "tradeDraft":  {
+                                  "buy":  {
+                                              "cityId":  null,
+                                              "day":  null,
+                                              "hub":  null,
+                                              "items":  {
+
+                                                        }
+                                          },
+                                  "sell":  {
+                                               "cityId":  null,
+                                               "day":  null,
+                                               "hub":  null,
+                                               "items":  {
+
+                                                         }
+                                           }
+                              },
+               "cityStocks":  {
+                                  "greentown":  {
+                                                    "grain":  10,
+                                                    "roots":  80,
+                                                    "cup":  80,
+                                                    "linen":  50
+                                                },
+                                  "rivertown":  {
+                                                    "roots":  60,
+                                                    "lumber":  80,
+                                                    "fishnet":  80,
+                                                    "tissue":  70
+                                                },
+                                  "milltown":  {
+                                                   "millet":  80,
+                                                   "clay":  70,
+                                                   "flour":  60,
+                                                   "pottery":  50
+                                               },
+                                  "pasturetown":  {
+                                                      "millet":  80,
+                                                      "cloth":  80,
+                                                      "linen":  50,
+                                                      "candle":  70
+                                                  },
+                                  "oaktown":  {
+                                                  "lumber":  150,
+                                                  "tar":  130,
+                                                  "cup":  160,
+                                                  "tissue":  190,
+                                                  "oak":  70,
+                                                  "mushroom":  100,
+                                                  "honey":  70
+                                              },
+                                  "ironfort":  {
+                                                   "ironware":  130,
+                                                   "stone":  140,
+                                                   "candle":  140,
+                                                   "iron_ingot":  110,
+                                                   "steel_blade":  110
+                                               },
+                                  "saltbay":  {
+                                                  "salt":  170,
+                                                  "fishnet":  140,
+                                                  "cloth":  190,
+                                                  "fish":  90,
+                                                  "pearl":  40,
+                                                  "sailcloth":  120
+                                              },
+                                  "purplefield":  {
+                                                      "millet":  120,
+                                                      "linen":  170,
+                                                      "soap":  160,
+                                                      "flour":  160,
+                                                      "beer":  110,
+                                                      "wool":  60,
+                                                      "cheese":  60,
+                                                      "dye":  80,
+                                                      "wine":  80
+                                                  },
+                                  "windoasis":  {
+                                                    "glass":  190,
+                                                    "salt":  130,
+                                                    "pottery":  200,
+                                                    "tissue":  160,
+                                                    "hemp":  130,
+                                                    "spice":  80,
+                                                    "leather":  120,
+                                                    "carpet":  100,
+                                                    "silk":  60
+                                                },
+                                  "moonvalley":  {
+                                                     "ink":  180,
+                                                     "tissue":  170,
+                                                     "pottery":  190,
+                                                     "soap":  140,
+                                                     "herb":  120,
+                                                     "moon_crystal":  30,
+                                                     "oil":  90,
+                                                     "tea":  70,
+                                                     "jade":  120
+                                                 },
+                                  "dawncapital":  {
+                                                      "glass":  130,
+                                                      "ink":  130,
+                                                      "ironware":  190,
+                                                      "grain":  120,
+                                                      "cloth":  190,
+                                                      "celadon":  200,
+                                                      "tapestry":  150
+                                                  },
+                                  "frostfort":  {
+                                                    "stone":  150,
+                                                    "ironware":  140,
+                                                    "candle":  170,
+                                                    "tar":  160,
+                                                    "fur":  90,
+                                                    "ginseng":  30,
+                                                    "ivory":  40,
+                                                    "amber":  120
+                                                },
+                                  "starfall":  {
+
+                                               }
+                              },
+               "lastStockRefill":  1787849333175,
+               "warehouses":  {
+
+                              },
+               "reputation":  {
+                                  "greentown":  {
+                                                    "level":  0,
+                                                    "exp":  5
+                                                }
+                              },
+               "materials":  {
+                                 "gear":  0,
+                                 "repair_kit":  0,
+                                 "fuel_tank":  0,
+                                 "engine":  0
+                             },
+               "tasks":  {
+                             "active":  [
+
+                                        ],
+                             "board":  [
+                                           {
+                                               "id":  "s17878493396100",
+                                               "state":  "task",
+                                               "t":  {
+                                                         "id":  "t17878493396100945",
+                                                         "rarity":  "common",
+                                                         "quality":  "C",
+                                                         "urgency":  "standard",
+                                                         "from":  "greentown",
+                                                         "to":  "purplefield",
+                                                         "dist":  14,
+                                                         "rewardRep":  250,
+                                                         "rewardMats":  [
+
+                                                                        ],
+                                                         "delivered":  false,
+                                                         "timerStarted":  false,
+                                                         "speedSnapshot":  null,
+                                                         "timeLimitSeconds":  null,
+                                                         "deadlineTimestamp":  null,
+                                                         "status":  "active",
+                                                         "type":  "escort",
+                                                         "capType":  "pass",
+                                                         "item":  null,
+                                                         "qty":  2,
+                                                         "rewardGoldBase":  1800,
+                                                         "rewardGold":  1800,
+                                                         "desc":  "护送2位商客至紫穗原（14里 · 占旅客仓2格）"
+                                                     },
+                                               "refreshCount":  0
+                                           },
+                                           {
+                                               "id":  "s17878493396101",
+                                               "state":  "task",
+                                               "t":  {
+                                                         "id":  "t17878493396101768",
+                                                         "rarity":  "common",
+                                                         "quality":  "C",
+                                                         "urgency":  "relax",
+                                                         "from":  "greentown",
+                                                         "to":  "oaktown",
+                                                         "dist":  10,
+                                                         "rewardRep":  250,
+                                                         "rewardMats":  [
+
+                                                                        ],
+                                                         "delivered":  false,
+                                                         "timerStarted":  false,
+                                                         "speedSnapshot":  null,
+                                                         "timeLimitSeconds":  null,
+                                                         "deadlineTimestamp":  null,
+                                                         "status":  "active",
+                                                         "type":  "escort",
+                                                         "capType":  "pass",
+                                                         "item":  null,
+                                                         "qty":  2,
+                                                         "rewardGoldBase":  1400,
+                                                         "rewardGold":  1358,
+                                                         "desc":  "护送2位商客至橡木镇（10里 · 占旅客仓2格）"
+                                                     },
+                                               "refreshCount":  0
+                                           },
+                                           {
+                                               "id":  "s17878493396102",
+                                               "state":  "task",
+                                               "t":  {
+                                                         "id":  "t17878493396102484",
+                                                         "rarity":  "rare",
+                                                         "quality":  "D",
+                                                         "urgency":  "relax",
+                                                         "from":  "greentown",
+                                                         "to":  "rivertown",
+                                                         "dist":  2,
+                                                         "rewardRep":  607,
+                                                         "rewardMats":  [
+
+                                                                        ],
+                                                         "delivered":  false,
+                                                         "timerStarted":  false,
+                                                         "speedSnapshot":  null,
+                                                         "timeLimitSeconds":  null,
+                                                         "deadlineTimestamp":  null,
+                                                         "status":  "active",
+                                                         "type":  "deliver",
+                                                         "capType":  "cargo",
+                                                         "item":  "grain",
+                                                         "qty":  14,
+                                                         "rewardGoldBase":  880,
+                                                         "rewardGold":  725,
+                                                         "desc":  "运送🌾谷物×14至溪木村（2里）"
+                                                     },
+                                               "refreshCount":  0
+                                           },
+                                           {
+                                               "id":  "s17878493396103",
+                                               "state":  "task",
+                                               "t":  {
+                                                         "id":  "t17878493396103879",
+                                                         "rarity":  "common",
+                                                         "quality":  "A",
+                                                         "urgency":  "relax",
+                                                         "from":  "greentown",
+                                                         "to":  "ironfort",
+                                                         "dist":  25,
+                                                         "rewardRep":  252,
+                                                         "rewardMats":  [
+
+                                                                        ],
+                                                         "delivered":  false,
+                                                         "timerStarted":  false,
+                                                         "speedSnapshot":  null,
+                                                         "timeLimitSeconds":  null,
+                                                         "deadlineTimestamp":  null,
+                                                         "status":  "active",
+                                                         "type":  "deliver",
+                                                         "capType":  "cargo",
+                                                         "item":  "cup",
+                                                         "qty":  5,
+                                                         "rewardGoldBase":  2700,
+                                                         "rewardGold":  3404,
+                                                         "desc":  "运送🥤木杯×5至铁砧堡（25里）"
+                                                     },
+                                               "refreshCount":  0
+                                           },
+                                           {
+                                               "id":  "s17878493396104",
+                                               "state":  "task",
+                                               "t":  {
+                                                         "id":  "t17878493396104261",
+                                                         "rarity":  "common",
+                                                         "quality":  "B",
+                                                         "urgency":  "standard",
+                                                         "from":  "greentown",
+                                                         "to":  "purplefield",
+                                                         "dist":  14,
+                                                         "rewardRep":  250,
+                                                         "rewardMats":  [
+
+                                                                        ],
+                                                         "delivered":  false,
+                                                         "timerStarted":  false,
+                                                         "speedSnapshot":  null,
+                                                         "timeLimitSeconds":  null,
+                                                         "deadlineTimestamp":  null,
+                                                         "status":  "active",
+                                                         "type":  "escort",
+                                                         "capType":  "pass",
+                                                         "item":  null,
+                                                         "qty":  1,
+                                                         "rewardGoldBase":  1600,
+                                                         "rewardGold":  1839,
+                                                         "desc":  "护送1位商客至紫穗原（14里 · 占旅客仓1格）"
+                                                     },
+                                               "refreshCount":  0
+                                           }
+                                       ]
+                         },
+               "taskBadLog":  {
+                                  "abandonAt":  [
+
+                                                ],
+                                  "failAt":  [
+                                                 1787849339090
+                                             ]
+                              },
+               "traveling":  null,
+               "pendingEvent":  null,
+               "repairDisc":  null,
+               "intel":  {
+                             "unlocked":  {
+
+                                          },
+                             "log":  [
+
+                                     ]
+                         },
+               "knownEvents":  {
+
+                               },
+               "justArrived":  false,
+               "tutorial":  {
+                                "step":  0
+                            },
+               "stats":  {
+                             "bought":  5,
+                             "sold":  5,
+                             "tasks":  0,
+                             "travels":  0,
+                             "distance":  0,
+                             "visits":  1,
+                             "income":  295,
+                             "upgrades":  0,
+                             "reps":  0
+                         },
+               "achievements":  {
+
+                                },
+               "visitedCities":  [
+                                     "greentown"
+                                 ],
+               "__savedAt":  1787849339611,
+               "__loaded":  true,
+               "__clockOffset":  -2,
+               "__saveSchema":  972,
+               "__lastServerAt":  1787849339093
+           },
+    "salt":  "cbc845518d4a4d071fb25b9e15135f08"
+}

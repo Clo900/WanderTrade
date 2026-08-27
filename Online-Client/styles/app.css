@@ -17,6 +17,7 @@ body{font-family:'Segoe UI',-apple-system,sans-serif;background:var(--bg);color:
 .tb-label{color:var(--text3);font-size:11px}
 .tb-val{color:var(--text);font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .tb-gold{color:var(--gold);font-weight:700;font-size:15px}
+.tb-gold.debt{color:var(--red)}
 .tb-loc-name{color:var(--text);font-weight:700;font-size:15px;display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .tb-loc-name .dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;flex-shrink:0}
 .tb-travel{color:var(--travel);font-size:11px;animation:pulse 1.5s infinite;white-space:nowrap}
@@ -129,6 +130,10 @@ nav button:hover{color:var(--text);background:rgba(255,255,255,0.03)}
 .task-refresh:hover,.task-x:hover{color:var(--gold)}
 .task-desc{font-size:13px;line-height:1.5;min-height:38px}
 .task-time{font-size:12px;font-weight:700;color:var(--travel)}
+/* 时效档位标签（v9.4）：与稀有度/品质同行、向右靠齐，不带图标 */
+.task-urgency{margin-left:auto;font-size:11px;font-weight:700;margin-right:8px}
+/* 任务板时效图例 */
+.task-legend{font-size:11px;color:var(--text3);margin-bottom:8px}
 /* 24h 违约记录提示（v9.3 惩罚体系） */
 .task-bad-warn{font-size:12px;font-weight:700;color:var(--red);background:rgba(255,60,60,0.08);border:1px solid var(--red);border-radius:var(--radius-sm);padding:8px 10px;margin-bottom:8px}
 .task-bad-info{font-size:12px;color:var(--text2);background:var(--bg);border:1px dashed var(--text3);border-radius:var(--radius-sm);padding:8px 10px;margin-bottom:8px}
@@ -342,6 +347,15 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 .item-card .ic-detail .btn-buy{background:var(--buy)}
 .item-card .ic-detail .btn-sell{background:var(--sell)}
 .item-card .ic-cargo-info{font-size:10px;color:var(--text3);margin-top:4px}
+/* v9.5 需求档位：拒收标红 + 热门/冷淡标签 */
+.item-card.ic-reject{border-color:var(--red)}
+.item-card.ic-reject .ic-icon{filter:grayscale(0.6);opacity:0.85}
+.item-card .ic-price.sell.reject{color:var(--red);cursor:pointer;font-size:13px;text-decoration:underline dotted}
+.item-card .ic-ds{font-size:10px;font-weight:700;margin-left:6px;padding:1px 5px;border-radius:8px;display:inline-block}
+.item-card .ic-ds.ds-hot{color:var(--gold);background:rgba(255,215,0,0.12);border:1px solid var(--gold)}
+.item-card .ic-ds.ds-cool{color:#6ea8ff;background:rgba(110,168,255,0.10);border:1px solid #6ea8ff}
+.item-card .ic-ds.ds-reject{color:var(--red);background:rgba(255,60,60,0.10);border:1px solid var(--red)}
+.item-card .ic-detail .btn-sell.disabled{background:var(--text3);cursor:not-allowed}
 .wh-badge{display:inline-block;background:var(--sell);color:#fff;font-size:9px;padding:1px 6px;border-radius:8px;margin-left:4px}
 
 /* ===== 数量滑块 ===== */
