@@ -489,10 +489,11 @@ h3{font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
 .ach-prog span{font-size:11px;color:var(--text2);min-width:32px;text-align:right}
 
 /* ===== 成就单个 slot 布局规范（v9.11.2） =====
- * 固定尺寸：成就 grid 内所有 slot 等高（--ach-slot-h 默认 208px），内容分区纵向排布并均匀分布；
+ * 固定尺寸：成就 grid 内所有 slot 等高（--ach-slot-h 默认 146px ≈ 内容实际高度，v9.11.13 含奖励两行），
+ *           内容自上而下紧密排布（名称行→描述两行→进度条→奖励两行），仅保留正常间距，无中段贴底空隙；
  * 名称行：◀ ▶ 切换按钮置于名称行左右两端（中性配色，非红色）；等级数字是名字的一部分（跟在名字后）；
- * 文案规范：目标区固定两行（超出省略号），奖励区单行省略，名称单行省略——长条件不撑破布局。 */
-.ach-grid .ach-card{height:var(--ach-slot-h,208px)}
+ * 文案规范：目标区与奖励区均固定两行（超出省略号、文案多自动换行），名称单行省略——长条件不撑破布局。 */
+.ach-grid .ach-card{height:var(--ach-slot-h,146px)}
 .ach-grid .ach-card.done{opacity:1;border-color:var(--gold)}
 .ach-grid .ach-card.done .ach-icon{filter:none;opacity:1}
 .ach-grid .ach-icon{flex:0 0 auto;align-self:flex-start;font-size:30px;filter:grayscale(1);opacity:.7}
@@ -502,10 +503,11 @@ h3{font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
 .ach-tier-num{flex:0 0 auto;font-size:12px;font-weight:800;color:var(--text3)}
 .ach-tier-num.done{color:var(--gold)}
 .ach-state{flex:0 0 auto;font-size:12px;line-height:1}
-.ach-grid .ach-goal{font-size:12px;color:var(--text2);line-height:1.5;min-height:36px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* v9.11.13：描述与奖励统一两行规则——留两行占位、超出省略、文案多时自动换行 */
+.ach-grid .ach-goal,.ach-grid .ach-reward{font-size:12px;line-height:1.5;min-height:36px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ach-grid .ach-goal{color:var(--text2)}
 .ach-goal-title .title-badge{font-size:9px}
-.ach-grid .ach-prog{margin-top:auto} /* v9.11.12：进度条+奖励贴底并彼此贴近（gap:4px） */
-.ach-grid .ach-reward{font-size:12px;color:var(--gold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ach-grid .ach-reward{color:var(--gold)}
 .ach-nav-btn{flex:0 0 auto;width:22px;height:22px;display:flex;align-items:center;justify-content:center;border:1px solid var(--text3);border-radius:50%;background:var(--bg);color:var(--text2);font-size:9px;cursor:pointer;transition:all .15s;line-height:1;padding:0}
 .ach-nav-btn:hover:not(:disabled){border-color:var(--gold);color:var(--gold)}
 .ach-nav-btn:disabled{opacity:.35;cursor:default}
