@@ -2,7 +2,7 @@
  * 公共事件系统
  * ================================================ */
 const EVENT_MAX_HUBS=6;   // 事件最大持续中枢数（回溯窗口）
-// v8.9：扩充事件表（14 → 42 条）。新增大量“低概率、多种类”的全局物资事件与城市事件，
+// v8.9：扩充事件表（14 → 44 条：新增 30 条）。新增大量“低概率、多种类”的全局物资事件与城市事件，
 //       让玩家意识到“情报所打听消息”的价值；全局事件克制少量，城市/单品事件分布到各城。
 const EVENT_TABLE=[
   // —— 原版：全局 / 城市 / 单品 基础事件 ——
@@ -140,19 +140,22 @@ function getRepairMult(day){
 }
 // —— 已知事件追踪：跨城市保留至过期 ——
 // 格式: "${ev.id}:${ev.startHub}"
-// 获得渠道：到达城市→该城进行中事件；情报所打听消息→随机事件情报（markEventKnown）
+// 获得渠道：① 在城中"见到"本城进行中事件（renderEventBoard 每次渲染标记当前城 + 到达城市时标记）② 情报所抽出（markEventKnown）
 function markEvsKnown(list){
   for(const ev of list){
     if(ev.city)GS.knownEvents[ev.id+':'+ev.startHub]=true;
   }
 }
-// 到达城市：仅标记该城进行中的事件（预告不随到达获得，需情报所）
+// 标记某城进行中的事件为已知（预告不随标记获得——未来事件只能靠情报所抽出）
 function markCityAsKnown(cityId){
   markEvsKnown(getActiveEvents().filter(ev=>ev.city===cityId));
 }
-// 玩家事件列表：
-// 进行中 = 全局始终可见 + 已标记已知的 city/item；
+// 玩家事件列表（动态：事件开始显示、结束自然消失）：
+// 进行中 = 全局始终可见 + 已标记已知（在城中见到的 / 情报所抽出的）；
 // 预告   = 仅已标记已知（未从情报所获得的预告一律不可见）
+// v9.11.7：事件列表不因"曾经到过"而持续跟踪——玩家只能看到自己见到的（在城中时进行中的事件，
+//          离开后这些事件仍显示到结束）与情报所抽到的；离开某城后该城"新发生"的事件不再自动出现，
+//          需返回该城（重新见到）或经其他城市情报所抽出才能得知。
 function getPlayerEvents(){
   const out=[];
   for(const ev of getActiveEvents()){
@@ -178,15 +181,30 @@ function getEventCountdown(ev){
   const endMs=startMs+ev.hubs*getHubMs();
   return Math.max(0,Math.round((endMs-Date.now())/1000));
 }
+// —— 事件见闻录（v9.10.2）：玩家"见证"过的事件永久记入 GS.eventSeen（成就面板分支解锁用）——
+// 与 knownEvents 不同：knownEvents 是当前可见性（事件过期自然失效），eventSeen 是永久收集。
+// 幂等：仅当出现新事件时才写 State（横幅每秒渲染也不会产生多余写入）。
+function markEventsSeen(list){
+  if(!GS.eventSeen)GS.eventSeen={};
+  let changed=false;
+  for(const ev of list){
+    if(ev&&ev.id&&!GS.eventSeen[ev.id]){GS.eventSeen[ev.id]=Date.now();changed=true;}
+  }
+  if(changed)State.set('eventSeen',GS.eventSeen);
+}
 // —— 事件横幅（按状态标签展示：进行中 / 即将结束 / 将要进行）——
 function renderEventBoard(){
+  // v9.11.7：玩家在城中即"见到"本城进行中事件（幂等标记）——离开后这些事件仍显示到结束；
+  //          而本城/其他城"新发生"的事件在玩家离开后不再自动出现（需返回该城或经情报所抽出）
+  markCityAsKnown(GS.location);
   const evs=getPlayerEvents();
+  markEventsSeen(evs); // v9.10.2：横幅可见即见证——见闻录解锁
   const chips=evs.map(ev=>{
     const st=getEventStatus(ev);
     if(!st)return'';
     return `<span class="event-chip ${st.cls}" onclick="showEventDetail('${ev.id}')" title="查看详情">${ev.icon} ${ev.name} · ${st.label}</span>`;
   }).join('');
-  return chips; // v7.7：事件图鉴入口暂不向玩家开放（showEventCatalog 函数保留）
+  return chips; // v9.10.2：事件收集改为成就面板"事件见闻录"分支（renderEventCatalog），不再提供全部图鉴入口
 }
 
 window.EVENT_TABLE = EVENT_TABLE;
@@ -194,4 +212,5 @@ window.getItemMult = getItemMult;
 window.getSpreadRate = getSpreadRate;
 window.getRepairMult = getRepairMult;
 window.markCityAsKnown = markCityAsKnown;
+window.markEventsSeen = markEventsSeen;
 window.renderEventBoard = renderEventBoard;

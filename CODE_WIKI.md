@@ -19,6 +19,8 @@
   - [4.7 状态容器模块 core/state.js](#47-状态容器模块-corestatejs)
   - [4.8 事件总线模块 core/event-bus.js](#48-事件总线模块-coreevent-busjs)
   - [4.9 需求引擎模块 economy/demand-engine.js](#49-需求引擎模块-economydemand-enginejs)
+  - [4.10 星陨城活动模块 gameplay/starfall.js](#410-星陨城活动模块-gameplaystarfalljs)
+  - [4.11 邮箱模块 gameplay/mailbox.js](#411-邮箱模块-gameplaymailboxjs)
 - [5. 服务端模块详解](#5-服务端模块详解)
   - [5.1 HTTP 服务器 server.ps1](#51-http-服务器-serverps1)
   - [5.2 数据模型](#52-数据模型)
@@ -71,6 +73,9 @@
 - **载具升级**：4 种车厢类型 × 5 等级，搭配核心强化
 - **任务系统**：送货/送客两种任务，4 级稀有度
 - **情报所**：按城解锁，打听消息获取物价/事件情报
+- **星陨城活动（v9.9）**：边境建设活动——运物资提交推进全服建设度，按排名领金币 + 星陨合金奖励（奖励走邮箱领取）
+- **邮箱系统（v9.9）**：活动奖励/GM 发放邮件，主动领取附件、一键已读、删除已读
+- **全服跑马灯公告（v9.9）**：`lastBroadcast` 轮询展示无缝滚动横幅（含活动开始/结算自动公告）
 - **弹幕聊天室**：全服实时聊天
 
 ---
@@ -99,7 +104,12 @@
 │  │       ⑩ src/economy/trade-draft.js   (交易单/中转面板)       │ │
 │  │       ⑪ src/economy/trade-validate.js(交易单校验)           │ │
 │  │       ⑫ src/economy/trade-preview.js (交易单预览/总额)       │ │
-│  │       ⑬ src/gameplay/pathing-core.js (寻路算法)             │ │
+│  │       ⑬ src/economy/demand-engine.js (需求引擎 v9.5)         │ │
+│  │       ⑭ src/economy/source-pricing.js(产地买入差异化)        │ │
+│  │       ⑮ src/economy/price-exceptions.js(卖出封顶/封底)       │ │
+│  │       ⑯ src/gameplay/pathing-core.js (寻路算法)             │ │
+│  │       ⑰ src/gameplay/starfall.js     (星陨城活动 v9.9)       │ │
+│  │       ⑱ src/gameplay/mailbox.js      (邮箱系统 v9.9)         │ │
 │  └─────────────────────────────────────────────────────────────┘ │
 │                              │                                   │
 │                     fetch/async/await                            │
@@ -171,12 +181,15 @@ e:\WanderTrade\
 │           ├── pathing-core.js     # 寻路核心 (Dijkstra)
 │           ├── task-config.js      # 任务配置
 │           ├── task-timer.js       # 任务时限 (T1 离城计时)
-│           └── task-bad-record.js  # 24h 不良记录
+│           ├── task-bad-record.js  # 24h 不良记录
+│           ├── starfall.js         # 星陨城活动面板 + 单机结算 (v9.9)
+│           └── mailbox.js          # 邮箱弹窗 (v9.9)
 │
 ├── Docs/
 │   ├── JS模块拆分首批迁移清单.md    # 首批模块拆分设计文档
 │   ├── 地图模块实现索引.md          # 地图模块实现索引（文件+行号）
-│   └── 颜色与样式文件表.md          # 客户端 CSS 文件职责与维护边界
+│   ├── 颜色与样式文件表.md          # 客户端 CSS 文件职责与维护边界
+│   └── 星陨城活动玩法设计.md        # 星陨城活动设计（v9.9 已落地）
 │
 ├── server.ps1                      # HTTP 服务器主程序
 ├── start-server.bat                # 一键启动脚本
@@ -289,7 +302,7 @@ AUTH_KEY;     // 登录标识
 阶段 1 (village):  greentown(绿田村), rivertown(溪木村), milltown(磨坊村), pasturetown(牧歌村)
 阶段 2 (town 近邻): oaktown(橡木镇), ironfort(铁砧堡), saltbay(盐湾港), purplefield(紫穗原)
 阶段 3 (town 中期): windoasis(风语绿洲), moonvalley(月影谷)
-阶段 4 (后期): dawncapital(晨曦王都), frostfort(霜岭堡), starfall(星陨城·暂未开放)
+阶段 4 (后期): dawncapital(晨曦王都), frostfort(霜岭堡), starfall(星陨城·活动城市，v9.9 起开放通行)
 ```
 
 ### 4.3 UI 基础模块 core/ui-primitives.js
@@ -305,6 +318,7 @@ AUTH_KEY;     // 登录标识
 | `toast(msg, type)` | `(string, 'info'\|'ok'\|'err')` | 显示居中偏上的 Toast 通知，2 秒后自动消失 |
 | `showModal(title, msg, btnText, onOk)` | `(string, string, string, function)` | 居中确认弹窗，`msg` 支持 `\n` 换行，含"取消"+"确认"按钮 |
 | `showChoice(title, msg, btn1, btn2, on1, on2)` | `(string, string, string, string, function, function)` | 双按钮选择弹窗，用于私人事件抉择等场景 |
+| `showBroadcast(msg)` | `(string)` | **全服跑马灯公告横幅（v9.9）**：双组内容无缝滚动（动态副本数按屏宽估算），慢速 + 淡入淡出，常驻顶部 |
 
 #### 设计特点
 
@@ -535,6 +549,31 @@ getActiveEvents() → getItemMult(city, item, mode) → priceFor() → 市场价
 - `draftFromSlider` 与 `sellItem` 对拒收拦截并弹窗提示原因。
 - 售出列表构建：`getDemandState(loc, gid, hubNow)`，拒收记录 `rejectReason`。
 
+### 4.10 星陨城活动模块 gameplay/starfall.js
+
+**文件路径**：`Online-Client/src/gameplay/starfall.js`（v9.9，v9.9.4 增动态图景/历史冠军）
+
+**职责**：星陨城建设活动客户端逻辑——活动状态（单机本地 `GS.sfActivity` / 在线缓存 `_net`）、建设面板渲染、提交记账、内测指令。权威约定：在线活动状态在服务端（`starfall_activity.json`），本模块为缓存；提交走 `POST /api/starfall/contribute`。
+
+| 组成 | 说明 |
+|------|------|
+| 周期状态机 | 72h = 建设期 24h + 间隙期 48h；固定 **UTC+8 2026-01-01 08:00** 为 EPOCH（`epoch()`），阶段对齐自然日 08:00 |
+| 确定性抽选 | mulberry32（`rng(period*1000003+7)`），物资池按 `ITEMS.cat` special/basic 排序，与服务端 `Get-SfPickGoods` 逐位一致；每期 1 特产 + 3 普通 |
+| 贡献率 | `contribRate(itemId, req)`：当期特产 100 / 当期普通 20 / **其他物资 1**（v9.9.3 放开提交范围） |
+| 面板渲染 | `renderPanel` → `renderRunning`（左侧标题/采访气泡/进度条/所需物资/排行榜 + 右侧提交区 + **底部动态图景** `citySceneHtml`）/ `renderIntermission`；历史冠军 `historyWidget` **随时可查看**（下拉 + 箭头） |
+| 提交交互 | 独立 `_sel` 状态 + `toggleItem/clearDraft/updateSum/submit`（售出面板式 `sf-submit-layout`，无金币/税栏）；在线提交后清空 `_sel` 并按服务端返回值重渲染 |
+| 单机 | `localAct/rotateLocal/settleLocal`：本地结算（排名→7 档奖励→`Mailbox.localDeliver` 投递→归档冠军）；GM `adminCmd`（start/end/next/status） |
+
+### 4.11 邮箱模块 gameplay/mailbox.js
+
+**文件路径**：`Online-Client/src/gameplay/mailbox.js`（v9.9）
+
+**职责**：邮箱弹窗——顶栏按钮（未读红点）+ 居中弹窗（左列表右详情）；在线操作走 `/api/mail/*`，单机走本地（`GS.mailbox`）。
+
+- `localDeliver({title, from, body, attachments})`：单机本地投递（含活动奖励 / `/gm mail` 测试邮件）
+- 操作：已读 / 一键已读 / 删除 / 删除已读 / 领取附件；有未领附件的邮件禁止删除
+- 满仓策略：投递前自动清理最旧邮件（优先级与服务端 `Invoke-MailMakeRoom` 一致）
+
 ---
 
 ## 5. 服务端模块详解
@@ -564,7 +603,11 @@ server.ps1 [-Port 8080] [-Lan]
 5. **交易结算**：买入/卖出全量结算——库存扣减/回补 + 资金/持仓权威记账（per-player 模式；v9.7.3 起 `/api/tradeBatch` 为经济权威接口，单笔在线交易也走该接口）
 6. **聊天室**：消息存储与增量拉取（保留最近 200 条）
 7. **排行榜**：全服 Top 20 统计
-8. **GM 后台**：世界时间流速、天数设置、发钱、广播
+8. **星陨城活动（v9.9）**：活动状态机（确定性抽选 / 惰性轮转 `Invoke-MaybeSfRotate` / 结算 `Invoke-SettleStarfall`），提交权威扣货记账，奖励邮件投递，历史冠军归档
+9. **邮箱（v9.9）**：投递 / 已读 / 删除 / 领取附件，满 50 自动清理最旧
+10. **跑马灯公告（v9.9）**：`world.json lastBroadcast`，活动 start/end/next 自动发布
+11. **星陨城运维（v9.10）**：`Write-SfLog` 结算/轮转/管理日志（控制台 + `starfall_log.txt`）；`/api/admin starfall status` 状态快照；`/api/admin mail` 自定义 title/body 补发；结算投递单玩家失败兜底
+12. **GM 后台**：世界时间流速、天数设置、发钱、广播、starfall、mail
 
 > **v9.7.1 世界配置版本化**：`LoadWorld` 检测 `default-world.json` 的 `__schema`，若 `world.json.__schema < default.__schema` 则自动重建世界配置（仅刷新 `basePrices`/`purchaseLimits`/`tradeRoads`/`sourceConfig`/`sellExceptions`/`demandProfile`，保留 `worldStart`/`stockMode`/`timeScale`/`lastStockRefill`/`lastRefillDay`/`lastBroadcast`/`adminPass` 等运行时字段），玩家 Day 不重置。未来版本升级只需递增 `default-world.json` 的 `__schema`。
 
@@ -616,7 +659,7 @@ server.ps1 [-Port 8080] [-Lan]
     "vehicle": { "level": 1, "core": { "level": 1, "dura": 0 }, "wagons": [...] },
     "warehouses": { "greentown": { "items": {...}, "expanded": false, "level": 0 } },
     "reputation": { "greentown": { "exp": 0, "level": 0 }, ... },
-    "materials": { "gear": 0, "repair_kit": 0, "fuel_tank": 0, "engine": 0 },
+    "materials": { "gear": 0, "repair_kit": 0, "fuel_tank": 0, "engine": 0, "staralloy": 0 },  // v9.9 星陨合金（活动奖励素材）
     "tasks": { "board": [...], "active": [...] },
     "traveling": null,
     "pendingEvent": null,
@@ -626,7 +669,9 @@ server.ps1 [-Port 8080] [-Lan]
     "tutorial": { "step": 0, "viewedSteps": [...] },
     "stats": { "bought": 0, "sold": 0, "tasks": 0, "travels": 0, "distance": 0, "visits": 0, "income": 0, "upgrades": 0, "reps": 0 },
     "achievements": {},
-    "__saveSchema": 972,          // v9.7.2 存档结构版本（落后时 migrateSaveSchema 自动迁移）
+    "mailbox": [ { "id": "...", "title": "...", "from": "...", "body": "...", "ts": 0, "read": false, "claimed": false, "attachments": { "gold": 0, "mats": { "staralloy": 0 } } } ],  // v9.9 邮箱（服务端权威；有未领附件禁止删除）
+    "sfActivity": null,               // v9.9 单机星陨城活动状态（在线模式以服务端 starfall_activity.json 为准）
+    "__saveSchema": 973,          // v9.7.2 引入 972；v9.9 升级为 973（落后时 migrateSaveSchema 自动迁移）
     "__savedAt": 1786480418213,
     "__loaded": true
   }
@@ -649,7 +694,11 @@ server.ps1 [-Port 8080] [-Lan]
 | POST | `/api/chat` | 发送聊天，body: `{user, loc, msg}` |
 | GET | `/api/chat?since=` | 增量获取聊天消息 |
 | GET | `/api/rankings?type=` | 排行榜（gold/distance/tasks/rep） |
-| POST | `/api/admin` | GM 指令，body: `{key, cmd, ...}` |
+| GET | `/api/starfall/activity?user=` | 星陨城活动快照（阶段/所需物资/进度/排行榜/历史冠军） |
+| POST | `/api/starfall/contribute` | 提交物资，body: `{user, items:[{item, qty}]}`，服务端权威扣货记账，返回 `{cargo, totalProgress, myScore, myRank, top10, gained}` |
+| GET | `/api/mail?user=` | 拉取玩家邮箱（含未读数） |
+| POST | `/api/mail/{read\|readAll\|delete\|deleteRead\|claim}` | 邮箱操作：已读/一键已读/删除/删除已读/领取附件 |
+| POST | `/api/admin` | GM 指令，body: `{key, cmd, ...}`；`cmd`：timescale/setday/givegold/giveitem/broadcast/starfall(start\|end\|next\|status)/mail(可带 title/body) |
 
 #### 并发保护机制
 
@@ -912,7 +961,11 @@ server.ps1 [-Port 8080] [-Lan]
 | `/gm <密码> setday <天数>` | 设置世界天数 |
 | `/gm <密码> givegold <玩家> <金额>` | 给玩家发钱 |
 | `/gm <密码> giveitem <玩家> <物品> <数量>` | 给玩家发物资 |
-| `/gm <密码> broadcast <消息>` | 全服广播 |
+| `/gm <密码> broadcast <消息>` | 全服跑马灯广播 |
+| `/gm <密码> starfall start\|end\|next\|status` | 星陨城活动：开始/结算/下一期/查看状态（v9.9，status 为 v9.10） |
+| `/gm <密码> mail <玩家> <金币> <星陨合金> [title] [body]` | 给玩家发奖励邮件（v9.9，title/body 为 v9.10） |
+
+> **单机免密**：单机模式下 `starfall` / `mail` / `broadcast` 三个 GM 子指令可省略密码（`LOCAL_GM`），其余 GM 指令仅在线可用；指令错误统一返回「指令有误」。
 
 ---
 
@@ -957,7 +1010,9 @@ runtime.js (运行模式判定，最先加载，无依赖)
 | `price-engine.js` | `data.js`, `events.js`(运行时) | 主脚本 |
 | `events.js` | `data.js`, `GS`(全局) | `price-engine.js`, 主脚本 |
 | `pathing-core.js` | `data.js` | 主脚本 |
-| `server.ps1` | `default-world.json`, `.NET HttpListener` | 无（独立运行） |
+| `starfall.js` (v9.9) | `data.js`, `state.js`, `ui-primitives.js`, `mailbox.js`(单机结算投递), `GS/State` | 主脚本（`renderCity` 星陨城分支）、`server.ps1`（在线活动接口） |
+| `mailbox.js` (v9.9) | `data.js`, `ui-primitives.js`, `GS/State` | 主脚本（顶栏按钮）、`starfall.js`（奖励投递） |
+| `server.ps1` | `default-world.json`, `starfall_activity.json`, `.NET HttpListener` | 无（独立运行） |
 
 ---
 
@@ -1210,8 +1265,8 @@ ironfort ──40── frostfort
 moonvalley ──35── frostfort
 dawncapital ──60── frostfort
 windoasis ──25── oaktown
-saltbay ──50── starfall (暂未开放)
-frostfort ──45── starfall (暂未开放)
+saltbay ──50── starfall (v9.9 起开放通行)
+frostfort ──45── starfall (v9.9 起开放通行)
 ```
 
 ### 道路拓扑图

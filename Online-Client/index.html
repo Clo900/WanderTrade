@@ -19,7 +19,8 @@
 <div class="auth-box">
   <h2>🏰 艾尔希亚跑商</h2>
   <div class="auth-sub">单机模式 · 存档保存在当前浏览器</div>
-  <div class="auth-field"><label>用户名</label><input type="text" id="auth-user" placeholder="3~12 个字符" maxlength="12" autocomplete="off"></div>
+  <div class="auth-field"><label>用户名</label><input type="text" id="auth-user" placeholder="3~12 位英文/数字/下划线" maxlength="12" autocomplete="off"></div>
+  <div class="auth-field" id="auth-nick-field"><label>昵称</label><input type="text" id="auth-nick" placeholder="1~20 个字符，可含中文" maxlength="20" autocomplete="off"></div>
   <div class="auth-field"><label>密码</label><input type="password" id="auth-pass" placeholder="至少 4 位" maxlength="32" autocomplete="off"></div>
   <div class="auth-err" id="auth-err"></div>
   <div class="auth-btns" id="auth-btns-register" style="">
@@ -101,6 +102,17 @@
 <script src="src/gameplay/task-timer.js"></script>
 <script src="src/gameplay/task-bad-record.js"></script>
 <script src="src/economy/task-reward.js"></script>
+<!-- v9.9：星陨城活动 + 邮箱系统（独立模块，低耦合挂载） -->
+<script src="src/gameplay/mailbox.js?v=973"></script>
+<!-- v9.11.10：成就配置表（策划统一修改入口，需在 events.js 之后加载以引用 EVENT_TABLE） -->
+<script src="src/data/achievements.js?v=9110"></script>
+<!-- v9.11.11：称号配置表（策划统一修改入口，须在 titles.js 之前加载） -->
+<script src="src/data/titles.js?v=9111"></script>
+<script src="src/gameplay/titles.js?v=974"></script> <!-- v9.10.3：称号系统 -->
+<script src="src/gameplay/starfall.js?v=974"></script>
+<script src="src/economy/market-ui.js?v=974"></script> <!-- v9.10.2：交易市场 UI 自主内联拆出 -->
+<script src="src/map/road-curves.js?v=974"></script> <!-- v9.10.2：路网曲线模块拆出 -->
+<script src="src/map/map-render.js?v=974"></script> <!-- v9.10.2：地图渲染模块拆出 -->
 <script>
 /* ================================================
  * 游戏引擎
@@ -116,11 +128,13 @@ State.init({
   tradeDraft: {buy:{cityId:null,day:null,hub:null,items:{}},sell:{cityId:null,day:null,hub:null,items:{}}},
   cityStocks: {}, lastStockRefill: Date.now(),
   warehouses: {}, reputation: {},
-  materials: {gear:0,repair_kit:0,fuel_tank:0,engine:0},
+  materials: {gear:0,repair_kit:0,fuel_tank:0,engine:0,staralloy:0}, // v9.9：星陨合金
+  mailbox: [], // v9.9：邮箱（在线由服务端投递，本地仅缓存展示）
   tasks: {board:[],active:[]}, taskBadLog: {abandonAt:[],failAt:[]}, traveling: null, pendingEvent: null, repairDisc: null,
-  intel: {unlocked:{},log:[]}, knownEvents: {},
+  intel: {unlocked:{},log:[],drawn:{}}, knownEvents: {}, eventSeen: {}, // v9.11.9：drawn=本城已抽事件（离开城市清空）
+  nickname: '', titles: {owned:{},equipped:null}, // v9.10.3：昵称（全服唯一）/ 称号栏（owned+当前装备）
   justArrived: false, tutorial: {step:0},
-  stats: {bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0},
+  stats: {bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0,everDebt:0,debtPaid:0}, // v9.10.3：everDebt/debtPaid 供「无债一身轻」
   achievements: {}, visitedCities: ['greentown'],
   __savedAt: 0, __loaded: false,
   __clockOffset: 0 // v9.4：服务器时间校准偏移（ms）；单机为 0，在线由 serverNow 校准
@@ -187,21 +201,11 @@ State.subscribe('day', function(day){
   else clearDraftOnAnchorChange('day');
 });
 
-// 事件图鉴（始终展示全部14条定义，不受城市限制）
-function catalogDetail(id){document.querySelectorAll('.modal-overlay').forEach(o=>o.remove());showEventDetail(id);}
-function showEventCatalog(){
-  const rows=EVENT_TABLE.map(ev=>{
-    let scopeTxt;if(ev.scope==='global'||ev.scope==='cost')scopeTxt='全王国';else if(ev.scope==='city')scopeTxt=ev.item?`${getCityName(ev.city)}·${getItem(ev.item)?.name||ev.item}`:`${getCityName(ev.city)}·全城`;else scopeTxt=`${getCityName(ev.city)}·${getItem(ev.item)?.name||ev.item}`;
-    const targetTxt=ev.target?({buy:'仅买入',sell:'仅卖出',both:'买卖'}[ev.target]):'买卖';
-    const inst=getPlayerEvents().find(e=>e.id===ev.id);
-    const stTxt=inst&&getEventStatus(inst)?getEventStatus(inst).label:'';
-    return `<div class="ev-row" onclick="catalogDetail('${ev.id}')" title="查看详情">${ev.icon} <b>${ev.name}</b> <span style="color:var(--gold);font-size:11px">${stTxt}</span> <span style="color:var(--text3);font-size:11px">${scopeTxt} · ${targetTxt} · ${ev.hubs}周期</span><br><span style="color:var(--text2);font-size:12px">${ev.desc}</span></div>`;
-  }).join('');
-  showModal('📖 事件图鉴（'+EVENT_TABLE.length+' 条）',rows,'知道了',()=>{});
-}
 // 事件详情弹窗（用户友好文案，状态标签，无括号补充；已结束事件不出现）
+// v9.10.2：事件收集由成就面板"事件见闻录"分支承载（renderEventCatalog），不再提供"查看全部事件定义"的图鉴入口
 function showEventDetail(id){
   const ev=EVENT_TABLE.find(e=>e.id===id);if(!ev)return;
+  markEventsSeen([ev]); // v9.10.2：查看详情即见证（与横幅可见同一口径）
   let span;if(ev.scope==='global'||ev.scope==='cost')span='全王国';else if(ev.scope==='city')span=ev.item?`${getCityName(ev.city)} · ${getItem(ev.item)?.name||ev.item}`:`${getCityName(ev.city)} · 全城`;else span=`${getCityName(ev.city)} · ${getItem(ev.item)?.name||ev.item}`;
   const effectTxt=getPublicDesc(ev);
   const inst=getPlayerEvents().find(e=>e.id===id);
@@ -371,6 +375,8 @@ async function fullSync(){
   }
   await syncPlayer(user); // v8.19：统一合并（服务器档 vs 本机离线档，取新）
   settleOverdueTasks(); // v9.4：上线结算离线期间严重超时的任务
+  if(window.Starfall)await Starfall.sync(); // v9.9：拉取星陨城活动状态
+  if(window.Mailbox)await Mailbox.sync(); // v9.9：拉取服务端投递的邮件
   advanceDay();render();
 }
 // v8.19：玩家存档"服务器↔本机"合并——本机离线档较新则恢复并上传（保留离线完成的教程/任务进度），否则恢复服务器档
@@ -393,11 +399,14 @@ async function syncPlayer(user){
   const src=useLocal?local:server;
   GS.__lastServerAt=src?(src.__savedAt||0):0; // v8.25：记录已知的服务器存档版本（并发保护基准，与时钟无关）
   applySaved(src);
+  // v9.10.3：在线昵称以服务端档案为准（/api/player 返回 nickname，缺省回退用户名）
+  if(pl&&pl.ok&&pl.nickname)State.set('nickname', pl.nickname);
   window.__gsReady=true; // v8.20：玩家存档已恢复，此后自动保存生效
   if(useLocal){
     const up=JSON.parse(JSON.stringify(GS));
     delete up.__basePrices;delete up.__purchaseLimits; // 世界数据随服务器，不随玩家档上传
     delete up.day;delete up.gameStartTime; // v8.26：游戏日由服务器 worldStart 统一计算
+    delete up.mailbox; // v9.9：邮箱由服务端投递（结算/GM），不随玩家档上传，避免旧档覆盖新邮件
     const r=await NET.post('/api/save',{user,gs:up,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt});
     if(r&&r.ok)GS.__lastServerAt=GS.__savedAt;
   }
@@ -420,6 +429,8 @@ function toggleAuth(mode){
   document.getElementById('auth-btns-register').style.display=mode==='register'?'':'none';
   document.getElementById('auth-btns-login').style.display=mode==='login'?'':'none';
   document.getElementById('runtime-actions').style.display='none';
+  // v9.10.3：昵称仅注册时填写
+  const nickField=document.getElementById('auth-nick-field');if(nickField)nickField.style.display=mode==='register'?'':'none';
   document.querySelector('.auth-toggle').innerHTML=mode==='register'?'已有账号？<span onclick="toggleAuth(\'login\')">点此登录</span>':'没有账号？<span onclick="toggleAuth(\'register\')">点此注册</span>';
   document.getElementById('auth-err').textContent='';
 }
@@ -438,16 +449,23 @@ function mergeWorldTable(oldT,newT){
 // 存档携带结构版本 __saveSchema；代码升级导致存档语义变化时，按版本执行迁移管线，
 // 根治"旧档数据在新代码下行为异常"（如 v9.7.2 前的旧价格表缺新增物资 → 价格 0 / 物价表空）。
 // 版本基线：972 = v9.7.2（世界表/库存与代码对齐已作为 applySaved 运行时行为内置）。
-const SAVE_SCHEMA = 972;
+const SAVE_SCHEMA = 973;
 // 迁移注册表：{ 目标版本: 迁移函数(saved, ctx) }。未来结构变更在此追加新版本与迁移函数，
 // applySaved 会对 存档版本 < SAVE_SCHEMA 的旧档按版本顺序补齐执行。
-const SAVE_MIGRATIONS = { 972: null };
-// 返回存档当前版本；旧档无版本视为 0。执行迁移（当前 972 无独立迁移函数）。
+const SAVE_MIGRATIONS = {
+  972: null,
+  // 973 = v9.9：新增星陨合金素材与邮箱；旧档补 materials.staralloy 与 mailbox 字段
+  973: function(saved){
+    if(!saved.materials || typeof saved.materials!=='object') saved.materials = {gear:0,repair_kit:0,fuel_tank:0,engine:0};
+    if(typeof saved.materials.staralloy!=='number') saved.materials.staralloy = 0;
+    if(!Array.isArray(saved.mailbox)) saved.mailbox = [];
+  }
+};
+// 返回存档当前版本；旧档无版本视为 0。按版本顺序执行迁移管线。
 function migrateSaveSchema(saved){
   let sv = typeof saved.__saveSchema==='number' ? saved.__saveSchema : 0;
   if(sv >= SAVE_SCHEMA) return sv;
-  // 未来迁移示例（版本递增后在此追加）：
-  //   for(let v=sv+1; v<=SAVE_SCHEMA; v++){ const fn=SAVE_MIGRATIONS[v]; if(fn) fn(saved); }
+  for(let v=sv+1; v<=SAVE_SCHEMA; v++){ const fn=SAVE_MIGRATIONS[v]; if(fn) fn(saved); }
   return SAVE_SCHEMA;
 }
 function applySaved(saved){
@@ -482,15 +500,21 @@ function applySaved(saved){
     State.set('reputation', saved.reputation||{});
     State.set('stats', saved.stats||{bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0});
     State.set('achievements', saved.achievements||{});
+    State.set('nickname', saved.nickname||''); // v9.10.3：昵称（在线以 /api/player 的 nickname 权威覆盖）
+    State.set('titles', saved.titles||{owned:{},equipped:null}); // v9.10.3：称号栏
     State.set('visitedCities', saved.visitedCities||[State.get('location')]);
-    State.set('materials', saved.materials||{gear:0,repair_kit:0,fuel_tank:0,engine:0});
+    // v9.9：materials 合并补 staralloy（星陨合金）；旧档缺素材键时补 0
+    State.set('materials', Object.assign({gear:0,repair_kit:0,fuel_tank:0,engine:0,staralloy:0}, saved.materials||{}));
+    State.set('mailbox', Array.isArray(saved.mailbox)?saved.mailbox:[]); // v9.9：邮箱
+    State.set('sfActivity', saved.sfActivity && typeof saved.sfActivity==='object' ? saved.sfActivity : null); // v9.9.1：单机星陨城活动状态恢复（防止 GM 强制开启的活动刷新后回退到自然周期）
     State.set('tasks', saved.tasks||{board:[],active:[]});
     State.set('taskBadLog', saved.taskBadLog||{abandonAt:[],failAt:[]});
     State.set('traveling', saved.traveling);
     State.set('pendingEvent', saved.pendingEvent);
     State.set('repairDisc', saved.repairDisc);
-    State.set('intel', saved.intel||{unlocked:{},log:[]});
+    State.set('intel', Object.assign({unlocked:{},log:[],drawn:{}}, saved.intel||{})); // v9.11.9：drawn 旧档补空
     State.set('knownEvents', saved.knownEvents||{});
+    State.set('eventSeen', saved.eventSeen||{}); // v9.10.2：事件见闻录（旧档自动补空）
     State.set('tradeDraft', saved.tradeDraft||{buy:{cityId:null,day:null,hub:null,items:{}},sell:{cityId:null,day:null,hub:null,items:{}}});
     State.set('justArrived', saved.justArrived||false);
     State.set('tutorial', saved.tutorial||{step:6});
@@ -581,15 +605,22 @@ async function startOnline(){
     applyWorld(created);
   }
   ONLINE=true;window.__netStarted=true;
+  // v9.11.2：公告已见时间戳跨刷新记忆（localStorage），避免每次刷新重复展示历史公告
+  if(!window.__lastBc)window.__lastBc=Number(localStorage.getItem('_bc_seen'))||0;
+  const BC_FRESH_MS=2*60*60*1000; // 公告展示有效期：仅展示最近 2 小时内的公告，更早的只记录已见不打扰
   // 在线期间轮询世界：同步 timeScale 流速、时钟偏移与 GM 广播
   setInterval(async()=>{
     const w2=await NET.get('/api/world');
     if(w2&&w2.ok&&w2.world){
       if(typeof w2.serverNow==='number')GS.__clockOffset=w2.serverNow-Date.now(); // v9.4 持续校准
       if(w2.world.timeScale&&w2.world.timeScale!==GS.timeScale){GS.timeScale=w2.world.timeScale;render();toast('⏱ 世界时间流速已调整为 ×'+w2.world.timeScale,'ok');}
-      if(w2.world.lastBroadcast&&w2.world.lastBroadcast.ts&&(!window.__lastBc||window.__lastBc<w2.world.lastBroadcast.ts)){
-        window.__lastBc=w2.world.lastBroadcast.ts;
-        toast('📢 '+w2.world.lastBroadcast.msg,'ok');
+      if(w2.world.lastBroadcast&&w2.world.lastBroadcast.ts){
+        const bcTs=w2.world.lastBroadcast.ts;
+        if(bcTs>window.__lastBc){
+          window.__lastBc=bcTs;
+          try{localStorage.setItem('_bc_seen',String(bcTs));}catch(e){}
+          if(Date.now()-bcTs<=BC_FRESH_MS&&window.showBroadcast)showBroadcast(w2.world.lastBroadcast.msg); // v9.9.1：全服公告跑马灯横幅（仅近期公告展示）
+        }
       }
     }
   },60000);
@@ -612,6 +643,7 @@ function autoSave(){
       // v8.26：游戏日由服务器 worldStart 统一计算并下发，玩家存档不携带 day/gameStartTime
       const up=JSON.parse(JSON.stringify(GS));
       delete up.day;delete up.gameStartTime;
+      delete up.mailbox; // v9.9：邮箱由服务端投递，不随玩家档上传
       const r=await NET.post('/api/save',{user,gs:up,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt||0});
       if(r&&r.ok)GS.__lastServerAt=GS.__savedAt; // v8.25：保存成功更新已知版本
       else if(r&&r.conflict){
@@ -637,6 +669,7 @@ function saveNow(){
     // v8.26：玩家存档不携带 day/gameStartTime（游戏日由服务器 worldStart 统一计算）
     const up=JSON.parse(JSON.stringify(GS));
     delete up.day;delete up.gameStartTime;
+    delete up.mailbox; // v9.9：邮箱由服务端投递，不随玩家档上传
     NET.post('/api/save',{user,gs:up,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt||0}).then(r=>{
       if(r&&r.ok)GS.__lastServerAt=GS.__savedAt; // v8.25
       else if(r&&r.conflict&&ONLINE)fullSync();
@@ -660,6 +693,7 @@ window.addEventListener('pagehide',()=>{
       // v8.26：玩家存档不携带 day/gameStartTime
       const up=JSON.parse(JSON.stringify(GS));
       delete up.day;delete up.gameStartTime;
+      delete up.mailbox; // v9.9：邮箱由服务端投递，不随玩家档上传
       const blob=new Blob([JSON.stringify({user,gs:up,clientSaveTime:GS.__savedAt,lastServerAt:GS.__lastServerAt||0})],{type:'application/json'});
       if(navigator.sendBeacon)navigator.sendBeacon('/api/save',blob);
     }catch(e){}
@@ -671,42 +705,45 @@ window.addEventListener('pagehide',()=>{
   }
 });
 async function doRegister(){
-  const u=document.getElementById('auth-user').value.trim(),p=document.getElementById('auth-pass').value;
-  if(u.length<3||u.length>12)return authErr('用户名需 3~12 个字符');
+  const u=document.getElementById('auth-user').value.trim(),nick=document.getElementById('auth-nick').value.trim(),p=document.getElementById('auth-pass').value;
+  // v9.10.3：用户名限英文/数字/下划线，昵称 1~20 字符（可含中文）
+  if(!/^[A-Za-z0-9_]{3,12}$/.test(u))return authErr('用户名需 3~12 位英文/数字/下划线');
+  if(!nick||nick.length>20)return authErr('昵称需 1~20 个字符（可含中文）');
   if(p.length<4)return authErr('密码至少 4 位');
   const online=await startOnline();
   if(Runtime.isOnline&&!online)return showOnlineUnavailable();
-  let ok=true;
   if(online){
-    const r=await NET.post('/api/register',{user:u,pass:p});
+    const r=await NET.post('/api/register',{user:u,nickname:nick,pass:p});
     if(!r||!r.ok)return authErr(r&&r.err?r.err:'注册失败（服务器不可用？）');
     const pl=await NET.get('/api/player/'+encodeURIComponent(u));
     if(pl&&pl.ok&&pl.gs)applySaved(pl.gs);
     else if(pl&&pl.ok){GS.__loaded=true;State.set('__saveSchema',SAVE_SCHEMA);} // v8.25：服务器确认无档=新玩家；v9.7.2 登记存档版本
+    State.set('nickname',(pl&&pl.ok&&pl.nickname)?pl.nickname:nick); // v9.10.3
   }else{
     const users=getUsers();
     if(users.includes(u))return authErr('该用户名已被注册');
     users.push(u);saveUsers(users);
     localStorage.setItem(GS_PREFIX+u+'_pwd',p);
     resetGameState(); // v8.12（D）：新注册离线账号使用全新开局存档，避免残留上一账号数据
+    State.set('nickname',nick); // v9.10.3：单机昵称随存档
     saveGS(u,GS);
     GS.__loaded=true; // v8.25：离线新账号建档
   }
   localStorage.setItem(AUTH_KEY,u);
   window.__gsReady=true; // v8.20：账号存档已确立，允许自动保存
   document.getElementById('auth-overlay').style.display='none';
-  toast('🎉 注册成功！欢迎来到全王国，'+u,'ok');
+  toast('🎉 注册成功！欢迎来到全王国，'+(GS.nickname||u),'ok');
   render();
 }
 async function doLogin(){
   const u=document.getElementById('auth-user').value.trim(),p=document.getElementById('auth-pass').value;
   const online=await startOnline();
   if(Runtime.isOnline&&!online)return showOnlineUnavailable();
-  let ok=true;
   if(online){
     const r=await NET.post('/api/login',{user:u,pass:p});
     if(!r||!r.ok)return authErr(r&&r.err?r.err:'登录失败');
     await syncPlayer(u); // v8.19：登录合并存档；v8.25：__loaded 仅由 syncPlayer 按服务器确认状态设置
+    if(!GS.nickname)State.set('nickname',(r&&r.nickname)||u); // v9.10.3：登录响应带回昵称
   }else{
     const users=getUsers();
     if(!users.includes(u))return authErr('该用户名未注册，请先注册');
@@ -718,7 +755,7 @@ async function doLogin(){
   localStorage.setItem(AUTH_KEY,u);
   window.__gsReady=true; // v8.20：账号存档已确立，允许自动保存
   document.getElementById('auth-overlay').style.display='none';
-  toast('👋 欢迎回来，'+u,'ok');
+  toast('👋 欢迎回来，'+(GS.nickname||u),'ok');
   render();
 }
 function doLogout(){
@@ -726,8 +763,100 @@ function doLogout(){
   localStorage.removeItem(AUTH_KEY);
   resetGameState(); // v8.12（D）：登出重置内存状态，防止离线账号间串档
   document.getElementById('auth-overlay').style.display='flex';
-  document.getElementById('auth-user').value='';document.getElementById('auth-pass').value='';
+  document.getElementById('auth-user').value='';document.getElementById('auth-nick').value='';document.getElementById('auth-pass').value='';
   document.getElementById('auth-err').textContent='';toggleAuth('register');
+  closeUserPanel(); // v9.10.3：登出时关闭用户中心
+}
+
+// ===== 用户中心面板（v9.10.3：改昵称 / 改密码 / 称号装备卸下） =====
+function userMsg(id,msg,err){const el=document.getElementById(id);if(el){el.textContent=msg||'';el.className='user-msg'+(err?' err':(msg?' ok':''));}}
+function openUserPanel(){const ov=document.getElementById('user-overlay');if(!ov)return;ov.style.display='flex';renderUserPanel();}
+function closeUserPanel(){const ov=document.getElementById('user-overlay');if(ov)ov.style.display='none';}
+function equipTitle(id){
+  if(!window.Titles)return toast('称号系统未就绪','err');
+  if(id&&!Titles.TITLES[id])return;
+  if(id&&Titles.ownedList().indexOf(id)<0)return toast('未获得该称号','err');
+  if(!id||Titles.equippedId()===id){Titles.equip(null);toast('已卸下称号','info');}
+  else{Titles.equip(id);toast('🎖️ 已装备称号「'+Titles.TITLES[id].name+'」','ok');}
+  saveNow();renderUserPanel();renderTopbar();
+}
+function renderUserPanel(){
+  const body=document.getElementById('user-body');if(!body)return;
+  const user=localStorage.getItem(AUTH_KEY)||'';
+  const nick=GS.nickname||user||'未登录';
+  const eq=Titles.equippedId();
+  const owned=Titles.ownedList();
+  const cards=Object.keys(Titles.TITLES).map(id=>{
+    const t=Titles.TITLES[id],has=owned.indexOf(id)>=0,sel=eq===id;
+    const act=has?(sel?'已装备 · 点击卸下':'点击装备'):'未获得';
+    return `<div class="user-title-card ${has?'':'locked'} ${sel?'sel':''}" onclick="equipTitle('${id}')">
+      ${Titles.badgeHTML(id)||(''+t.icon)}
+      <span class="user-title-rarity">${Titles.RARITY[t.rarity]||''}</span>
+      <span class="user-title-desc">${t.desc}</span>
+      <span class="user-title-act">${act}</span>
+    </div>`;
+  }).join('');
+  body.innerHTML=`
+    <div class="user-sec">
+      <div class="user-sec-title">👤 账号信息</div>
+      <div class="user-info-row"><span>用户名</span><b>${chatEsc(user)}</b></div>
+      <div class="user-info-row"><span>当前昵称</span><b>${chatEsc(nick)}</b>${eq?Titles.badgeHTML(eq):''}</div>
+    </div>
+    <div class="user-sec">
+      <div class="user-sec-title">✏️ 修改昵称 <span class="user-msg">全服唯一，1~20 字符可含中文</span></div>
+      <div class="user-field"><input class="user-input" id="up-nick" maxlength="20" placeholder="新昵称" autocomplete="off"><button class="user-btn" onclick="doChangeNickname()">保存</button></div>
+      <div class="user-msg" id="up-nick-msg"></div>
+    </div>
+    <div class="user-sec">
+      <div class="user-sec-title">🔑 修改密码</div>
+      <div class="user-field"><input class="user-input" id="up-old" type="password" placeholder="当前密码" autocomplete="off"></div>
+      <div class="user-field"><input class="user-input" id="up-new" type="password" placeholder="新密码（至少 4 位）" autocomplete="off"></div>
+      <button class="user-btn full" onclick="doChangePassword()">修改密码</button>
+      <div class="user-msg" id="up-pass-msg"></div>
+    </div>
+    <div class="user-sec">
+      <div class="user-sec-title">🎖️ 我的称号 <span class="user-msg">点击卡片装备 / 卸下</span></div>
+      <div class="user-title-grid">${cards}</div>
+    </div>`;
+  const ni=document.getElementById('up-nick');if(ni)ni.value=GS.nickname||'';
+}
+async function doChangeNickname(){
+  const ni=document.getElementById('up-nick');
+  const nick=ni?ni.value.trim():'';
+  if(!nick||nick.length>20)return userMsg('up-nick-msg','昵称需 1~20 个字符（可含中文）',true);
+  const user=localStorage.getItem(AUTH_KEY);
+  if(!user)return userMsg('up-nick-msg','请先登录',true);
+  if(ONLINE){
+    const r=await NET.post('/api/profile',{user,nickname:nick});
+    if(!r||!r.ok)return userMsg('up-nick-msg',(r&&r.err)||'修改失败',true);
+    State.set('nickname',r.nickname||nick);
+  }else{
+    for(const u of getUsers()){
+      if(u===user)continue;
+      const g=getStoredGS(u);
+      if(g&&g.nickname===nick)return userMsg('up-nick-msg','该昵称已被本机其他账号使用',true);
+    }
+    State.set('nickname',nick);
+    saveNow();
+  }
+  userMsg('up-nick-msg','✅ 昵称已更新为「'+nick+'」',false);
+  renderTopbar();renderUserPanel();
+}
+async function doChangePassword(){
+  const o=document.getElementById('up-old'),n=document.getElementById('up-new');
+  const old=o?o.value:'',nw=n?n.value:'';
+  if(nw.length<4)return userMsg('up-pass-msg','新密码至少 4 位',true);
+  const user=localStorage.getItem(AUTH_KEY);
+  if(!user)return userMsg('up-pass-msg','请先登录',true);
+  if(ONLINE){
+    const r=await NET.post('/api/passwd',{user,old,new:nw});
+    if(!r||!r.ok)return userMsg('up-pass-msg',(r&&r.err)||'修改失败',true);
+  }else{
+    if(localStorage.getItem(GS_PREFIX+user+'_pwd')!==old)return userMsg('up-pass-msg','当前密码错误',true);
+    localStorage.setItem(GS_PREFIX+user+'_pwd',nw);
+  }
+  if(o)o.value='';if(n)n.value='';
+  userMsg('up-pass-msg','✅ 密码已更新',false);
 }
 
 // ===== 单机存档导入/导出 =====
@@ -798,7 +927,8 @@ function resetGameState(){
     State.set('gameStartTime', Date.now());
     State.set('warehouses', {});
     State.set('reputation', {});
-    State.set('materials', {gear:0,repair_kit:0,fuel_tank:0,engine:0});
+    State.set('materials', {gear:0,repair_kit:0,fuel_tank:0,engine:0,staralloy:0}); // v9.9：星陨合金
+    State.set('mailbox', []); // v9.9：邮箱
     State.set('tasks', {board:[],active:[]});
     State.set('taskBadLog', {abandonAt:[],failAt:[]});
     State.set('traveling', null);
@@ -806,10 +936,13 @@ function resetGameState(){
     State.set('repairDisc', null);
     State.set('intel', {unlocked:{},log:[]});
     State.set('knownEvents', {});
+    State.set('eventSeen', {}); // v9.10.2：事件见闻录重置
     State.set('justArrived', false);
     State.set('tutorial', {step:0});
-    State.set('stats', {bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0});
+    State.set('stats', {bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0,everDebt:0,debtPaid:0}); // v9.10.3：everDebt/debtPaid 供「无债一身轻」
     State.set('achievements', {});
+    State.set('nickname', ''); // v9.10.3：昵称重置
+    State.set('titles', {owned:{},equipped:null}); // v9.10.3：称号栏重置
     State.set('visitedCities', ['greentown']);
     State.remove('__basePrices');
     State.remove('__purchaseLimits');
@@ -820,97 +953,161 @@ function resetGameState(){
   });
 }
 
-// ===== 成就系统（v7.5） =====
-const ACHIEVEMENTS=[
-  {id:'first_step',icon:'🐣',name:'初来乍到',desc:'完成新手引导',reward:{gold:500}},
-  {id:'first_income',icon:'🪙',name:'第一桶金',desc:'累计卖货收入 5000 金币',reward:{gold:500}},
-  {id:'first_task',icon:'📜',name:'牛刀小试',desc:'完成第 1 单任务',reward:{gold:800}},
-  {id:'seller_100',icon:'📦',name:'勤劳商人',desc:'累计卖出 100 件货物',reward:{gold:1000}},
-  {id:'tasks_10',icon:'🚚',name:'跑商达人',desc:'完成 10 单任务',reward:{gold:2000}},
-  {id:'travel_20',icon:'🌪️',name:'风尘仆仆',desc:'累计出发旅行 20 次',reward:{gold:1200}},
-  {id:'dist_200',icon:'🛣️',name:'行万里路',desc:'累计旅行 200 里',reward:{gold:1500}},
-  {id:'all_cities',icon:'🌍',name:'环球旅者',desc:'拜访全部 13 座城市',reward:{gold:3000,mats:{repair_kit:2}}},
-  {id:'cargo_100',icon:'🧺',name:'满载而归',desc:'货舱同时装载 100 件货物',reward:{gold:1500}},
-  {id:'gold_50k',icon:'💰',name:'金币大户',desc:'持有金币达到 50,000',reward:{gold:2000}},
-  {id:'income_100k',icon:'🏦',name:'富甲一方',desc:'累计卖货收入 100,000 金币',reward:{gold:8000}},
-  {id:'gold_1m',icon:'👑',name:'百万富翁',desc:'持有金币达到 1,000,000',reward:{gold:10000}},
-  {id:'wagons_3',icon:'🚛',name:'车队初成',desc:'拥有 3 个车厢位',reward:{gold:2500}},
-  {id:'core_5',icon:'⚙️',name:'机械大师',desc:'载具核心达到 Lv5',reward:{gold:3000,mats:{engine:1}}},
-  {id:'rep_3',icon:'⭐',name:'声望初成',desc:'任一城市声望达到 Lv3',reward:{gold:2000}},
-  {id:'rep_3x3',icon:'🌟',name:'声名远扬',desc:'3 座城市声望达到 Lv3',reward:{gold:5000}}
-];
+// ===== 成就系统（v9.10.3：Ⅰ/Ⅱ/Ⅲ 分级 + 趣味成就） =====
+// v9.11.10：成就配置（名称/描述/目标/奖励）已抽取至 src/data/achievements.js（策划统一修改入口），
+//           新增成就只需在该配置文件追加条目，metric 见文件内清单；此处仅保留判定与解锁逻辑。
+// 分级成就：tiers[n].goal 为第 n 级目标；非分级成就：goal 为单目标。
+// 解锁记录：GS.achievements[id] 存 Ⅰ 级时间戳（旧档兼容），Ⅱ/Ⅲ 级存 id+'#t2'/'#t3'。
 function statAdd(k,n){var s=State.get('stats')||{};s[k]=(s[k]||0)+n;State.set('stats',s);}
-function achieveProgress(a){
-  const p={
-    first_income:GS.stats.income/5000,first_task:GS.stats.tasks/1,seller_100:GS.stats.sold/100,
-    tasks_10:GS.stats.tasks/10,travel_20:GS.stats.travels/20,dist_200:GS.stats.distance/200,
-    all_cities:GS.visitedCities.length/CITIES.length,cargo_100:getUsedCargo()/100,
-    gold_50k:GS.gold/50000,income_100k:GS.stats.income/100000,gold_1m:GS.gold/1000000,
-    wagons_3:(GS.vehicle.wagons||[]).length/3,core_5:(GS.vehicle.core?.lv||0)/5,
-    rep_3:Math.max(...CITIES.map(c=>getRepLevel(c.id)))/3,
-    rep_3x3:CITIES.filter(c=>getRepLevel(c.id)>=3).length/3
-  }[a.id];
-  return p===undefined?null:Math.max(0,Math.min(1,p));
+// v9.10.3：欠债追踪（成就「无债一身轻」）——金币由正转负记 everDebt，由负转正记 debtPaid
+State.subscribe('gold',function(val){
+  if(typeof val!=='number'||!GS.stats)return;
+  const st=GS.stats;
+  if(val<0&&!st.everDebt){st.everDebt=1;State.set('stats',st);}
+  else if(val>=0&&st.everDebt&&!st.debtPaid){st.debtPaid=1;State.set('stats',st);}
+});
+// v9.11.10：进度值按配置的 metric 计算（成就配置见 src/data/achievements.js；新维度在此注册）
+function achieveVal(a){
+  switch(a.metric){
+    case'tutorial':return (!GS.tutorial||GS.tutorial.step>=6)?1:0;
+    case'visitedCount':return GS.visitedCities.length;
+    case'income':return GS.stats.income;
+    case'tasksDone':return GS.stats.tasks;
+    case'goodsSold':return GS.stats.sold;
+    case'travels':return GS.stats.travels;
+    case'distance':return GS.stats.distance;
+    case'gold':return GS.gold;
+    case'maxRepLevel':return Math.max(...CITIES.map(c=>getRepLevel(c.id)));
+    case'coreLevel':return GS.vehicle.core?(GS.vehicle.core.lv||0):0;
+    case'wagonCount':return (GS.vehicle.wagons||[]).length;
+    case'eventSeenCount':return Object.keys(GS.eventSeen||{}).length;
+    case'cargoUsed':return getUsedCargo();
+    case'repLevel3Cities':return CITIES.filter(c=>getRepLevel(c.id)>=3).length;
+    case'debtPaid':return GS.stats.debtPaid||0;
+    case'matKinds':return Object.keys(GS.materials||{}).filter(k=>(GS.materials[k]||0)>0).length;
+  }
+  return 0;
+}
+function achieveGoal(a,n){return a.tiers?a.tiers[(n||1)-1].goal:(a.goal||1);}
+function achieveProgress(a,n){
+  const goal=achieveGoal(a,n||1);
+  if(goal<=0)return 0;
+  return Math.max(0,Math.min(1,achieveVal(a)/goal));
+}
+function achTierCount(a){return a.tiers?a.tiers.length:1;}
+function isAchUnlocked(a,n){
+  n=n||1;
+  const ach=GS.achievements||{};
+  if(n===1)return !!ach[a.id];
+  return !!ach[a.id+'#t'+n];
 }
 function fmtReward(r){
   const parts=[];
   if(r.gold)parts.push('💰'+fmt(r.gold));
   for(const m in (r.mats||{}))parts.push(getMat(m).icon+getMat(m).name+'×'+r.mats[m]);
+  if(r.title&&window.Titles&&Titles.TITLES[r.title])parts.push('🎖️'+Titles.TITLES[r.title].name);
   return parts.join(' ');
 }
-function unlockAchievement(id){
-  var achievements = State.get('achievements') || {};
-  if(achievements[id])return;
-  achievements[id] = Date.now();
-  State.set('achievements', achievements);
+function unlockAchievement(id,n){
+  n=n||1;
+  var achievements=State.get('achievements')||{};
+  if(isAchUnlocked({id:id},n))return;
+  if(n===1)achievements[id]=Date.now();
+  else achievements[id+'#t'+n]=Date.now();
+  State.set('achievements',achievements);
   const a=ACHIEVEMENTS.find(x=>x.id===id);
   if(!a)return;
+  const r=(a.tiers?a.tiers[n-1].reward:a.reward)||{};
   const parts=[];
-  if(a.reward.gold){State.set('gold', GS.gold+a.reward.gold);parts.push('💰'+fmt(a.reward.gold)+'金币');}
-  if(a.reward.mats){
-    var mats = State.get('materials') || {};
-    for(const m in a.reward.mats){mats[m]=(mats[m]||0)+a.reward.mats[m];parts.push(getMat(m).icon+getMat(m).name+'×'+a.reward.mats[m]);}
-    State.set('materials', mats);
+  if(r.gold){State.set('gold',GS.gold+r.gold);parts.push('💰'+fmt(r.gold)+'金币');}
+  if(r.mats){
+    var mats=State.get('materials')||{};
+    for(const m in r.mats){mats[m]=(mats[m]||0)+r.mats[m];parts.push(getMat(m).icon+getMat(m).name+'×'+r.mats[m]);}
+    State.set('materials',mats);
   }
-  EventBus.emit(EventBus.EVENTS.ACHIEVEMENT, {id:id, name:a.name, reward:a.reward});
-  toast(`🏆 成就解锁：${a.name}！${parts.join('、')}`,'ok');
+  if(r.title&&window.Titles)Titles.unlock(r.title); // v9.10.3：成就奖励称号（unlock 自带提示）
+  const tierTag=a.tiers?(' '+(['Ⅰ','Ⅱ','Ⅲ'][n-1]||'')+' 级'):'';
+  EventBus.emit(EventBus.EVENTS.ACHIEVEMENT,{id:id,tier:n,name:a.name,reward:r});
+  toast(`🏆 成就解锁：${a.name}${tierTag}！${parts.join('、')}`,'ok');
 }
 function checkAchievements(){
   State.silent(function(){
-    if(!GS.stats)State.set('stats',{bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0});
+    if(!GS.stats)State.set('stats',{bought:0,sold:0,tasks:0,travels:0,distance:0,visits:1,income:0,upgrades:0,reps:0,everDebt:0,debtPaid:0});
     if(!GS.achievements)State.set('achievements',{});
     if(!GS.visitedCities||!GS.visitedCities.length)State.set('visitedCities',[GS.location]);
+    if(!GS.eventSeen)State.set('eventSeen',{}); // v9.10.2：事件见闻录兜底
+    if(!GS.titles)State.set('titles',{owned:{},equipped:null}); // v9.10.3：称号栏兜底
   });
   for(const a of ACHIEVEMENTS){
-    if(GS.achievements[a.id])continue;
-    let done;
-    if(a.id==='first_step')done=!GS.tutorial||GS.tutorial.step>=6;
-    else done=(achieveProgress(a)??0)>=1;
-    if(done)unlockAchievement(a.id);
+    const n=achTierCount(a);
+    for(let i=1;i<=n;i++){
+      if(isAchUnlocked(a,i))continue;
+      if(achieveProgress(a,i)>=1)unlockAchievement(a.id,i);
+    }
   }
+  // v9.10.3：兼容旧档——已完成新手引导（或已获初来乍到成就）但尚无称号的玩家补发「新手上路」
+  if(window.Titles&&GS.titles&&!GS.titles.owned.novice&&(GS.achievements.first_step||(GS.tutorial&&GS.tutorial.step>=6)))Titles.unlock('novice');
 }
+// ===== 成就面板（v9.11.2 布局规范：固定尺寸 slot + 分级 ◀▶ 切换 + 两行文案） =====
+let achTierSel={}; // 分级成就当前查看等级（内存态；未切换时默认=最低未完成等级）
+function achDefaultTier(a){
+  const n=achTierCount(a);
+  for(let i=1;i<=n;i++){ if(!isAchUnlocked(a,i)) return i; }
+  return n; // 全部完成 → 显示最高级
+}
+function achTierNav(id,dir){
+  const a=ACHIEVEMENTS.find(x=>x.id===id);
+  if(!a||!a.tiers)return;
+  const n=achTierCount(a);
+  let cur=achTierSel[id]||achDefaultTier(a);
+  let next=Math.max(1,Math.min(n,cur+dir));
+  if(next===cur)return;
+  achTierSel[id]=next;
+  const g=document.getElementById('ach-grid');
+  if(g&&achView==='ach')g.innerHTML=achCardsHTML();
+}
+function achCardHTML(a){
+  const n=achTierCount(a),multi=!!a.tiers;
+  const sel=multi?(achTierSel[a.id]||achDefaultTier(a)):1;
+  const t=multi?a.tiers[sel-1]:a;
+  const doneCur=isAchUnlocked(a,sel),doneAll=isAchUnlocked(a,n);
+  const prog=doneCur?1:achieveProgress(a,sel);
+  const roman=['Ⅰ','Ⅱ','Ⅲ'];
+  const goalText=multi?(a.desc+' ≥ '+fmt(t.goal)):a.desc;
+  const titleBadge=t.title?` <span class="ach-goal-title">${Titles.badgeHTML(t.title)}</span>`:'';
+  // v9.11.2：等级是名字的一部分（跟在名字后）；◀ ▶ 置于名称行左右两端
+  const state=doneAll?'🎉':(doneCur?'✅':'');
+  const nameInner=`${a.name}${multi?`<span class="ach-tier-num ${doneCur?'done':''}" title="${doneCur?'当前等级已完成':''}">${roman[sel-1]}</span>`:''}${state?`<span class="ach-state" title="${doneAll?'全部等级已完成':'当前等级已完成'}">${state}</span>`:''}`;
+  const navBtn=(dir,label,dis)=>multi?`<button class="ach-nav-btn" onclick="achTierNav('${a.id}',${dir})" ${dis?'disabled':''} title="${label}">${dir<0?'◀':'▶'}</button>`:'';
+  return `<div class="ach-card ${doneAll?'done':''}"><div class="ach-icon">${a.icon}</div><div class="ach-body">
+    <div class="ach-head">
+      ${navBtn(-1,'上一级',sel<=1)}
+      <span class="ach-name">${nameInner}</span>
+      ${navBtn(1,'下一级',sel>=n)}
+    </div>
+    <div class="ach-goal">${goalText}${titleBadge}</div>
+    <div class="ach-prog"><div class="ach-prog-track"><div class="ach-prog-bar" style="width:${Math.round(prog*100)}%"></div></div><span>${Math.round(prog*100)}%</span></div>
+    <div class="ach-reward">${fmtReward(t.reward)}</div>
+  </div></div>`;
+}
+function achCardsHTML(){return ACHIEVEMENTS.map(achCardHTML).join('');}
 function renderAchievements(){
   checkAchievements();
-  const unlocked=ACHIEVEMENTS.filter(a=>GS.achievements[a.id]).length;
-  let html=`<div class="view-head" style="margin-top:26px"><h2>🏆 成就系统</h2><span class="sub">${unlocked}/${ACHIEVEMENTS.length} 已解锁</span></div>
-  <div class="ach-bar-wrap"><div class="ach-bar" style="width:${Math.round(unlocked/ACHIEVEMENTS.length*100)}%"></div><span>${Math.round(unlocked/ACHIEVEMENTS.length*100)}%</span></div>
-  <div class="ach-grid">`;
+  let units=0,unlocked=0;
   for(const a of ACHIEVEMENTS){
-    const got=!!GS.achievements[a.id];
-    const prog=got?1:(achieveProgress(a)??0);
-    html+=`<div class="ach-card ${got?'done':''}"><div class="ach-icon">${a.icon}</div><div class="ach-body">
-      <div class="ach-name">${a.name}${got?' <span style="color:var(--gold)">✅</span>':''}</div>
-      <div class="ach-desc">${a.desc}</div>
-      <div class="ach-reward">${fmtReward(a.reward)}</div>
-      <div class="ach-prog"><div class="ach-prog-bar" style="width:${Math.round(prog*100)}%"></div><span>${Math.round(prog*100)}%</span></div>
-    </div></div>`;
+    const n=achTierCount(a);units+=n;
+    for(let i=1;i<=n;i++){if(isAchUnlocked(a,i))unlocked++;}
   }
-  html+='</div>';
-  return html;
+  const pct=units?Math.round(unlocked/units*100):0;
+  return `<div class="view-head"><h2>🏆 成就系统</h2><span class="sub">${unlocked}/${units} 项已解锁</span></div>
+  <div class="ach-bar-wrap"><div class="ach-track"><div class="ach-bar" style="width:${pct}%"></div></div><span>${pct}%</span></div>
+  <div class="ach-grid" id="ach-grid">${achCardsHTML()}</div>`;
 }
 // ===== 排行榜（v7.5：在线全服 / 离线本机多账号） =====
 let rankType='gold';
+let achView='ach'; // v9.10.3：成就面板视图 'ach'=成就 / 'events'=事件见闻录
 function setRankType(t){rankType=t;render();}
+function setAchView(v){achView=v;const el=document.getElementById('view-achrank');if(el){el.innerHTML=renderAchRank();loadRankings();}}
 function renderRankings(){
   const types=[['gold','💰 金币'],['distance','🛣️ 里程'],['tasks','📜 任务'],['rep','⭐ 声望']];
   return `<div class="view-head"><h2>📊 排行榜</h2><span class="sub">${ONLINE?'全服实时排名':'本机多账号排名'}</span></div>
@@ -942,8 +1139,36 @@ function loadRankings(){
     draw(rows.slice(0,20));
   }
 }
-// 合并页签：排行榜（上）+ 成就（下）
-function renderAchRank(){return renderRankings()+renderAchievements();}
+// 合并页签：排行榜（上）+ 成就/事件见闻录（下，分段控件切换，v9.10.3）
+function achViewTabs(){
+  return `<div class="seg">${[['ach','🏆 成就'],['events','📖 事件见闻录']].map(t=>`<button class="seg-btn ${t[0]===achView?'active':''}" onclick="setAchView('${t[0]}')">${t[1]}</button>`).join('')}</div>`;
+}
+function renderAchRank(){return renderRankings()+achViewTabs()+(achView==='ach'?renderAchievements():renderEventCatalog());}
+// 事件见闻录（v9.10.2）：成就面板分支——见证过的事件从未知变为解锁显示；未见证隐藏名称/描述（不透剧）
+function renderEventCatalog(){
+  const seen=GS.eventSeen||{};
+  const unlocked=EVENT_TABLE.filter(ev=>seen[ev.id]).length;
+  const pct=Math.round(unlocked/EVENT_TABLE.length*100);
+  let html=`<div class="view-head"><h2>📖 事件见闻录</h2><span class="sub">${unlocked}/${EVENT_TABLE.length} 已见证</span></div>
+  <div class="ach-bar-wrap"><div class="ach-track"><div class="ach-bar" style="width:${pct}%"></div></div><span>${pct}%</span></div>
+  <div class="ach-grid ev-grid">`;
+  for(const ev of EVENT_TABLE){
+    const got=!!seen[ev.id];
+    if(got){
+      html+=`<div class="ach-card done"><div class="ach-icon">${ev.icon}</div><div class="ach-body">
+        <div class="ach-name">${ev.name} <span style="color:var(--gold)">✅</span></div>
+        <div class="ach-desc">${ev.desc}</div>
+      </div></div>`;
+    }else{
+      html+=`<div class="ach-card"><div class="ach-icon">❓</div><div class="ach-body">
+        <div class="ach-name" style="color:var(--text3)">？？？ 未知事件</div>
+        <div class="ach-desc" style="color:var(--text3)">旅行经过或到情报所打听消息，可记录见闻</div>
+      </div></div>`;
+    }
+  }
+  html+='</div>';
+  return html;
+}
 
 // ===== 后台指令系统（v7.4 GM/作弊，在线可用） =====
 // 用法：点击右下角 🛠 打开指令台，或浏览器控制台运行 runCmd("...")
@@ -966,11 +1191,13 @@ const CMD_HELP=[
   '/gm <密码> setday <天数>       设置世界天数（全服生效）',
   '/gm <密码> givegold <玩家> <金额> 给指定玩家发钱（在线存档生效）',
   '/gm <密码> giveitem <玩家> <物品id> <数量> 给指定玩家发物资',
-  '/gm <密码> broadcast <消息>    全服广播（在线玩家 60 秒内收到）'
+  '/gm <密码> broadcast <消息>    全服跑马灯公告（单机免密：/gm broadcast <消息> 本地演示）',
+  '/gm <密码> starfall start|end|next|status|cycle <建设期h> <间隙期h>  星陨城活动：立即开始/结束/进入下一期/查看状态/改周期（单机免密码：/gm starfall start）',
+  '/gm <密码> mail <玩家> <金币> <星陨合金>  给指定玩家发奖励邮件（单机免密：/gm mail <金币> <合金> 投递本地测试邮件）'
 ];
 function cmdOut(msg){const el=document.getElementById('cmd-out');if(el){const d=document.createElement('div');d.textContent=msg;el.appendChild(d);el.scrollTop=el.scrollHeight;}}
 function runCmd(line){
-  if(!line||!line.trim())return;
+  if(!line||!line.trim())return cmdOut('❌ 指令有误：未输入任何指令');
   const p=line.trim().split(/\s+/);
   const c=(p[0]||'').toLowerCase();
   const arg=(i,d)=>{const v=parseFloat(p[i]);return isNaN(v)?d:v};
@@ -979,7 +1206,7 @@ function runCmd(line){
   if(c==='/time'){const off=GS.__clockOffset||0;cmdOut(`🕐 nowMs=${nowMs()} · clockOffset=${off>0?'+':''}${off}ms · 本地=${Date.now()}`);return;}
   if(c==='/addgold'){const n=Math.floor(arg(1,0));GS.gold+=n;cmdOut('💰 +'+n+' 金币 → '+GS.gold);render();return;}
   if(c==='/addcargo'){const it=(p[1]||''),n=Math.floor(arg(2,0));if(!it)return cmdOut('用法：/addcargo <物品id> <数量>');GS.cargo[it]=(GS.cargo[it]||0)+n;cmdOut('📦 +'+n+' '+it+'（现有 '+GS.cargo[it]+'）');render();return;}
-  if(c==='/addmat'){const t=(p[1]||''),n=Math.floor(arg(2,0));if(!['gear','repair_kit','fuel_tank','engine'].includes(t))return cmdOut('材料类型：gear/repair_kit/fuel_tank/engine');GS.materials[t]=(GS.materials[t]||0)+n;cmdOut('🧰 +'+n+' '+t);render();return;}
+  if(c==='/addmat'){const t=(p[1]||''),n=Math.floor(arg(2,0));if(!['gear','repair_kit','fuel_tank','engine','staralloy'].includes(t))return cmdOut('材料类型：gear/repair_kit/fuel_tank/engine/staralloy');GS.materials[t]=(GS.materials[t]||0)+n;cmdOut('🧰 +'+n+' '+t);render();return;}
   if(c==='/repair'){GS.vehicle.durability=getDurabilityMax();cmdOut('🔧 耐久已修满');render();return;}
   if(c==='/core'){const n=Math.floor(arg(1,0));GS.vehicle.core=GS.vehicle.core||{lv:0,speed:0,dura:0};GS.vehicle.core.lv=n;GS.vehicle.core.speed=n;GS.vehicle.core.dura=n;cmdOut('⚙️ 载具核心 → Lv'+n+'（疾驰+'+n+' 速 / 强化+'+n*50+' 耐久）');render();return;}
   if(c==='/wagon'){const t=(p[1]||''),lv=Math.floor(arg(2,1));if(!WAGON_TYPES[t])return cmdOut('车厢类型：cargo/pass/balanced/engine');const slots=GS.vehicle.wagons||[];if(!slots.length)return cmdOut('无车厢位');const s=slots[0];const fit=fitAfterSlot(0,t,lv);if(getUsedCargo()+getTaskCargoUsed()>fit.cap||getPassUsed()+getTaskPassUsed()>fit.pass)return cmdOut('⚠ 现有货物/旅客超出该车厢容量，未装配');s.cur={id:'w'+t+'_'+lv,type:t,lv:lv};s.owned=s.owned||{};s.owned[t+'_'+lv]=true;cmdOut('🚛 第1车厢位已装 '+WAGON_TYPES[t].name+' Lv'+lv);render();return;}
@@ -987,16 +1214,44 @@ function runCmd(line){
   if(c==='/stock'){const city=(p[1]||''),it=(p[2]||''),n=Math.floor(arg(3,0));if(!city||!it)return cmdOut('用法：/stock <城市id> <物品id> <数量>');GS.cityStocks=GS.cityStocks||{};GS.cityStocks[city]=GS.cityStocks[city]||{};GS.cityStocks[city][it]=n;cmdOut('📦 '+city+' '+it+' 库存 → '+n);render();return;}
   if(c==='/day'){if(ONLINE)return cmdOut('📅 在线模式天数由世界锚点统一驱动，/day 仅离线可用');const n=Math.floor(arg(1,1));GS.day=Math.max(1,n);cmdOut('📅 本地天数 → '+n);render();return;}
   if(c==='/gm'||c==='/admin'){
-    const key=(p[1]||''),sub=(p[2]||'').toLowerCase();
-    if(!key)return cmdOut('用法：/gm <密码> <指令> …（密码见服务器控制台或 world.json）');
+    const GM_SUB=['timescale','setday','givegold','giveitem','broadcast','starfall','mail'];
+    let key=(p[1]||''),sub=(p[2]||'').toLowerCase();
+    // v9.9.1：单机模式 starfall 免密码——输入 "/gm starfall start" 时 key 位被误判为子指令名，做一次前移纠偏
+    if(!ONLINE&&!GM_SUB.includes(sub)&&GM_SUB.includes(key.toLowerCase())){
+      sub=key.toLowerCase();key='';
+    }
+    const LOCAL_GM=['starfall','mail','broadcast']; // v9.9.1：单机模式免密可用的 GM 子指令
+    if(!key&&!LOCAL_GM.includes(sub))return cmdOut('❌ 指令有误：用法：/gm <密码> <指令> …（单机 starfall/mail/broadcast 指令可省略密码）');
     const payload={key:key,cmd:sub};
     if(sub==='timescale'){payload.x=arg(3,1);}
     else if(sub==='setday'){payload.n=Math.floor(arg(3,1));}
     else if(sub==='givegold'){payload.user=(p[3]||'');payload.amt=Math.floor(arg(4,0));}
     else if(sub==='giveitem'){payload.user=(p[3]||'');payload.item=(p[4]||'');payload.qty=Math.floor(arg(5,0));}
     else if(sub==='broadcast'){payload.msg=p.slice(3).join(' ');}
-    else return cmdOut('GM 指令：timescale / setday / givegold / giveitem / broadcast');
-    if(!ONLINE)return cmdOut('❌ 当前为离线模式，GM 指令仅在线可用');
+    else if(sub==='starfall'){ // v9.9：星陨城活动 start/end/next；v9.9.1：免密格式下 action 前移到 p[2]；v9.10.2：cycle <建设期h> <间隙期h>
+      payload.action=((key?p[3]:p[2])||'').toLowerCase();
+      if(payload.action==='cycle'){payload.runH=key?p[4]:p[3];payload.interH=key?p[5]:p[4];}
+    }
+    else if(sub==='mail'){payload.user=(p[3]||'');payload.gold=Math.floor(arg(4,0));payload.alloy=Math.floor(arg(5,0));} // v9.9：GM 邮件发放
+    else return cmdOut('❌ 指令有误：未知 GM 指令 "'+(sub||'<空>')+'"（可用：timescale / setday / givegold / giveitem / broadcast / starfall / mail）');
+    if(!ONLINE){
+      // v9.9.1：单机模式 starfall/mail/broadcast 免密本地可用（内测）；其余 GM 指令仅在线
+      if(sub==='starfall'&&window.Starfall){Starfall.adminCmd(payload.action,cmdOut,payload);return;}
+      if(sub==='mail'&&window.Mailbox){
+        const g=Math.floor(arg(key?3:2,0)),a=Math.floor(arg(key?4:3,0));
+        Mailbox.localDeliver({title:'本地测试邮件',from:'GM',body:'本地投递的测试邮件，可测试已读/领取/删除/满仓清理。',attachments:{gold:g,mats:a>0?{staralloy:a}:{}}});
+        cmdOut('📮 已投递本地测试邮件（金币 '+g+'，星陨合金 '+a+'）');
+        return;
+      }
+      if(sub==='broadcast'){
+        const msg=(key?p.slice(3):p.slice(2)).join(' ').trim();
+        if(!msg)return cmdOut('❌ 指令有误：/gm broadcast <消息>');
+        if(window.showBroadcast)showBroadcast(msg);
+        cmdOut('📢 已发布公告：'+msg);
+        return;
+      }
+      return cmdOut('❌ 当前为离线模式，GM 指令仅在线可用（starfall/mail/broadcast 子指令单机可用）');
+    }
     cmdOut('⏳ 正在执行 GM 指令…');
     NET.post('/api/admin',payload).then(r=>{
       if(r&&r.ok)cmdOut('✅ '+r.msg);
@@ -1004,7 +1259,7 @@ function runCmd(line){
     });
     return;
   }
-  cmdOut('❓ 未知指令：'+c+'（输入 /help 查看帮助）');
+  cmdOut('❌ 指令有误：未知指令 "'+c+'"（输入 /help 查看可用指令）');
 }
 function toggleCmdPanel(){
   const el=document.getElementById('cmd-panel');
@@ -1017,7 +1272,33 @@ const CHAT={msgs:[],since:0,firstPull:true,histOpen:false,panelOpen:false};
 const CHAT_KEY='_chat_history';
 function chatStamp(ts){const d=ts?new Date(ts):new Date();const p=n=>(n<10?'0':'')+n;return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}
 function chatEsc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-function chatText(m){return `【${m.user}】〈${m.loc}〉：${m.msg}`;}
+// v9.10.3：聊天/弹幕统一渲染——显示昵称（回退用户名），昵称上方显示称号徽章（若有）
+function chatTitleHTML(m){return (m&&m.title&&window.Titles)?Titles.badgeHTML(m.title):'';}
+// v9.11.4：聊天历史单条消息三行结构——第一行时间戳，第二行称号（独立），第三行昵称〈地点〉：内容
+function chatMsgHTML(m){
+  const nick=(m&&m.nickname)||(m&&m.user)||'未知';
+  const loc=m&&m.loc?chatEsc(m.loc):'';
+  const t=chatTitleHTML(m);
+  return `<div class="ch-msg">
+    <div class="ch-time">[${chatStamp(m&&m.ts)}]</div>
+    ${t?`<div class="ch-top">${t}</div>`:''}
+    <div class="ch-main"><span class="ch-nick">${chatEsc(nick)}${loc?`<span class="ch-loc">〈${loc}〉</span>`:''}：</span><span class="ch-text">${chatEsc((m&&m.msg)||'')}</span></div>
+  </div>`;
+}
+function danmakuHTML(m){
+  const nick=(m&&m.nickname)||(m&&m.user)||'未知';
+  const loc=m&&m.loc?chatEsc(m.loc):'';
+  const t=chatTitleHTML(m);
+  // v9.11.4：弹幕中称号与消息同一行，出现在昵称前面
+  return `<div class="dk-text">${t?`<span class="dk-title">${t}</span>`:''}${chatEsc(nick)}${loc?`〈${loc}〉`:''}：${chatEsc((m&&m.msg)||'')}</div>`;
+}
+// 本地/旧消息补齐昵称与称号（服务端新消息自带 nickname/title 字段）
+function chatNorm(m){
+  if(!m)return m;
+  if(!m.nickname)m.nickname=(GS&&GS.nickname)||m.user||'';
+  if(!m.title&&window.Titles)m.title=Titles.equippedId();
+  return m;
+}
 function chatSave(){
   const u=localStorage.getItem(AUTH_KEY);if(!u)return;
   localStorage.setItem(CHAT_KEY+'_'+u,JSON.stringify(CHAT.msgs.slice(-200)));
@@ -1029,6 +1310,7 @@ function chatLoad(){
 }
 function chatAdd(m,danmaku){
   if(!m)return;
+  m=chatNorm(m);
   CHAT.msgs.push(m);if(CHAT.msgs.length>300)CHAT.msgs=CHAT.msgs.slice(-300);
   if(m.id>CHAT.since)CHAT.since=m.id;
   if(danmaku)spawnDanmaku(m);
@@ -1039,7 +1321,7 @@ function spawnDanmaku(m){
   const layer=document.getElementById('danmaku-layer');if(!layer)return;
   const el=document.createElement('div');
   el.className='danmaku';
-  el.textContent=chatText(m);
+  el.innerHTML=danmakuHTML(m);
   el.style.top=(Math.random()*80)+'%'; // 顶部 25% 弹幕区内的随机高度
   const dur=8+Math.random()*6;
   el.style.animationDuration=dur+'s';
@@ -1060,7 +1342,7 @@ async function chatSend(){
       if(r0&&r0.ok&&r0.msgs){CHAT.firstPull=false;for(const m of r0.msgs)chatAdd(m,false);}
     }
     const r=await NET.post('/api/chat',{user,loc,msg});
-    if(r&&r.ok)chatAdd({id:r.id,user,loc,msg,ts:Date.now()},true);
+    if(r&&r.ok)chatAdd({id:r.id,user,nickname:r.nickname,title:r.title,loc,msg,ts:Date.now()},true);
     else toast('消息发送失败（服务器不可用？）','err');
   }else{
     const lastId=CHAT.msgs.length?CHAT.msgs[CHAT.msgs.length-1].id||0:0;
@@ -1071,20 +1353,22 @@ async function chatSend(){
 function renderChatHist(){
   const el=document.getElementById('chat-hist');if(!el)return;
   if(!CHAT.msgs.length){el.innerHTML='<div class="ch-empty">暂无消息，来发第一条弹幕吧～</div>';return;}
-  el.innerHTML=CHAT.msgs.map(m=>`<div class="ch-msg"><span class="ch-time">[${chatStamp(m.ts)}]</span>${chatEsc(chatText(m))}</div>`).join('');
+  el.innerHTML=CHAT.msgs.map(chatMsgHTML).join('');
   el.scrollTop=el.scrollHeight;
 }
-// 面板从气泡位置展开；可拖动；关闭后变回气泡（回到面板位置）
+// v9.11.5：面板从气泡位置向上展开（bottom 锚定，历史展开时顶部向上生长）；可拖动；关闭后变回气泡（回到面板位置）
 function showChatPanel(){
   const fab=document.getElementById('chat-fab'),p=document.getElementById('chat-panel');
   if(!fab||!p)return;
   CHAT.panelOpen=true;
   const r=fab.getBoundingClientRect();
   fab.style.display='none';
-  p.style.left=r.left+'px';p.style.top=r.top+'px';
-  p.style.right='auto';p.style.bottom='auto';
+  p.style.left=r.left+'px';
+  p.style.top='auto';p.style.right='auto';
+  p.style.bottom=Math.max(0,window.innerHeight-r.bottom)+'px';
   p.style.display='flex';
   renderChatHist();
+  clampChatPanel();
 }
 function hideChatPanel(){
   const fab=document.getElementById('chat-fab'),p=document.getElementById('chat-panel');
@@ -1092,8 +1376,9 @@ function hideChatPanel(){
   CHAT.panelOpen=false;
   const r=p.getBoundingClientRect();
   p.style.display='none';
-  fab.style.left=r.left+'px';fab.style.top=r.top+'px';
-  fab.style.right='auto';fab.style.bottom='auto';
+  fab.style.left=r.left+'px';
+  fab.style.top='auto';fab.style.right='auto';
+  fab.style.bottom=Math.max(0,window.innerHeight-r.bottom)+'px';
   fab.style.display='flex';
 }
 function toggleChatHist(){
@@ -1102,7 +1387,16 @@ function toggleChatHist(){
   const b=document.getElementById('chat-hist-btn');
   if(h)h.style.display=CHAT.histOpen?'block':'none';
   if(b)b.textContent=CHAT.histOpen?'收起来':'查看历史';
-  if(CHAT.histOpen)renderChatHist();
+  if(CHAT.histOpen){renderChatHist();clampChatPanel();} // v9.11.5：历史向上展开后，保证面板顶部不越出视口
+}
+// v9.11.5：面板 bottom 锚定（历史向上展开）。面板增高后若顶部越出视口，整体下移
+function clampChatPanel(){
+  const p=document.getElementById('chat-panel');if(!p||p.style.display==='none')return;
+  const h=p.offsetHeight;
+  if(h>=window.innerHeight-8)return; // 面板比视口还高，放弃（极端情况）
+  let b=parseInt(p.style.bottom||'0',10);if(!isFinite(b))b=0;
+  const maxB=Math.max(0,window.innerHeight-8-h); // 面板顶部至少距视口顶 8px
+  if(b>maxB)p.style.bottom=maxB+'px';
 }
 function chatKey(e){if(e.key==='Enter')chatSend();}
 // 在线聊天轮询（3 秒）：首拉只入历史不弹幕，之后增量弹幕
@@ -1119,7 +1413,7 @@ function startChatPolling(){
   poll(); // 登录后首个成功轮询即拉历史
   window.__chatPoll=setInterval(poll,3000);
 }
-// 通用可拖动（el=目标元素，handle=拖动手柄；onClick 在无位移的点击时触发）
+// 通用可拖动（el=目标元素，handle=拖动手柄；onClick 在无位移的点击时触发；opts.bottomAnchored=保持底部锚定拖动）
 function makeDraggable(el,handle,opts){
   let sx=0,sy=0,ox=0,oy=0,drag=false,moved=false;
   handle.addEventListener('mousedown',e=>{
@@ -1131,9 +1425,17 @@ function makeDraggable(el,handle,opts){
     if(!drag)return;
     const dx=e.clientX-sx,dy=e.clientY-sy;
     if(!moved&&Math.abs(dx)+Math.abs(dy)>6)moved=true;
-    el.style.left=Math.min(Math.max(0,ox+dx),window.innerWidth-el.offsetWidth)+'px';
-    el.style.top=Math.min(Math.max(0,oy+dy),window.innerHeight-el.offsetHeight)+'px';
-    el.style.right='auto';el.style.bottom='auto';
+    if(opts&&opts.bottomAnchored){
+      // v9.11.5：底部锚定元素——保持 bottom 定位，顶部/底部均不越出视口
+      const h=el.offsetHeight;
+      el.style.left=Math.min(Math.max(0,ox+dx),window.innerWidth-el.offsetWidth)+'px';
+      el.style.bottom=Math.min(Math.max(0,window.innerHeight-(oy+dy+h)),Math.max(0,window.innerHeight-h))+'px';
+      el.style.top='auto';el.style.right='auto';
+    }else{
+      el.style.left=Math.min(Math.max(0,ox+dx),window.innerWidth-el.offsetWidth)+'px';
+      el.style.top=Math.min(Math.max(0,oy+dy),window.innerHeight-el.offsetHeight)+'px';
+      el.style.right='auto';el.style.bottom='auto';
+    }
   });
   window.addEventListener('mouseup',()=>{
     if(drag&&!moved&&opts&&opts.onClick)opts.onClick();
@@ -1144,7 +1446,7 @@ function initChatFab(){
   const fab=document.getElementById('chat-fab');if(!fab)return;
   makeDraggable(fab,fab,{onClick:showChatPanel}); // 气泡：可拖动，点击=展开面板
   const p=document.getElementById('chat-panel'),head=document.getElementById('chat-head');
-  if(p&&head)makeDraggable(p,head,{}); // 面板：拖动标题栏移动
+  if(p&&head)makeDraggable(p,head,{bottomAnchored:true}); // v9.11.5：面板：拖动标题栏移动（保持底部锚定）
 }
 
 // ===== 游戏状态（v9.0：由 state.js 的 State.init() 统一管理） =====
@@ -1478,7 +1780,7 @@ function sellItem(itemId,qty,opts){
 function startTravel(destId){
   advanceDay();if(GS.traveling)return{ok:false,msg:'已在旅行中'};
   if(destId===GS.location)return{ok:false,msg:'已在目标城市'};
-  if(destId==='starfall')return{ok:false,msg:'星陨城暂未开放，无法前往'};
+  // v9.9：星陨城开放通行（活动面板由 Starfall 模块接管城市界面）
   const sp=shortestPath(GS.location,destId);if(!sp)return{ok:false,msg:'无可用路径'};
   if(getDurability()<=0)return{ok:false,msg:'车辆耐久不足，请先维修'};
   const realSec=Math.round(sp.distance/getVehicleSpeed()*60);
@@ -1560,7 +1862,7 @@ function doWhIn(itemId,qty){if(GS.traveling)return toast('旅行中不可操作'
 function doWhOut(itemId,qty){if(GS.traveling)return toast('旅行中不可操作','info');const wh=GS.warehouses[GS.location];if(!wh||!(wh.items[itemId])||wh.items[itemId]<qty)return toast('库存不足','err');if(getCargoFree()<qty)return toast('载具满','err');State.batch(function(){var cargo=State.get('cargo')||{};var warehouses=State.get('warehouses')||{};var w=warehouses[GS.location];w.items[itemId]-=qty;if(w.items[itemId]<=0)delete w.items[itemId];cargo[itemId]=(cargo[itemId]||0)+qty;State.set('cargo',cargo);State.set('warehouses',warehouses);});toast('已装入载具','ok');render()}
 
 // ===== 升级素材道具（任务系统产出，用于载具升级） =====
-const MATERIALS={gear:{name:'精密齿轮',icon:'⚙️'},repair_kit:{name:'维修套件',icon:'🧰'},fuel_tank:{name:'燃油舱',icon:'🛢️'},engine:{name:'引擎核心',icon:'🔩'}};
+const MATERIALS={gear:{name:'精密齿轮',icon:'⚙️'},repair_kit:{name:'维修套件',icon:'🧰'},fuel_tank:{name:'燃油舱',icon:'🛢️'},engine:{name:'引擎核心',icon:'🔩'},staralloy:{name:'星陨合金',icon:'💫'}};
 function getMat(id){return MATERIALS[id]||{name:id,icon:'📦'}}
 
 // ===== 城市声望系统（每城独立，长期养成） =====
@@ -2040,7 +2342,7 @@ function taskCardHtml(t,mode,slotId){
     <div class="task-top"><span class="task-rarity" style="color:${R.color}">${R.name} · 品质${Q}</span>${urgencyTag}${topBtn}</div>
     <div class="task-desc">${t.desc}</div>
     ${timeLine}
-    <div class="task-meta">📍${getCityName(t.from)} → 🏁${getCityName(t.to)} · ${capTxt}${mode==='active'&&t.delivered?' · 已抵达':''}${t.to==='starfall'?' · <span style="color:var(--red)">目的地暂未开放</span>':''}</div>
+    <div class="task-meta">📍${getCityName(t.from)} → 🏁${getCityName(t.to)} · ${capTxt}${mode==='active'&&t.delivered?' · 已抵达':''}</div>
     <div class="task-reward">💰${fmt(t.rewardGold)} · ⭐${t.rewardRep}声望${matTxt?' · '+matTxt:''}</div>
     ${cd}
     ${mainBtn}
@@ -2138,13 +2440,13 @@ function advanceTutorial(n){
   if(!GS.tutorial||GS.tutorial.step!==n)return;
   var tut = State.get('tutorial') || {};
   tut.step = n+1;
-  if(tut.step>=6){tut.step=6;toast('🎓 新手教程完成！愿商路顺遂','ok');}
+  if(tut.step>=6){tut.step=6;toast('🎓 新手教程完成！愿商路顺遂','ok');if(window.Titles)Titles.unlock('novice');} // v9.10.3：完成教程送称号「新手上路」
   else toast(`✅ 完成「${TUTORIAL_STEPS[n].title}」，下一步：${TUTORIAL_STEPS[tut.step].title}`,'ok');
   State.set('tutorial', tut);
   saveNow();
 }
 function startTutorial(){var tut=State.get('tutorial')||{step:0};tut.step=1;State.set('tutorial',tut);render();toast('🎓 新手引导开始：购买基础物资','ok');}
-function skipTutorial(){var tut=State.get('tutorial')||{step:0};tut.step=6;State.set('tutorial',tut);render();toast('已跳过新手引导，可在任意城市自由探索','info');}
+function skipTutorial(){var tut=State.get('tutorial')||{step:0};tut.step=6;State.set('tutorial',tut);render();if(window.Titles)Titles.unlock('novice');toast('已跳过新手引导，可在任意城市自由探索','info');}
 function goTutorial(){
   const s=TUTORIAL_STEPS[GS.tutorial.step];
   if(s&&s.tab){const b=document.querySelector('nav button[data-tab="'+s.tab+'"]');if(b)b.click();}
@@ -2165,8 +2467,8 @@ function renderTutorial(){
 }
 
 // ===== UI 渲染 =====
-let currentTab='map',marketTab='buy',_chartDays=60,_chartItem=null,expandedCard=null,sliderVals={};
-function render(){advanceDay();ensureTaskBoard(GS.location);checkAchievements();renderTopbar();renderContent();autoSave()}
+let currentTab='map'; // v9.10.2：marketTab/_chartDays/_chartItem/expandedCard/sliderVals 已随市场 UI 拆至 src/economy/market-ui.js
+function render(){advanceDay();if(GS.location!=='starfall')ensureTaskBoard(GS.location);checkAchievements();renderTopbar();renderContent();autoSave()}
 const THEME_KEY='ui-theme';
 function getTheme(){try{return localStorage.getItem(THEME_KEY)||document.documentElement.getAttribute('data-theme')||'light'}catch(e){return document.documentElement.getAttribute('data-theme')||'light'}}
 function setTheme(theme){
@@ -2178,6 +2480,8 @@ function toggleTheme(){setTheme(getTheme()==='dark'?'light':'dark');renderTopbar
 function renderTopbar(){
   const loc=getCityName(GS.location),used=getUsedCargo(),cap=getVehicleCapacity();
   const theme=getTheme(),themeBtn=theme==='dark'?'☀ 浅色':'🌙 深色',themeTitle=theme==='dark'?'切换到浅色':'切换到深色';
+  const user=localStorage.getItem(AUTH_KEY)||'';
+  const nick=(GS.nickname||user||'未登录');
   let trav='';if(GS.traveling)trav=`<span class="tb-user-chip tb-travel-chip">⏳ ${getCityName(GS.traveling.to)} ${Math.max(0,Math.ceil((GS.traveling.arrivalTime-Date.now())/1000))}s</span>`;
   document.getElementById('topbar').innerHTML=`
     <div class="tb-row">
@@ -2194,16 +2498,18 @@ function renderTopbar(){
     <div class="tb-row tb-row-user">
       <div class="tb-user-meta">
         <span class="tb-user-chip" title="当前运行模式">${Runtime.isStandalone?'💾 单机':'🌐 在线'}</span>
-        <span class="tb-user-chip" title="当前账号">👤 <b>${localStorage.getItem(AUTH_KEY)||''}</b></span>
+        <span class="tb-user-chip clickable" title="点击打开用户中心（改昵称/改密码/称号）" onclick="openUserPanel()">👤 <b>${chatEsc(nick)}</b>${window.Titles&&Titles.equippedId()?Titles.badgeHTML(Titles.equippedId()):''}<span class="tb-chip-caret">▾</span></span>
         ${trav}
       </div>
       <div class="tb-user-actions">
         ${Runtime.isStandalone?'<button class="t-logout" onclick="exportLocalSave()" title="导出当前单机存档">导出</button><button class="t-logout" onclick="importLocalSave()" title="导入并覆盖当前单机存档">导入</button>':''}
+        <button class="t-mail" id="tb-mail-btn" onclick="Mailbox.open()" title="邮箱">📮 邮箱<span class="tb-mail-count" id="tb-mail-count"></span><span class="tb-mail-dot" id="tb-mail-dot" style="display:none"></span></button>
         <button class="tb-theme" onclick="toggleTheme()" title="${themeTitle}">${themeBtn}</button>
         <button class="t-logout" onclick="doLogout()" title="退出当前账号">登出</button>
       </div>
     </div>
   `;
+  if(window.Mailbox)Mailbox.refreshDot(); // v9.9：顶栏重绘后刷新邮箱红点/计数
 }
 function renderContent(){
   const c=document.getElementById('content');
@@ -2230,6 +2536,7 @@ function renderContent(){
       if(!visited.includes(GS.location)){visited.push(GS.location);State.set('visitedCities', visited);statAdd('visits',1);}
       var intel = State.get('intel') || {};
       intel.log = [{cls:'sys',text:`已抵达${getCityName(GS.location)}。本城酒馆的消息自成一路，离开这座城市后打听记录即会清空。`}];
+      intel.drawn = {}; // v9.11.9：离开城市后，本城已抽事件去重集合清空（回城后可重新抽到）
       State.set('intel', intel);
       var tasks = State.get('tasks') || {};
       tasks.active = tasks.active || [];
@@ -2250,500 +2557,15 @@ function showArrivalOverlay(){
 }
 
 // ===== 地图视图 =====
-// ===== 交互式地图（v7.9：缩放/平移/当前城居中/等高线/曲线路网/云雾） =====
-// 视口状态：g 元素 transform="translate(px,py) scale(s)"，世界坐标直接使用城市 x/y
-let MAP={s:0.8,px:0,py:0,init:false,drag:null};
-const MAP_VW=850,MAP_VH=520; // 视口像素（viewBox 尺寸）
-function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
-function mapSeed(key){let h=0;for(let i=0;i<key.length;i++){h=(h*31+key.charCodeAt(i))>>>0}return mulberry32(h+7)}
-function mapWorldRange(){
-  const xs=CITIES.map(c=>c.x),ys=CITIES.map(c=>c.y);
-  return{x1:Math.min(...xs)-70,y1:Math.min(...ys)-70,x2:Math.max(...xs)+70,y2:Math.max(...ys)+70};
-}
-function mapWrapSize(){const w=document.getElementById('map-wrap');return w?[w.clientWidth,w.clientHeight]:[MAP_VW,MAP_VH]}
-// v8.13：地图坐标统一为 SVG viewBox 单位（850×520）。
-// svg 为 width:100%/height:auto，容器宽高比恒为 850:520，像素→单位系数 k=容器宽/850。
-function mapUnitK(){const rw=mapWrapSize()[0];return rw/MAP_VW||1}
-function clampMap(){
-  const R=mapWorldRange();
-  // 以 SVG viewBox（850×520）为边界限制平移区间，保证地图完整可见；
-  // 修复此前混用容器像素导致地图边缘被裁且拖不回来的问题。
-  const minPx=Math.min(MAP_VW-R.x2*MAP.s,-R.x1*MAP.s),maxPx=Math.max(MAP_VW-R.x2*MAP.s,-R.x1*MAP.s);
-  const minPy=Math.min(MAP_VH-R.y2*MAP.s,-R.y1*MAP.s),maxPy=Math.max(MAP_VH-R.y2*MAP.s,-R.y1*MAP.s);
-  MAP.px=Math.max(minPx,Math.min(maxPx,MAP.px));
-  MAP.py=Math.max(minPy,Math.min(maxPy,MAP.py));
-}
-function centerOn(cid){
-  const c=getCity(cid);if(!c)return;
-  MAP.px=MAP_VW/2-c.x*MAP.s;MAP.py=MAP_VH/2-c.y*MAP.s;clampMap();
-}
-function applyMapView(){
-  const g=document.querySelector('.map-scene');
-  if(g)g.setAttribute('transform',`translate(${MAP.px.toFixed(1)},${MAP.py.toFixed(1)}) scale(${MAP.s})`);
-}
-function initMapView(){
-  const R=mapWorldRange();
-  MAP.sMin=Math.min(MAP_VW/(R.x2-R.x1),MAP_VH/(R.y2-R.y1))*0.9; // 留 10% 观察边距，边缘城市也能在最小缩放下看全地图
-  MAP.sMax=Math.min(4,MAP.sMin*4);
-  MAP.s=Math.max(MAP.sMin,MAP.sMin*1.9);
-  MAP.needCenter=true; // 挂载后按真实容器尺寸居中
-}
-function mapZoomAt(cx,cy,k){
-  const wrap=document.getElementById('map-wrap');if(!wrap)return;
-  const rect=wrap.getBoundingClientRect();
-  const kk=mapUnitK(); // 像素 → SVG 单位（缩放锚点跟随鼠标）
-  const ux=(cx-rect.left)/kk,uy=(cy-rect.top)/kk;
-  const wx=(ux-MAP.px)/MAP.s,wy=(uy-MAP.py)/MAP.s;
-  const ns=Math.max(MAP.sMin,Math.min(MAP.sMax,MAP.s*k));
-  if(ns===MAP.s)return;
-  MAP.px=ux-wx*ns;MAP.py=uy-wy*ns;MAP.s=ns;clampMap();applyMapView();
-}
-function mapZoom(k){ // 按钮：以地图中心缩放
-  const wrap=document.getElementById('map-wrap');
-  if(wrap){const r=wrap.getBoundingClientRect();mapZoomAt(r.left+r.width/2,r.top+r.height/2,k);}
-}
-function mapCenter(){ // 回到当前位置：重置为默认缩放并居中，避免缩得太小时无法居中
-  if(!MAP.sMin)initMapView();
-  MAP.s=Math.max(MAP.sMin,MAP.sMin*1.9);
-  centerOn(GS.location);
-  applyMapView();
-}
-// 等高线地形（确定性生成一次：基于全局高度场的统一等值线，适配城市分布，避免局部圆环互相覆盖）
-let MAP_DECO=null;
-function mapPolyArea(pts){
-  let a=0;
-  for(let i=0;i<pts.length;i++){
-    const p=pts[i],q=pts[(i+1)%pts.length];
-    a+=p.x*q.y-q.x*p.y;
-  }
-  return Math.abs(a/2);
-}
-function mapNearestCityDist(x,y){
-  let d1=1e9,d2=1e9;
-  for(const c of CITIES){
-    const d=Math.hypot(x-c.x,y-c.y);
-    if(d<d1){d2=d1;d1=d;}
-    else if(d<d2)d2=d;
-  }
-  return[d1,d2];
-}
-function pointSegDist(px,py,x1,y1,x2,y2){
-  const dx=x2-x1,dy=y2-y1;
-  const len2=dx*dx+dy*dy||1;
-  let t=((px-x1)*dx+(py-y1)*dy)/len2;
-  t=Math.max(0,Math.min(1,t));
-  const qx=x1+dx*t,qy=y1+dy*t;
-  return Math.hypot(px-qx,py-qy);
-}
-function pickTerrainPeaks(R){
-  const pts=[],stepX=88,stepY=72,edge=60;
-  for(let y=R.y1+edge;y<=R.y2-edge;y+=stepY){
-    for(let x=R.x1+edge;x<=R.x2-edge;x+=stepX){
-      const[d1,d2]=mapNearestCityDist(x,y);
-      if(d1<72)continue; // 避开城市本体，给聚落留平缓地
-      const centerBias=1-Math.abs((x-(R.x1+R.x2)/2)/((R.x2-R.x1)/2))*0.35;
-      const score=d1*1.15+d2*0.35+centerBias*18;
-      pts.push({x,y,score});
-    }
-  }
-  pts.sort((a,b)=>b.score-a.score);
-  const peaks=[];
-  for(const p of pts){
-    if(peaks.every(q=>Math.hypot(q.x-p.x,q.y-p.y)>150)){
-      peaks.push({
-        x:p.x,y:p.y,
-        amp:0.34-Math.min(peaks.length,4)*0.04,
-        sx:90+peaks.length*10,
-        sy:64+peaks.length*8
-      });
-    }
-    if(peaks.length>=5)break;
-  }
-  if(!peaks.length){
-    peaks.push({x:(R.x1+R.x2)/2,y:(R.y1+R.y2)/2,amp:0.28,sx:110,sy:80});
-  }
-  return peaks;
-}
-function terrainHeightAt(x,y,R,peaks){
-  const nx=(x-R.x1)/(R.x2-R.x1),ny=(y-R.y1)/(R.y2-R.y1);
-  let h=0.07
-    +0.028*Math.sin(nx*Math.PI*1.45)
-    +0.022*Math.cos((ny*1.25+nx*0.42)*Math.PI*2)
-    +0.018*Math.sin((nx+ny)*Math.PI*2.2);
-  for(const p of peaks){
-    const dx=(x-p.x)/p.sx,dy=(y-p.y)/p.sy;
-    h+=p.amp*Math.exp(-(dx*dx+dy*dy))*0.82;
-  }
-  // 王都周边：低丘陵，范围广、起伏缓
-  const dc=getCity('dawncapital');
-  const dh=Math.hypot((x-dc.x)/220,(y-dc.y)/155);
-  h+=0.105*Math.exp(-(dh*dh))*(0.7+0.3*Math.sin(x*0.03+y*0.022));
-  h+=0.05*Math.exp(-(Math.hypot((x-(dc.x-120))/170,(y-(dc.y+15))/120)**2));
-  // 霜岭堡北侧：高山脊，线密且起伏强
-  const ff=getCity('frostfort');
-  const ridgeA=pointSegDist(x,y,ff.x-160,ff.y-120,ff.x+30,ff.y-205);
-  const ridgeB=pointSegDist(x,y,ff.x-70,ff.y-55,ff.x+170,ff.y-145);
-  const northBoost=1+Math.max(0,(ff.y-y))/150;
-  h+=0.22*Math.exp(-(ridgeA*ridgeA)/(28*28))*northBoost;
-  h+=0.18*Math.exp(-(ridgeB*ridgeB)/(24*24))*northBoost;
-  h+=0.05*Math.exp(-(ridgeA*ridgeA)/(70*70))*Math.sin((x+y)*0.05+0.8);
-  // 盐湾港附近：沿海缓坡，地势整体更柔和、更开阔
-  const sb=getCity('saltbay');
-  const coast=pointSegDist(x,y,sb.x-190,sb.y+82,sb.x+170,sb.y+128);
-  const coastB=pointSegDist(x,y,sb.x-130,sb.y+36,sb.x+220,sb.y+72);
-  h+=0.05*Math.exp(-(coast*coast)/(78*78));
-  h+=0.03*Math.exp(-(coastB*coastB)/(96*96));
-  h-=0.08*Math.exp(-((x-sb.x)*(x-sb.x))/(260*260)-((y-(sb.y+126))*(y-(sb.y+126)))/(170*170));
-  // 星陨城周边：断裂地貌，沿裂谷产生折线状高差
-  const sf=getCity('starfall');
-  const faultA=pointSegDist(x,y,sf.x-150,sf.y-92,sf.x+145,sf.y+48);
-  const faultB=pointSegDist(x,y,sf.x-92,sf.y+92,sf.x+90,sf.y-65);
-  const along=((x-sf.x)*0.72+(y-sf.y)*0.48)/44;
-  h+=0.15*Math.exp(-(faultA*faultA)/(22*22))*(0.68+0.32*Math.sin(along));
-  h+=0.11*Math.exp(-(faultB*faultB)/(18*18))*(0.65+0.35*Math.cos(along*1.35));
-  h+=0.05*Math.exp(-(Math.hypot((x-sf.x)/130,(y-sf.y)/96)**2));
-  for(const c of CITIES){
-    const dx=(x-c.x)/54,dy=(y-c.y)/40;
-    h-=0.058*Math.exp(-(dx*dx+dy*dy)); // 城市周边压低，形成更真实的盆地/缓坡
-  }
-  return Math.max(0,Math.min(1,h));
-}
-function contourEdgePoint(edge,x,y,step,tl,tr,br,bl,level){
-  const lerp=(a,b,va,vb)=>{
-    const t=(level-va)/((vb-va)||1e-6);
-    return a+(b-a)*Math.max(0,Math.min(1,t));
-  };
-  if(edge===0)return{x:lerp(x,x+step,tl,tr),y};
-  if(edge===1)return{x:x+step,y:lerp(y,y+step,tr,br)};
-  if(edge===2)return{x:lerp(x,x+step,bl,br),y:y+step};
-  return{x,y:lerp(y,y+step,tl,bl)};
-}
-function stitchContourSegments(segs,step){
-  const keyOf=p=>`${Math.round(p.x*2)}_${Math.round(p.y*2)}`;
-  const adj=new Map(),used=new Array(segs.length).fill(false),paths=[];
-  const add=(k,ref)=>{if(!adj.has(k))adj.set(k,[]);adj.get(k).push(ref);};
-  segs.forEach((s,i)=>{add(keyOf(s[0]),{i});add(keyOf(s[1]),{i});});
-  const extend=(path,atHead)=>{
-    while(true){
-      const cur=atHead?path[0]:path[path.length-1],key=keyOf(cur);
-      const nexts=(adj.get(key)||[]).filter(r=>!used[r.i]);
-      if(!nexts.length)break;
-      const seg=segs[nexts[0].i];used[nexts[0].i]=true;
-      const a=seg[0],b=seg[1];
-      const next=keyOf(a)===key?b:a;
-      if(atHead)path.unshift(next);else path.push(next);
-    }
-  };
-  for(let i=0;i<segs.length;i++){
-    if(used[i])continue;
-    used[i]=true;
-    const path=[segs[i][0],segs[i][1]];
-    extend(path,false);extend(path,true);
-    if(path.length>=4){
-      const f=path[0],l=path[path.length-1];
-      if(Math.hypot(f.x-l.x,f.y-l.y)<=step*0.7)path[path.length-1]={x:f.x,y:f.y};
-      paths.push(path);
-    }
-  }
-  return paths;
-}
-function genMapDeco(){
-  if(MAP_DECO)return MAP_DECO;
-  const rnd=mulberry32(20260812);
-  const R=mapWorldRange();
-  const cx0=(R.x1+R.x2)/2,cy0=(R.y1+R.y2)/2;
-  const peaks=pickTerrainPeaks(R);
-  const step=18,nx=Math.ceil((R.x2-R.x1)/step),ny=Math.ceil((R.y2-R.y1)/step);
-  const ER={x1:R.x1-220,y1:R.y1-180,x2:R.x2+220,y2:R.y2+180};
-  const enx=Math.ceil((ER.x2-ER.x1)/step),eny=Math.ceil((ER.y2-ER.y1)/step);
-  const field=[];
-  for(let gy=0;gy<=eny;gy++){
-    field[gy]=[];
-    for(let gx=0;gx<=enx;gx++){
-      const x=ER.x1+gx*step,y=ER.y1+gy*step;
-      field[gy][gx]=terrainHeightAt(x,y,ER,peaks);
-    }
-  }
-  const levels=[0.10,0.16,0.22,0.28,0.34,0.42,0.52];
-  const table={
-    0:[],1:[[3,0]],2:[[0,1]],3:[[3,1]],4:[[1,2]],5:[[3,2],[0,1]],6:[[0,2]],7:[[3,2]],
-    8:[[2,3]],9:[[0,2]],10:[[0,1],[2,3]],11:[[1,2]],12:[[1,3]],13:[[0,1]],14:[[3,0]],15:[]
-  };
-  let iso='',fills='';
-  levels.forEach((lv,li)=>{
-    const segs=[];
-    for(let gy=0;gy<eny;gy++)for(let gx=0;gx<enx;gx++){
-      const x=ER.x1+gx*step,y=ER.y1+gy*step;
-      const tl=field[gy][gx],tr=field[gy][gx+1],br=field[gy+1][gx+1],bl=field[gy+1][gx];
-      const idx=(tl>=lv?1:0)|(tr>=lv?2:0)|(br>=lv?4:0)|(bl>=lv?8:0);
-      for(const pair of table[idx]){
-        segs.push([
-          contourEdgePoint(pair[0],x,y,step,tl,tr,br,bl,lv),
-          contourEdgePoint(pair[1],x,y,step,tl,tr,br,bl,lv)
-        ]);
-      }
-    }
-    for(const path of stitchContourSegments(segs,step)){
-      const d=path.map((p,i)=>`${i?'L':'M'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
-      const closed=Math.hypot(path[0].x-path[path.length-1].x,path[0].y-path[path.length-1].y)<=step*0.75;
-      if(closed&&li>=1&&li<=5&&mapPolyArea(path)>1800){
-        fills+=`<path d="${d} Z" class="iso-f iso-f${Math.min(4,li)}"/>`;
-      }
-      iso+=`<path d="${d}${closed?' Z':''}" class="iso"/>`;
-    }
-  });
-  // 地形纹理：沿主峰外圈做少量切向短线，增强真实地貌感
-  let tex='';
-  for(const p of peaks){
-    const count=6+Math.floor(rnd()*4);
-    for(let i=0;i<count;i++){
-      const ang=rnd()*Math.PI*2,rr=(p.sx*0.6)+rnd()*28;
-      const x=p.x+Math.cos(ang)*rr,y=p.y+Math.sin(ang)*rr*(p.sy/p.sx);
-      const tan=ang+Math.PI/2,L=10+rnd()*14;
-      const x2=x+Math.cos(tan)*L,y2=y+Math.sin(tan)*L;
-      tex+=`<line x1="${x.toFixed(1)}" y1="${y.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" class="iso-tex"/>`;
-    }
-  }
-  const ox=ER.x1,oy=ER.y1,ow=ER.x2-ER.x1,oh=ER.y2-ER.y1;
-  MAP_DECO=`<defs>
-  <radialGradient id="mapCoreLight" cx="50%" cy="46%" r="62%"><stop offset="0%" stop-color="var(--map-core-light)" stop-opacity="0.15"/><stop offset="60%" stop-color="var(--map-bg-mid)" stop-opacity="0.05"/><stop offset="100%" stop-color="var(--map-bg-mid)" stop-opacity="0"/></radialGradient>
-  <radialGradient id="cityShieldGrad" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="var(--map-shield-light)" stop-opacity="0.15"/><stop offset="60%" stop-color="var(--map-shield-light)" stop-opacity="0.06"/><stop offset="100%" stop-color="var(--map-shield-light)" stop-opacity="0"/></radialGradient>
-  <radialGradient id="mistGrad" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="var(--map-mist-center)" stop-opacity="0.10"/><stop offset="60%" stop-color="var(--map-mist-edge)" stop-opacity="0.05"/><stop offset="100%" stop-color="var(--map-mist-edge)" stop-opacity="0"/></radialGradient>
-  <filter id="cityShieldBlur" x="-120%" y="-120%" width="340%" height="340%"><feGaussianBlur stdDeviation="9"/></filter>
-  <filter id="mistBlur" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="26"/></filter>
-  </defs>
-  <rect x="${ox}" y="${oy}" width="${ow}" height="${oh}" fill="url(#mapCoreLight)"/>
-  <ellipse cx="${ox+120}" cy="${cy0}" rx="230" ry="${oh*0.42}" fill="url(#mistGrad)" class="mist" filter="url(#mistBlur)"/>
-  <ellipse cx="${ox+ow-120}" cy="${cy0}" rx="230" ry="${oh*0.42}" fill="url(#mistGrad)" class="mist" filter="url(#mistBlur)"/>
-  <ellipse cx="${cx0}" cy="${oy+96}" rx="${ow*0.42}" ry="160" fill="url(#mistGrad)" class="mist" filter="url(#mistBlur)"/>
-  <ellipse cx="${cx0}" cy="${oy+oh-96}" rx="${ow*0.42}" ry="160" fill="url(#mistGrad)" class="mist" filter="url(#mistBlur)"/>
-  ${fills}${iso}${tex}`;
-  return MAP_DECO;
-}
-// 流动云雾（确定性生成一次：高斯模糊云团 + 缓慢循环平移 + 呼吸透明度）
-let MAP_CLOUDS=null;
-function genMapClouds(){
-  if(MAP_CLOUDS)return MAP_CLOUDS;
-  const rnd=mulberry32(20260812);
-  const R=mapWorldRange();
-  const ER={x1:R.x1-220,y1:R.y1-180,x2:R.x2+220,y2:R.y2+180};
-  const w=ER.x2-ER.x1,h=ER.y2-ER.y1;
-  const cx=(R.x1+R.x2)/2,cy=(R.y1+R.y2)/2;
-  let out='';
-  for(let i=0;i<8;i++){
-    let ex=0,ey=0;
-    const side=i%4;
-    if(side===0){ex=ER.x1+40+rnd()*110;ey=ER.y1+rnd()*h;}
-    if(side===1){ex=ER.x2-40-rnd()*110;ey=ER.y1+rnd()*h;}
-    if(side===2){ex=ER.x1+rnd()*w;ey=ER.y1+20+rnd()*90;}
-    if(side===3){ex=ER.x1+rnd()*w;ey=ER.y2-20-rnd()*90;}
-    ex=(ex+cx*0.18)/1.18;ey=(ey+cy*0.18)/1.18; // 保留外围感，但别离主图过远
-    const rx=72+rnd()*128,ry=26+rnd()*42;
-    const dur=45+rnd()*40;
-    const dir=(rnd()<0.5?-1:1)*(90+rnd()*170);
-    const baseOp=(side<2?0.03:0.022).toFixed(3);
-    out+=`<ellipse cx="${ex.toFixed(0)}" cy="${ey.toFixed(0)}" rx="${rx.toFixed(0)}" ry="${ry.toFixed(0)}" fill="var(--map-cloud)" fill-opacity="${baseOp}" class="cloud"><animateTransform attributeName="transform" type="translate" values="0 0; ${dir.toFixed(0)} 0; 0 0" dur="${dur.toFixed(0)}s" repeatCount="indefinite"/></ellipse>`;
-  }
-  MAP_CLOUDS=`<g filter="url(#cloudBlur)">${out}</g><defs><filter id="cloudBlur" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="16"/></filter></defs>`;
-  return MAP_CLOUDS;
-}
-// 曲线路网：按里数分段三次贝塞尔（长路多弯、边缘路大弧度；确定性种子，结果缓存）
-let MAP_CURVES={};
-function roadCurve(a,b,x1,y1,x2,y2,d){
-  // v8.22：key 按端点归一化——地图绘制用 ROADS 顺序、旅行点用 shortestPath 方向（可能相反），
-  // 方向敏感 key 会让两者生成形状不同的曲线，导致旅行点"偏移出路网"
-  const key=a<b?a+'|'+b:b+'|'+a;
-  if(MAP_CURVES[key])return MAP_CURVES[key];
-  const dx=x2-x1,dy=y2-y1,len=Math.hypot(dx,dy)||1;
-  const nx=-dy/len,ny=dx/len;
-  const rnd=mapSeed(key);
-  const distLi=d||10;
-  // 里数越长弧度越大（短途近似直路，长途蜿蜒绕行）：振幅 0.10~0.34
-  const amp=Math.min(0.34,0.10+distLi*0.006);
-  const segs=distLi>22?3:(distLi>9?2:1); // 长路拆多段 → 多个弯道
-  let pd='',cxs=0,cys=0;
-  const curves=[];
-  for(let s=0;s<segs;s++){
-    const t0=s/segs,t1=(s+1)/segs;
-    const p0x=x1+dx*t0,p0y=y1+dy*t0;
-    const p1x=x1+dx*t1,p1y=y1+dy*t1;
-    const off=(rnd()-0.5)*len*amp*2;
-    const mx=(p0x+p1x)/2,my=(p0y+p1y)/2;
-    const c1x=mx+nx*off,c1y=my+ny*off;
-    const c2x=mx+nx*off*0.55,c2y=my+ny*off*0.55;
-    pd+=(s===0?`M ${p0x.toFixed(1)} ${p0y.toFixed(1)}`:'')+` C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p1x.toFixed(1)} ${p1y.toFixed(1)}`;
-    curves.push({p0:[p0x,p0y],c1:[c1x,c1y],c2:[c2x,c2y],p1:[p1x,p1y]});
-    cxs+=mx;cys+=my;
-  }
-  MAP_CURVES[key]={d:pd,curves,cx:cxs/segs,cy:cys/segs};
-  return MAP_CURVES[key];
-}
-// 三次贝塞尔求点 / 沿曲线组按【弧长】取点（旅行位置跟随路网，匀速沿曲线行进）
-function bezierPt(p0,c1,c2,p1,t){
-  const u=1-t;
-  return [u*u*u*p0[0]+3*u*u*t*c1[0]+3*u*t*t*c2[0]+t*t*t*p1[0],
-          u*u*u*p0[1]+3*u*u*t*c1[1]+3*u*t*t*c2[1]+t*t*t*p1[1]];
-}
-function bezierLen(c){
-  let L=0,px=c.p0[0],py=c.p0[1];
-  for(let i=1;i<=24;i++){
-    const p=bezierPt(c.p0,c.c1,c.c2,c.p1,i/24);
-    L+=Math.hypot(p[0]-px,p[1]-py);px=p[0];py=p[1];
-  }
-  return L;
-}
-function pointOnCurves(curves,frac){
-  if(!curves||!curves.length)return null;
-  const n=curves.length;
-  if(!curves._len){ // 缓存各段弧长与总长
-    curves._seg=[];curves._len=0;
-    for(let i=0;i<n;i++){curves._seg[i]=bezierLen(curves[i]);curves._len+=curves._seg[i];}
-  }
-  if(curves._len<=0)return bezierPt(curves[0].p0,curves[0].c1,curves[0].c2,curves[0].p1,0);
-  let target=Math.max(0,Math.min(1,frac))*curves._len,acc=0;
-  for(let i=0;i<n;i++){
-    const L=curves._seg[i];
-    if(acc+L>=target||i===n-1){
-      const t=L>0?Math.max(0,Math.min(1,(target-acc)/L)):0;
-      return bezierPt(curves[i].p0,curves[i].c1,curves[i].c2,curves[i].p1,t);
-    }
-    acc+=L;
-  }
-  return bezierPt(curves[n-1].p0,curves[n-1].c1,curves[n-1].c2,curves[n-1].p1,1);
-}
-// v8.23：路上取点——曲线方向由首次生成（ROADS 顺序）决定，若旅行方向与该段曲线反向则用 1-frac，
-// 修复"旅行点从目的地反向行进、与路线完全不符"（v8.22 归一化 key 后引入）
-function ptOnRoad(a,b,segFrac,cityPos){
-  const seg=buildGraph()[a][b];
-  const rc=roadCurve(a,b,cityPos[a].x,cityPos[a].y,cityPos[b].x,cityPos[b].y,seg);
-  const p0=rc.curves[0].p0;
-  const fwd=Math.abs(p0[0]-cityPos[a].x)<0.5&&Math.abs(p0[1]-cityPos[a].y)<0.5;
-  return pointOnCurves(rc.curves,fwd?segFrac:1-segFrac);
-}
-// 地图拖拽/缩放（pointer 事件：鼠标+触屏+触控笔；事件委托一次性绑定）
-function initMapInteract(){
-  if(window.__mapOn)return;window.__mapOn=true;
-  document.addEventListener('pointerdown',e=>{
-    const t=e.target;
-    if(!t||!t.closest)return;
-    if(!t.closest('#map-wrap'))return;
-    if(t.closest('.city-node')||t.closest('.map-tools'))return;
-    MAP.drag={sx:e.clientX,sy:e.clientY,px:MAP.px,py:MAP.py,moved:false};
-    if(e.cancelable)e.preventDefault();
-  });
-  document.addEventListener('pointermove',e=>{
-    if(!MAP.drag)return;
-    const dx=e.clientX-MAP.drag.sx,dy=e.clientY-MAP.drag.sy;
-    if(!MAP.drag.moved&&Math.hypot(dx,dy)>5)MAP.drag.moved=true;
-    if(MAP.drag.moved){const kk=mapUnitK();MAP.px=MAP.drag.px+dx/kk;MAP.py=MAP.drag.py+dy/kk;clampMap();applyMapView();} // v8.13：拖动增量换算为 SVG 单位
-  });
-  document.addEventListener('pointerup',()=>{MAP.drag=null;});
-  document.addEventListener('wheel',e=>{
-    const wrap=document.getElementById('map-wrap');
-    if(!wrap||!e.target.closest('#map-wrap'))return;
-    e.preventDefault();
-    mapZoomAt(e.clientX,e.clientY,e.deltaY>0?0.85:1.18);
-  },{passive:false});
-}
-function renderMap(){
-  const loc=GS.location;
-  const cityPos={};for(let c of CITIES)cityPos[c.id]={x:c.x,y:c.y};
-  if(!MAP.init){MAP.init=true;initMapView();}
-  // 等高线背景 + 曲线路网
-  const deco=genMapDeco();
-  let roads='',rlabels='';
-  for(let[a,b,d]of ROADS){
-    const rc=roadCurve(a,b,cityPos[a].x,cityPos[a].y,cityPos[b].x,cityPos[b].y,d);
-    roads+=`<path d="${rc.d}" class="road-line"/><path d="${rc.d}" class="road-flow"/>`;
-    rlabels+=`<text x="${rc.cx.toFixed(1)}" y="${(rc.cy-6).toFixed(1)}" class="road-label">${d}里</text>`;
-  }
-  // 城市节点
-  const R=mapWorldRange();
-  let cityShields='',cities='',names='';
-  for(let c of CITIES){
-    const r=c.tier==='capital'?15:(c.tier==='village'?9:11);
-    const closed=c.id==='starfall'; // 特殊城暂未开放：节点置灰、标签提示
-    const cls=(c.id===loc?'city-node current':'city-node')+(closed?' closed':'');
-    const edgeDist=Math.min(c.x-R.x1,R.x2-c.x,c.y-R.y1,R.y2-c.y);
-    const shieldR=r+11+Math.max(0,104-edgeDist)*0.22;
-    const shieldOp=edgeDist<104?0.16:0.05;
-    cityShields+=`<circle cx="${c.x}" cy="${c.y}" r="${shieldR.toFixed(1)}" fill="url(#cityShieldGrad)" opacity="${shieldOp.toFixed(2)}" class="city-shield" filter="url(#cityShieldBlur)"/>`;
-    cities+=`<circle cx="${c.x}" cy="${c.y}" r="${r}" class="${cls} tier-${c.tier}" data-city="${c.id}"/>`;
-    names+=`<text x="${c.x}" y="${c.y+r+14}" class="city-label">${c.name}${closed?'（暂未开放）':''}</text>`;
-  }
-  // 旅行中：当前位置点（沿曲线路网插值，非直线）
-  let travelDot='',sp=null;
-  if(GS.traveling){
-    sp=shortestPath(GS.location,GS.traveling.to);
-    if(sp&&sp.path.length>1){
-      const totalDist=sp.distance,elapsed=(Date.now()-GS.traveling.startedAt)/1000,totalTime=(GS.traveling.arrivalTime-GS.traveling.startedAt)/1000;
-      const progress=Math.min(1,Math.max(0,elapsed/totalTime));
-      let accDist=0,targetDist=progress*totalDist,px=0,py=0;
-      for(let i=0;i<sp.path.length-1;i++){
-        const a=sp.path[i],b=sp.path[i+1];
-        const seg=buildGraph()[a][b];
-        if(accDist+seg>=targetDist){
-          const segFrac=(targetDist-accDist)/seg;
-          const pt=ptOnRoad(a,b,segFrac,cityPos); // v8.23：方向对齐
-          if(pt){px=pt[0];py=pt[1]}
-          break;
-        }
-        accDist+=seg;
-        if(i===sp.path.length-2){px=cityPos[sp.path[i+1]].x;py=cityPos[sp.path[i+1]].y}
-      }
-      if(px&&py)travelDot=`<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="7" fill="var(--map-travel-dot)" stroke="var(--map-travel-dot-border)" stroke-width="2" data-travel-dot="1"><animate attributeName="r" values="7;10;7" dur="1.5s" repeatCount="indefinite"/></circle>`;
-    }
-  }
-  // 流动云雾（放在路网与城市下层，避免和可交互元素混为一体）
-  const clouds=genMapClouds();
-  const view=`translate(${MAP.px.toFixed(1)},${MAP.py.toFixed(1)}) scale(${MAP.s})`;
-  let info='',hint='';
-  if(GS.traveling){
-    const elapsed=Date.now()-GS.traveling.startedAt,total=GS.traveling.arrivalTime-GS.traveling.startedAt;
-    const pct=Math.min(100,Math.max(0,Math.round(elapsed/total*100)));
-    const curDist=Math.round(sp.distance*pct/100),totalDist=sp.distance;
-    info=`<div class="map-info"><span class="city-name">→ ${getCityName(GS.traveling.to)}</span>
-    <div class="travel-progress"><div class="fill" id="travel-fill" style="width:${pct}%"></div><div class="text" id="travel-text">${fmt(curDist)} 里 / ${fmt(totalDist)} 里</div></div>
-    <span style="font-size:10px;color:var(--text3)">来自 ${getCityName(sp?.path?.[0]||GS.location)}</span></div>`;hint='<p class="map-hint">旅行中… 蓝色圆点为当前位置 · 拖动地图/滚轮缩放</p>';
-  }else{
-    const cc=getCity(loc);info=`<div class="map-info">📍 当前：<span class="city-name">${cc.name}</span><span style="margin-left:8px">${cc.tier==='village'?'新手村':(cc.tier==='capital'?'王都':(cc.tier==='frontier'?'边陲':'城镇'))}</span><span style="margin-left:auto;color:var(--text3)">拖动地图 · 滚轮缩放 · ⌖ 回到当前位置</span></div>`;hint='<p class="map-hint">点击城市节点发起旅行 · 相邻新手村约 24 秒抵达</p>';
-  }
-  return `<div class="map-wrap" id="map-wrap"><svg viewBox="0 0 ${MAP_VW} ${MAP_VH}"><g class="map-scene" transform="${view}">${deco}${clouds}${cityShields}${roads}${rlabels}${cities}${names}${travelDot}</g></svg>
-  <div class="map-tools"><button title="放大" onclick="mapZoom(1.25)">＋</button><button title="缩小" onclick="mapZoom(0.8)">－</button><button title="回到当前位置" onclick="mapCenter()">⌖</button></div></div>${info}${hint}`;
-}
-// 旅行中仅增量更新位置点与进度（不重建整个地图，避免路网/云雾动画被重启而"一抽一抽"）
-function updateTravelUI(){
-  if(!GS.traveling||currentTab!=='map')return;
-  const dot=document.querySelector('#map-wrap [data-travel-dot]');
-  const sp=shortestPath(GS.location,GS.traveling.to);
-  if(sp&&sp.path.length>1){
-    const cityPos={};for(let c of CITIES)cityPos[c.id]={x:c.x,y:c.y};
-    const totalDist=sp.distance,elapsed=(Date.now()-GS.traveling.startedAt)/1000,totalTime=(GS.traveling.arrivalTime-GS.traveling.startedAt)/1000;
-    const progress=Math.min(1,Math.max(0,elapsed/totalTime));
-    let accDist=0,targetDist=progress*totalDist,px=0,py=0;
-    for(let i=0;i<sp.path.length-1;i++){
-      const a=sp.path[i],b=sp.path[i+1];
-      const seg=buildGraph()[a][b];
-      if(accDist+seg>=targetDist){
-        const segFrac=(targetDist-accDist)/seg;
-        const pt=ptOnRoad(a,b,segFrac,cityPos); // v8.23：方向对齐
-        if(pt){px=pt[0];py=pt[1]}
-        break;
-      }
-      accDist+=seg;
-      if(i===sp.path.length-2){px=cityPos[sp.path[i+1]].x;py=cityPos[sp.path[i+1]].y}
-    }
-    if(dot&&px&&py){dot.setAttribute('cx',px.toFixed(1));dot.setAttribute('cy',py.toFixed(1));}
-    const fill=document.getElementById('travel-fill');
-    const txt=document.getElementById('travel-text');
-    if(fill)fill.style.width=Math.round(progress*100)+'%';
-    if(txt)txt.textContent=fmt(Math.round(totalDist*progress))+' 里 / '+fmt(totalDist)+' 里';
-  }
-}
+// v9.10.2：地图视口状态/缩放平移/等高线/云雾/交互/渲染已拆至 src/map/map-render.js 与 src/map/road-curves.js
+
+
 
 // ===== 城市视图 =====
 function renderCity(){
   const loc=GS.location,city=getCity(loc);
+  // v9.9：星陨城为活动城市，无市场/情报所/任务板，整体由 Starfall 模块面板接管
+  if(loc==='starfall'&&window.Starfall)return Starfall.renderPanel();
   const chartable=getChartableItems();
   // v9.1：城市市场布局参考“交易所”样式：左侧为物价图，右侧为中转面板 + 物品列表
   let html=`<div class="city-layout">`;
@@ -2766,8 +2588,7 @@ function renderCity(){
   // 任务板（与情报所同级）
   html+=renderTaskBoard();
   setTimeout(()=>{
-    renderMarketCards();
-    refreshChartSelectForMarketTab();
+    refreshMarketTab(); // v9.10.2 DRY：卡片重绘 + 图表下拉同步
     if(_chartItem)drawChart();
     else syncMarketHeightToChart();
   },0);
@@ -3017,8 +2838,13 @@ function doUnlockIntel(){
       toast('本城情报所已解锁','ok');render();
     });
 }
-// —— 获得事件情报：直接记录到事件列表（knownEvents）——
-function markEventKnown(ev){GS.knownEvents[ev.id+':'+ev.startHub]=true}
+// —— 获得事件情报：记录到事件列表（knownEvents）；返回是否为新获得（仅新获得时提示弹窗）——
+function markEventKnown(ev){
+  const k=ev.id+':'+ev.startHub;
+  if(GS.knownEvents[k])return false;
+  GS.knownEvents[k]=true;
+  return true;
+}
 // —— 物价行情文案模板（聊天口吻，套入实际数据）——
 const INTEL_TEMPLATES=[
 '{city}酒馆的客商随口提起：「{icon}{item}最近{trend}，有人出 {sell} 金币收。」',
@@ -3088,31 +2914,39 @@ function genPriceIntel(nearby){
   return{cls:'intel',text:fillTpl(tpl,{city:getCityName(cid),item:it.name,icon:it.icon,price:fmt(price),sell:fmt(sell),trend})};
 }
 // —— 打听消息：生成一条情报（数量/概率/范围随本城声望扩展）——
+// v9.11.6：返回 {msgs, evs}——evs 为本条消息中新获得的事件（供 doAskIntel 汇总弹窗）
 function generateIntelMessages(){
+  // v9.11.9：本城已抽事件去重——离开本城前，抽到过的事件不再重复出现（到达新城市时清空）
+  if(!GS.intel.drawn)GS.intel.drawn={};
+  const drawn=GS.intel.drawn;
   const range=getIntelRange();
   const nearby=[GS.location,...getNearbyCities(GS.location,range)];
-  const ups=getUpcomingEvents().filter(ev=>ev.scope==='global'||ev.scope==='cost'||nearby.includes(ev.city));
-  const acts=getActiveEvents().filter(ev=>ev.scope!=='global'&&ev.scope!=='cost'&&nearby.includes(ev.city));
-  // 声望因子：本城声望等级提高 → 高级情报概率提升（封顶 40%/55%）
+  const ups=getUpcomingEvents().filter(ev=>(ev.scope==='global'||ev.scope==='cost'||nearby.includes(ev.city))&&!drawn[ev.id+':'+ev.startHub]);
+  const acts=getActiveEvents().filter(ev=>ev.scope!=='global'&&ev.scope!=='cost'&&nearby.includes(ev.city)&&!drawn[ev.id+':'+ev.startHub]);
+  // v9.11.8：事件概率平衡——保持"小概率惊喜"：事件总概率 8%（0 声望）→ 20%（声望 10 级封顶），
+  //           物价情报仍保持常见（每类事件独立区间，不互相挤占）
   const rep=getRepLevel(GS.location);
-  const pBest=Math.min(0.40,0.18+rep*0.02);
-  const pRare=Math.min(0.55,0.32+rep*0.015);
+  const pBest=Math.min(0.08,0.03+rep*0.005); // 预告事件：3% → 8%
+  const pRare=Math.min(0.12,0.05+rep*0.007); // 进行中事件：5% → 12%
   const r=Math.random();
   if(ups.length>0&&r<pBest){
     const ev=ups[Math.floor(Math.random()*ups.length)];
-    markEventKnown(ev);
+    drawn[ev.id+':'+ev.startHub]=true; // v9.11.9：本城已抽记录
+    const fresh=markEventKnown(ev);
     const city=ev.city?getCityName(ev.city):'全王国';
     const tpl=INTEL_UPCOMING_TPL[Math.floor(Math.random()*INTEL_UPCOMING_TPL.length)];
-    return[{cls:'intel best',text:fillEvTpl(tpl,{city,evname:ev.name,evicon:ev.icon})}];
+    return{msgs:[{cls:'intel best',text:fillEvTpl(tpl,{city,evname:ev.name,evicon:ev.icon})}],evs:fresh?[ev]:[]};
   }
-  if(acts.length>0&&r<pBest+pRare){
+  // v9.11.8：补 r>=pBest——无预告事件（ups 空）时进行中事件按独立区间 pRare 抽，避免区间重叠虚高
+  if(acts.length>0&&r>=pBest&&r<pBest+pRare){
     const ev=acts[Math.floor(Math.random()*acts.length)];
-    markEventKnown(ev);
+    drawn[ev.id+':'+ev.startHub]=true; // v9.11.9：本城已抽记录
+    const fresh=markEventKnown(ev);
     const action=ev.target==='sell'?'出货':'进货';
     const tpl=INTEL_ACTIVE_TPL[Math.floor(Math.random()*INTEL_ACTIVE_TPL.length)];
-    return[{cls:'intel rare',text:fillEvTpl(tpl,{city:getCityName(ev.city),evname:ev.name,evicon:ev.icon,action})}];
+    return{msgs:[{cls:'intel rare',text:fillEvTpl(tpl,{city:getCityName(ev.city),evname:ev.name,evicon:ev.icon,action})}],evs:fresh?[ev]:[]};
   }
-  return[genPriceIntel(nearby)];
+  return{msgs:[genPriceIntel(nearby)],evs:[]};
 }
 function doAskIntel(){
   if(!isIntelUnlocked(GS.location))return toast('请先解锁本城情报所','err');
@@ -3121,11 +2955,31 @@ function doAskIntel(){
   State.set('gold', GS.gold-MSG_COST);
   // 本城声望每 5 级 +1 条消息
   const count=1+Math.floor(getRepLevel(GS.location)/5);
+  let got=[];
   for(let i=0;i<count;i++){
-    const msgs=generateIntelMessages();
-    for(const m of msgs)GS.intel.log.push(m);
+    const r=generateIntelMessages();
+    for(const m of r.msgs)GS.intel.log.push(m);
+    if(r.evs&&r.evs.length)got=got.concat(r.evs);
   }
   render();
+  if(got.length)showEventIntelPopup(got); // v9.11.6：抽出事件 → 记录到事件列表的同时弹窗告知
+}
+// v9.11.6：情报所抽出事件 → 弹窗告知玩家获得了哪些事件信息（已记录到事件列表）
+function showEventIntelPopup(evs){
+  const rows=evs.map(ev=>{
+    const st=getEventStatus(ev);
+    const city=ev.city?getCityName(ev.city):'全王国';
+    const desc=getPublicDesc(ev);
+    const stTxt=st?st.label:'';
+    return `<div class="intel-pop-ev">
+      <div class="intel-pop-head"><span class="intel-pop-name">${ev.icon} ${ev.name}</span><span class="intel-pop-city">〈${city}〉</span>${stTxt?`<span class="intel-pop-st ${st.cls}">${stTxt}</span>`:''}</div>
+      <div class="intel-pop-desc">${desc}</div>
+      <div class="intel-pop-link" onclick="showEventDetail('${ev.id}')">查看详情 ›</div>
+    </div>`;
+  }).join('');
+  showModal('🔍 情报所 · 获得事件情报',
+    `<div class="intel-pop">${rows}<div class="intel-pop-note">事件信息已记录到事件列表，可在页面上方横幅随时查看。</div></div>`,
+    '知道了');
 }
 function renderIntel(){
   const unlocked=isIntelUnlocked(GS.location),range=getIntelRange(),near=getNearbyCities(GS.location,range);
@@ -3148,531 +3002,8 @@ function renderIntel(){
   ${body}
   </div>`;
 }
-function getChartableItems(){
-  const loc=GS.location,city=getCity(loc);
-  // vNext：列表随“购入/售出”切换
-  if(marketTab==='buy'){
-    return getBuyableGoods(loc);
-  }
-  // 售出：仅车厢持有（不含仓库）
-  const s=new Set();
-  for(let k of Object.keys(GS.cargo))if(GS.cargo[k]>0)s.add(k);
-  return[...s];
-}
-function onChartSelect(){const sel=document.getElementById('chart-select');_chartItem=sel.value||null;if(_chartItem)drawChart()}
-function switchMarket(tab){
-  if(tab===marketTab)return;
-  // vNext：中转面板有内容时，切换买卖也必须提示并清空（清空 buy/sell 两个 draft）
-  if(window.TradeDraft&&TradeDraft.anyNonEmpty&&TradeDraft.anyNonEmpty()){
-    showModal('⚠ 物价已更新',
-      `中转面板中仍有未确认的交易单。\n为避免按旧价成交，切换面板将清空中转面板内容。`,
-      '知道了',()=>{
-        TradeDraft.clearAll('tab-switch');
-        marketTab=tab;
-        renderMarketCards();
-        refreshChartSelectForMarketTab();
-      });
-    return;
-  }
-  marketTab=tab;
-  renderMarketCards();
-  refreshChartSelectForMarketTab();
-}
-function renderMarketCards(){
-  const loc=GS.location,city=getCity(loc),cont=document.getElementById('market-cards');
-  if(!cont)return;
-  renderTradeDraftPanel();
-  document.querySelector('.buy-tab')?.classList.toggle('active',marketTab==='buy');
-  document.querySelector('.sell-tab')?.classList.toggle('active',marketTab==='sell');
-  const items=[];
-  if(marketTab==='buy'){
-    for(let gid of getBuyableGoods(loc)){
-      const it=getItem(gid),price=getDayPrice(loc,gid,GS.day),yest=getDayPrice(loc,gid,Math.max(1,GS.day-1));
-      const ch=yest&&price?price-yest:0,stock=getCurStock(loc,gid),max=getMaxStock(loc,gid);
-      items.push({gid,it,price,ch,stock,max,type:'buy'});
-    }
-  }else{
-    // vNext：售出仅显示车厢持有（不含仓库）
-    const hubNow=Math.floor(GS.day/CENTRAL_PERIOD);
-    for(let gid of Object.keys(GS.cargo)){if(!GS.cargo[gid])continue;
-      const it=getItem(gid);if(!it)continue;
-      // v9.5：需求四档（hot/normal/cool/reject）
-      const ds=(window.DemandEngine&&DemandEngine.getDemandState)?DemandEngine.getDemandState(loc,gid,hubNow):'normal';
-      const sPrice=getSellPrice(loc,gid,GS.day);
-      const sYest=getSellPrice(loc,gid,Math.max(1,GS.day-1));
-      const ch=sYest&&sPrice?sPrice-sYest:0;
-      const rejectReason=ds==='reject'?((window.DemandEngine&&DemandEngine.getRejectReason(loc,gid))||'本城无人收购'):'';
-      items.push({gid,it,price:getDayPrice(loc,gid,GS.day),sPrice,ch,held:GS.cargo[gid],cost:GS.buyPrice[gid]||0,type:'sell',ds,rejectReason});
-    }
-  }
-  let html='';
-  for(let r of items){
-    const isExp = expandedCard===r.gid;
-    const chCls=r.ch>0?'up':(r.ch<0?'down':'flat'),chStr=r.ch>0?`+${r.ch}`:(r.ch<0?r.ch:0);
-    html+=`<div class="item-card${isExp?' expanded':''}${r.ds==='reject'?' ic-reject':''}" data-gid="${r.gid}" onclick="toggleCard('${r.gid}')">`;
-    html+=`<span class="ic-icon">${r.it.icon}</span><span class="ic-name">${r.it.name}</span>`;
-    html+=`<span class="ic-cat">${r.it.cat==='basic'?'基础':'特产'}</span>`;
-    if(r.type==='buy'){
-      html+=`<div class="ic-price buy">${fmt(r.price)}</div>`;
-      html+=`<div class="ic-change ${chCls}">${chStr}</div>`;
-      html+=`<div class="ic-limit">库存 ${r.stock}/${r.max}</div>`;
-      html+=`<div class="ic-cargo-info">🚛 ${getUsedCargo()+getTaskCargoUsed()}/${getVehicleCapacity()}</div>`;
-      const afford=Math.max(0, Math.floor(GS.gold/Math.max(1,r.price||1)));
-      const maxBuy=Math.min(r.stock, afford, getCargoFree());
-      if(maxBuy<=0){
-        const why=GS.gold<0?'欠债中，无法购入（先卖货或完成任务还债）':'资金/货舱/库存不足';
-        html+=`<div class="ic-detail"><div class="row" style="color:${GS.gold<0?'var(--red)':'var(--text3)'}">${why}</div></div>`;
-      }else{
-        html+=`<div class="ic-detail">${qtySliderHTML(r.gid,maxBuy,Math.min(1,maxBuy))}<div class="row"><button class="btn-action btn-buy" onclick="event.stopPropagation();draftFromSlider('buy','${r.gid}')">加入中转面板</button></div></div>`;
-      }
-    }else{
-      // v9.5：拒收标红 + 需求标签
-      const dsTag = r.ds==='hot' ? `<span class="ic-ds ds-hot" title="本城正在高价收购">🔥 热门</span>`
-                 : r.ds==='cool' ? `<span class="ic-ds ds-cool" title="本城市场需求冷淡，收购价压低">🧊 冷淡</span>`
-                 : r.ds==='reject'? `<span class="ic-ds ds-reject" title="点击查看原因">🚫 无人收购</span>` : '';
-      const priceCell = r.ds==='reject'
-        ? `<div class="ic-price sell reject" onclick="event.stopPropagation();showModal('🚫 本城无人收购','<b>${r.it.name}</b>：${r.rejectReason||'本城不收购此物资'}', '知道了', ()=>{})">无人收购</div>`
-        : `<div class="ic-price sell">${fmt(r.sPrice)}</div>`;
-       html+=dsTag;
-       html+=`${priceCell}`;
-      html+=`<div class="ic-change ${chCls}">${chStr}</div>`;
-      html+=`<div class="ic-limit">持有 ${r.held}件 · 成本 ${fmt(r.cost)}</div>`;
-      html+=`<div class="ic-cargo-info">🚛 ${getUsedCargo()+getTaskCargoUsed()}/${getVehicleCapacity()}</div>`;
-      const sellBtn = r.ds==='reject'
-        ? `<button class="btn-action btn-sell disabled" onclick="event.stopPropagation();showModal('🚫 本城无人收购','<b>${r.it.name}</b>：${r.rejectReason||'本城不收购此物资'}', '知道了', ()=>{})">无法售出</button>`
-        : `<button class="btn-action btn-sell" onclick="event.stopPropagation();draftFromSlider('sell','${r.gid}')">加入中转面板</button>`;
-      html+=`<div class="ic-detail">${qtySliderHTML(r.gid,r.held,Math.min(1,r.held))}<div class="row">${sellBtn}</div></div>`;
-    }
-    html+=`</div>`;
-  }
-  if(items.length===0)html=`<div class="empty">${marketTab==='buy'?'本城无可购物资':'目前没有可出售的物资'}</div>`;
-  cont.innerHTML=html;
-  if(!_chartItem){
-    const buyItems=items.filter(i=>i.type==='buy');
-    const first=buyItems[0]||items[0];
-    if(first){_chartItem=first.gid;const sel=document.getElementById('chart-select');if(sel)sel.value=_chartItem;drawChart();}
-  }
-}
-function toggleCard(gid){
-  expandedCard = (expandedCard===gid)?null:gid;
-  renderMarketCards();
-  if(_chartItem)drawChart();
-}
-function refreshChartSelectForMarketTab(){
-  const sel=document.getElementById('chart-select');if(!sel)return;
-  const items=getChartableItems();
-  const old=_chartItem;
-  let html=`<option value="">-- 选择物资 --</option>`;
-  for(const gid of items){const it=getItem(gid);html+=`<option value="${gid}" ${gid===old?'selected':''}>${it.icon} ${it.name}</option>`}
-  sel.innerHTML=html;
-  if(old && items.includes(old)){ _chartItem=old; }
-  else{ _chartItem=items[0]||null; if(_chartItem)sel.value=_chartItem; }
-  if(_chartItem)drawChart(); else {document.getElementById('chart-stats').innerHTML='';}
-}
-function renderTradeDraftPanel(){
-  const box=document.getElementById('trade-draft');if(!box)return;
-  if(!window.TradeDraft)return;
-  const td=TradeDraft.getDraftState();
-  const mode=marketTab;
-  const d=td[mode];
-  const entries=[];
-  if(d && d.items)for(const gid of Object.keys(d.items)){const q=parseInt(d.items[gid])||0;if(q>0)entries.push({gid,qty:q});}
-  if(!entries.length){
-    // 中转面板为空时也保留详情面板：具体数据按 0 / 空 显示
-    const used0=getUsedCargo(),cap0=getVehicleCapacity();
-    const pre0 = window.TradePreview ? (mode==='buy'?TradePreview.previewBuy(d):TradePreview.previewSell(d)) : null;
-    const rate0 = pre0 ? pre0.taxRate : (window.Tax?Tax.getRate(getRepLevel(GS.location)):0);
-    const cargoLine0 = `货舱 ${used0}/${cap0}${mode==='buy'?'（+0）':'（-0）'}`;
-    const subLine0 = mode==='buy' ? '小计 0' : '收入 0';
-    const taxLine0 = mode==='buy'
-      ? `税率 ${Math.round(rate0*100)}% · 税额 0 · 应付 <b>0</b>`
-      : `税率 ${Math.round(rate0*100)}% · 税额 0 · 到手 <b>0</b>`;
-    box.innerHTML=`<div class="trade-side">
-      <div class="trade-cart-panel empty">购物车为空：从左侧物资列表加入后，可一次性确认成交</div>
-      <div class="trade-summary-panel">
-        <div class="ts-row"><span class="ts-label">${cargoLine0}</span></div>
-        <div class="ts-row"><span class="ts-label">${subLine0}</span></div>
-        <div class="ts-row"><span class="ts-label">${taxLine0}</span></div>
-        <button class="btn btn-primary td-confirm" onclick="confirmDraft('${mode}')">${mode==='buy'?'确认购入':'确认售出'}</button>
-      </div>
-    </div>`;
-    return;
-  }
-  const pre = window.TradePreview ? (mode==='buy'?TradePreview.previewBuy(d):TradePreview.previewSell(d)) : null;
-  const plannedQty = entries.reduce((s,e)=>s+e.qty,0);
-  const used=getUsedCargo(),cap=getVehicleCapacity();
-  const afterUsed = mode==='buy' ? (used+plannedQty) : Math.max(0, used-plannedQty);
-  const cargoLine = `货舱 ${afterUsed}/${cap}${mode==='buy'?`（+${plannedQty}）`:`（-${plannedQty}）`}`;
-  const totalLine = mode==='buy'
-    ? `税率 ${Math.round(pre.taxRate*100)}% · 税额 ${fmt(pre.tax)} · 应付 <b>${fmt(pre.total)}</b>`
-    : `税率 ${Math.round(pre.taxRate*100)}% · 税额 ${fmt(pre.tax)} · 到手 <b>${fmt(pre.net)}</b>`;
-  let rows='';
-  for(const e of entries){
-    const it=getItem(e.gid);
-    const max = mode==='buy'? Math.min(getCurStock(GS.location,e.gid), Math.max(0, Math.floor(GS.gold/Math.max(1,(getDayPrice(GS.location,e.gid,GS.day)||1)))), getCargoFree()+e.qty) : (GS.cargo[e.gid]||0);
-    rows+=`<div class="td-row">
-      <span class="td-name">${it.icon} ${it.name}</span>
-      <input class="td-qty" type="number" min="0" max="${max}" value="${e.qty}" onchange="onDraftQtyChange('${mode}','${e.gid}',this.value)">
-      <button class="td-del" onclick="onDraftRemove('${mode}','${e.gid}')">移除</button>
-    </div>`;
-  }
-  box.innerHTML=`<div class="trade-side">
-    <div class="trade-cart-panel">
-      <div class="td-head">🧾 中转购物车（${mode==='buy'?'购入':'售出'} · ${entries.length}种）<button class="td-clear" onclick="clearDraftManual()">清空</button></div>
-      <div class="td-list">${rows}</div>
-    </div>
-    <div class="trade-summary-panel">
-      <div class="ts-row"><span class="ts-label">${cargoLine}</span></div>
-      <div class="ts-row"><span class="ts-label">${mode==='buy'?`小计 ${fmt(pre.subtotal)}`:`收入 ${fmt(pre.revenue)}`}</span></div>
-      <div class="ts-row"><span class="ts-label">${totalLine}</span></div>
-      <button class="btn btn-primary td-confirm" onclick="confirmDraft('${mode}')">${mode==='buy'?'确认购入':'确认售出'}</button>
-    </div>
-  </div>`;
-}
-function onDraftQtyChange(mode,gid,val){
-  const q=Math.max(0,parseInt(val)||0);
-  TradeDraft.add(mode,gid,q);
-  renderMarketCards();
-}
-function onDraftRemove(mode,gid){
-  TradeDraft.remove(mode,gid);
-  renderMarketCards();
-}
-function clearDraftManual(){
-  if(!TradeDraft.anyNonEmpty())return;
-  showModal('清空中转面板','确认清空中转面板中的全部内容？','清空',()=>{TradeDraft.clearAll('manual');renderMarketCards();});
-}
-function draftFromSlider(mode,gid){
-  if(!window.TradeDraft)return;
-  // v9.5：拒收物资不可加入售出中转
-  if(mode==='sell'&&window.DemandEngine){
-    const hubNow=Math.floor(GS.day/CENTRAL_PERIOD);
-    const ds=DemandEngine.getDemandState(GS.location,gid,hubNow);
-    if(ds==='reject'){
-      const reason=DemandEngine.getRejectReason(GS.location,gid)||'本城不收购此物资';
-      showModal('🚫 本城无人收购',`<b>${getItem(gid).name}</b>：${reason}`,'知道了');
-      return;
-    }
-  }
-  // 若中转面板已有内容，但锚点变化（游戏日/中枢/城市）则按规则提示并清空后再加入
-  if(TradeDraft.anyNonEmpty()){
-    const td=TradeDraft.getDraftState();
-    const d0=td.buy, d1=td.sell;
-    const now=TradeDraft.anchorForNow();
-    const bad = (d0 && d0.items && Object.keys(d0.items).length && (d0.cityId!==now.cityId || d0.hub!==now.hub || d0.day!==now.day))
-      || (d1 && d1.items && Object.keys(d1.items).length && (d1.cityId!==now.cityId || d1.hub!==now.hub || d1.day!==now.day));
-    if(bad){
-      showModal('⚠ 物价已更新',`由于游戏日/中枢点/城市发生变化，为避免按旧价成交，已清空中转面板内容。`,'知道了',()=>{TradeDraft.clearAll('anchor');doDraftAdd();});
-      return;
-    }
-  }
-  doDraftAdd();
-  function doDraftAdd(){
-    const qty=getSliderVal(gid);
-    // 购入时校验货舱容量：阻止超出容量的加入操作
-    if(mode==='buy'){
-      const cap=getVehicleCapacity();
-      const used=getUsedCargo()+getTaskCargoUsed();
-      const td0=TradeDraft.getDraftState();
-      const dBuy=td0&&td0.buy?td0.buy:null;
-      let plannedOther=0;
-      if(dBuy && dBuy.items){
-        for(const k of Object.keys(dBuy.items)){
-          if(k===gid) continue;
-          plannedOther += parseInt(dBuy.items[k])||0;
-        }
-      }
-      const totalPlanned = plannedOther + qty;
-      if(used + totalPlanned > cap){
-        const free=Math.max(0, cap-used);
-        showModal('⚠ 货舱容量不足',
-          `当前货舱剩余 ${free} 格，中转面板已有 ${plannedOther} 件，本次计划加入 ${qty} 件，合计 ${totalPlanned} 件，已超出容量 ${cap} 格。`,
-          '知道了');
-        return;
-      }
-    }
-    TradeDraft.add(mode,gid,qty);
-    toast('已加入中转面板','ok');
-    renderMarketCards();
-  }
-}
-async function confirmDraft(mode){
-  if(GS.traveling)return toast('旅行中不可交易','info');
-  advanceDay(); // 确认时推进一次游戏日（与单笔交易口径一致）
-  if(!window.TradeDraft||!window.TradeValidate||!window.TradePreview)return toast('模块未就绪','err');
-  const td=TradeDraft.getDraftState();
-  const draft=td[mode];
-  if(mode==='buy'){
-    const v=TradeValidate.validateBuyDraft(draft);
-    if(!v.ok)return toast(v.msg,'err');
-    const msg=`物品种类：${v.list.length}\n小计：${fmt(v.subtotal)}\n税率：${Math.round(v.taxRate*100)}%\n税额：${fmt(v.tax)}\n应付总额：${fmt(v.total)}`;
-    showModal('🧾 确认购入（中转面板）',msg,'确认购入',async()=>{
-      const ok = await execBuyDraft(v.list, v.total);
-      if(ok){TradeDraft.clearAll('buy-confirm');render();}
-    });
-    return;
-  }
-  // sell
-  const vs=TradeValidate.validateSellDraft(draft);
-  if(!vs.ok)return toast(vs.msg,'err');
-  const warns=TradeValidate.sameVisitWarningsSell(vs.list);
-  const proceed = async()=>{
-    const pre=TradePreview.previewSell(draft);
-    const msg=`物品种类：${pre.list.length}\n预计收入：${fmt(pre.revenue)}\n税率：${Math.round(pre.taxRate*100)}%\n税额：${fmt(pre.tax)}\n预计到手：${fmt(pre.net)}`;
-    showModal('🧾 确认售出（中转面板）',msg,'确认售出',async()=>{
-      const ok = await execSellDraft(pre.list, pre.net);
-      if(ok){TradeDraft.clearAll('sell-confirm');render();}
-    });
-  };
-  if(warns.length){
-    const rows=warns.map(w=>`- ${w.name}：同城同次 ${w.sameQty}件，将按买入价60%（${fmt(w.unit60)}/件）结算`).join('\n');
-    showModal('⚠️ 同城倒卖警告',`以下物品命中“同城同次 + 顺价套利”惩罚：\n${rows}\n\n仍要继续吗？`,'继续售出',proceed);
-    return;
-  }
-  proceed();
-}
-
-async function execBuyDraft(list,total){
-  const city=GS.location;
-  if(ONLINE){
-    const user=localStorage.getItem(AUTH_KEY)||'';
-    // C1：服务端资金/持仓权威结算（校验库存+资金+价格范围），返回权威 gold/cargo/stocks
-    const r=await NET.post('/api/tradeBatch',{user,city,dir:'buy',items:list.map(x=>({item:x.gid,qty:x.qty})),total:Math.round(total||0)});
-    if(!r||!r.ok){toast('在线结算失败：'+(r&&r.err?r.err:'网络错误'),'err');return false;}
-    if(r.serverAt)GS.__lastServerAt=r.serverAt; // 防止后续自动保存覆盖服务器变更
-    if(typeof r.gold==='number')State.set('gold',r.gold);
-    if(r.cargo)State.set('cargo',r.cargo);
-    if(r.stocks){
-      const cs=State.get('cityStocks')||{};
-      cs[city]=r.stocks;
-      State.set('cityStocks',cs);
-    }
-    // 本地轻记账（lots/成本/声望/事件；资金与持仓以服务端为准）
-    for(const it of list){
-      buyItem(it.gid,it.qty,{skipAdvance:true,serverLedger:true});
-    }
-    toast('✅ 已完成购入（中转面板）','ok');
-    return true;
-  }
-  // 本地落地（一次确认，多物品成交；单笔交易不再重复推进游戏日）
-  for(const it of list){
-    const rr=buyItem(it.gid,it.qty,{skipAdvance:true});
-    if(!rr.ok){toast('购入失败：'+rr.msg,'err');return false;}
-  }
-  toast('✅ 已完成购入（中转面板）','ok');
-  return true;
-}
-
-async function execSellDraft(list,net){
-  const city=GS.location;
-  if(ONLINE){
-    const user=localStorage.getItem(AUTH_KEY)||'';
-    // C1：服务端持仓权威校验 + 记账，返回权威 gold/cargo/stocks
-    const r=await NET.post('/api/tradeBatch',{user,city,dir:'sell',items:list.map(x=>({item:x.gid,qty:x.qty})),net:Math.round(net||0)});
-    if(!r||!r.ok){toast('在线结算失败：'+(r&&r.err?r.err:'网络错误'),'err');return false;}
-    if(r.serverAt)GS.__lastServerAt=r.serverAt;
-    if(typeof r.gold==='number')State.set('gold',r.gold);
-    if(r.cargo)State.set('cargo',r.cargo);
-    if(r.stocks){
-      const cs=State.get('cityStocks')||{};
-      cs[city]=r.stocks;
-      State.set('cityStocks',cs);
-    }
-    // 本地轻记账：真实扣 lots（含惩罚）+ 成本/声望/事件
-    for(const it of list){
-      const lr=consumeLots(it.gid,it.qty);
-      sellItem(it.gid,it.qty,{skipAdvance:true,serverLedger:true,lotsResult:lr});
-    }
-    toast('✅ 已完成售出（中转面板）','ok');
-    return true;
-  }
-  for(const it of list){
-    const rr=sellItem(it.gid,it.qty,{skipAdvance:true});
-    if(!rr.ok){toast('售出失败：'+rr.msg,'err');return false;}
-  }
-  toast('✅ 已完成售出（中转面板）','ok');
-  return true;
-}
-async function doAction(type,gid){
-  const qty=getSliderVal(gid);
-  if(type==='buy'){
-    // C1：单笔买入在线也走服务端权威结算
-    if(ONLINE){
-      const city=GS.location;
-      const price=getDayPrice(city,gid,GS.day)||0;
-      const total=price*qty;
-      const taxRate=(window.Tax&&Tax.getRate)?Tax.getRate(getRepLevel(city)):0;
-      const tax=(window.Tax&&Tax.calc)?Tax.calc(total,taxRate):0;
-      const pay=total+tax;
-      const user=localStorage.getItem(AUTH_KEY)||'';
-      const r=await NET.post('/api/tradeBatch',{user,city,dir:'buy',items:[{item:gid,qty}],total:Math.round(pay)});
-      if(!r||!r.ok){toast('在线结算失败：'+(r&&r.err?r.err:'网络错误'),'err');return;}
-      if(r.serverAt)GS.__lastServerAt=r.serverAt;
-      if(typeof r.gold==='number')State.set('gold',r.gold);
-      if(r.cargo)State.set('cargo',r.cargo);
-      if(r.stocks){const cs=State.get('cityStocks')||{};cs[city]=r.stocks;State.set('cityStocks',cs);}
-      const rr=buyItem(gid,qty,{skipAdvance:true,serverLedger:true});
-      toast(rr.msg,rr.ok?'ok':'err');
-      if(rr.ok){delete sliderVals[gid];render();}
-      return;
-    }
-    const r=buyItem(gid,qty);toast(r.msg,r.ok?'ok':'err');if(r.ok){delete sliderVals[gid];render();}return;
-  }
-  // 卖出前：同城同次 + 本城买入价<卖出价（顺价可套利）时弹窗确认 60% 惩罚
-  const info=getSameVisitArbitrage(gid,qty);
-  if(info){
-    const unit60=Math.round(info.buy*0.6);
-    showModal('⚠️ 同城倒卖警告',
-      `本城该物资当前「买入价 ${fmt(info.buy)}」低于「卖出价 ${fmt(info.sPrice)}」\n本次出售中有 ${info.sameQty} 件为本城本次停留期间买入\n若确认出售，这 ${info.sameQty} 件将按当前买入价的 60%（${fmt(unit60)} 金/件）结算`,
-      '确认出售',()=>{doSell(gid,qty);});
-    return;
-  }
-  doSell(gid,qty);
-}
-async function doSell(gid,qty){
-  // C1：单笔卖出在线也走服务端权威结算
-  if(ONLINE){
-    const city=GS.location;
-    const lr=consumeLots(gid,qty); // 真实扣 lots（含惩罚），返回 revenue 供服务端记账
-    const taxRate=(window.Tax&&Tax.getRate)?Tax.getRate(getRepLevel(city)):0;
-    const tax=(window.Tax&&Tax.calc)?Tax.calc(lr.revenue,taxRate):0;
-    const net=lr.revenue-tax;
-    const user=localStorage.getItem(AUTH_KEY)||'';
-    const r=await NET.post('/api/tradeBatch',{user,city,dir:'sell',items:[{item:gid,qty}],net:Math.round(net)});
-    if(!r||!r.ok){toast('在线结算失败：'+(r&&r.err?r.err:'网络错误'),'err');return;}
-    if(r.serverAt)GS.__lastServerAt=r.serverAt;
-    if(typeof r.gold==='number')State.set('gold',r.gold);
-    if(r.cargo)State.set('cargo',r.cargo);
-    if(r.stocks){const cs=State.get('cityStocks')||{};cs[city]=r.stocks;State.set('cityStocks',cs);}
-    const rr=sellItem(gid,qty,{skipAdvance:true,serverLedger:true,lotsResult:lr});
-    toast(rr.msg,rr.ok?'ok':'err');
-    if(rr.ok){delete sliderVals[gid];render();}
-    return;
-  }
-  const r=sellItem(gid,qty);
-  toast(r.msg,r.ok?'ok':'err');
-  if(r.ok){delete sliderVals[gid];render();}
-}
-function getSliderVal(gid){const sl=document.getElementById('slider-'+gid);return sl?parseInt(sl.value)||1:1}
-function qtySliderHTML(gid,maxVal,initVal){
-  const base=sliderVals[gid]!==undefined?sliderVals[gid]:(initVal||1);
-  const v=Math.max(1,Math.min(base,maxVal));
-  return `<div class="qty-slider"><button class="qty-arrow" onclick="event.stopPropagation();setSliderDelta('${gid}',-1)">◀</button>
-  <input type="range" id="slider-${gid}" min="1" max="${maxVal}" value="${v}" onclick="event.stopPropagation()" onpointerdown="window._draggingGid='${gid}'" oninput="document.getElementById('sv-${gid}').textContent=this.value;sliderVals['${gid}']=parseInt(this.value)||1" onpointerup="window._draggingGid=null;onSliderRelease()" onchange="event.stopPropagation()">
-  <button class="qty-arrow" onclick="event.stopPropagation();setSliderDelta('${gid}',1)">▶</button>
-  <span class="qty-val" id="sv-${gid}">${v}</span></div>`;
-}
-function setSliderDelta(gid,d){const sl=document.getElementById('slider-'+gid);if(sl){const v=Math.min(parseInt(sl.max),Math.max(1,(parseInt(sl.value)||1)+d));sl.value=v;document.getElementById('sv-'+gid).textContent=v;sliderVals[gid]=v;}}
-function onSliderRelease(){window._draggingGid=null;if(window._pendingRefresh){window._pendingRefresh=false;render();}}
-
-// ===== 折线图 =====
-function drawChart(){
-  if(!_chartItem)return;const canvas=document.getElementById('price-chart');if(!canvas)return;
-  // 画布尺寸完全由 CSS 决定（固定高度 360px），避免因 bitmap 尺寸变化导致折线图变大变小
-  const cssW=canvas.clientWidth||canvas.parentElement.clientWidth||320;
-  const cssH=canvas.clientHeight||360;
-  if(canvas.width!==cssW)canvas.width=cssW;
-  if(canvas.height!==cssH)canvas.height=cssH;
-  const loc=GS.location,hist=getPriceHistory(loc,_chartItem,_chartDays);
-  const ctx=canvas.getContext('2d'),W=canvas.width,H=canvas.height,padL=55,padR=25,padT=20,padB=35;
-  ctx.clearRect(0,0,W,H);ctx.fillStyle='#0d1b2a';ctx.fillRect(0,0,W,H);
-  if(hist.length<2)return;
-  const isBuyView = (marketTab==='buy');
-  const buyPrices=hist.map(h=>h.price);
-  const sellPrices=hist.map(h=>h.sell);
-  const allP = isBuyView ? [...buyPrices, ...sellPrices] : [...sellPrices];
-  const minP=Math.min(...allP),maxP=Math.max(...allP),range=maxP-minP||1;
-  const pw=(W-padL-padR)/(hist.length-1),by=y=>padT+(H-padT-padB)*(1-(y-minP)/range),bx=i=>padL+i*pw;
-  ctx.strokeStyle='#1a1a3a';ctx.lineWidth=0.5;for(let i=0;i<=4;i++){const y=padT+(H-padT-padB)*i/4;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke()}
-  // 售出线（一直画）
-  ctx.beginPath();
-  ctx.strokeStyle='#ff9f43';
-  ctx.lineWidth=isBuyView?1.5:2;
-  if(isBuyView)ctx.setLineDash([4,3]);
-  for(let i=0;i<hist.length;i++){const x=bx(i),y=by(hist[i].sell);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)}
-  ctx.stroke();
-  ctx.setLineDash([]);
-  // 购入线（仅购入页面展示）
-  if(isBuyView){
-    ctx.beginPath();
-    ctx.strokeStyle='#26d98b';
-    ctx.lineWidth=2;
-    for(let i=0;i<hist.length;i++){const x=bx(i),y=by(hist[i].price);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)}
-    ctx.stroke();
-  }
-  const last=hist[hist.length-1];
-  if(isBuyView){
-    ctx.beginPath();ctx.arc(bx(hist.length-1),by(last.price),5,0,Math.PI*2);ctx.fillStyle='#26d98b';ctx.fill();
-    ctx.beginPath();ctx.arc(bx(hist.length-1),by(last.sell),4,0,Math.PI*2);ctx.fillStyle='#ff9f43';ctx.fill();
-  }else{
-    ctx.beginPath();ctx.arc(bx(hist.length-1),by(last.sell),5,0,Math.PI*2);ctx.fillStyle='#ff9f43';ctx.fill();
-  }
-  ctx.fillStyle='#8b95a5';ctx.font='10px sans-serif';for(let i=0;i<=4;i++){const y=padT+(H-padT-padB)*i/4;ctx.fillText(fmt(Math.round(maxP-(maxP-minP)*i/4)),2,y+4)}
-  const steps=hist.length<=30?5:(hist.length<=60?8:12);for(let i=0;i<hist.length;i+=Math.ceil(hist.length/steps))ctx.fillText(hist[i].day,bx(i),H-padB+14);
-  const trend=getTrend(GS.location,_chartItem, isBuyView ? 'buy' : 'sell');
-  const cls=trend.cls==='up'?'color:var(--buy)':(trend.cls==='down'?'color:var(--red)':'color:var(--text2)');
-  const tDay=Math.max(1,GS.day+1);
-  const estBuy=getDayPrice(GS.location,_chartItem,tDay);
-  const estSell=getSellPriceBase(GS.location,_chartItem,tDay);   // v9.6：预计明日卖出走纯物价（走势预测，不含需求档位）
-  if(isBuyView){
-    // 购入页：同时展示买入价与卖出价变化
-    ctx.font='10px sans-serif';
-    ctx.fillStyle='#26d98b';ctx.fillRect(W-160,padT,10,3);
-    ctx.fillStyle='#ff9f43';ctx.fillRect(W-80,padT,10,3);
-    ctx.fillStyle='#8b95a5';
-    ctx.fillText('买入价',W-147,padT-2);
-    ctx.fillText('卖出价',W-67,padT-2);
-    const curBuy=last.price,curSell=last.sell;
-    const spreadPct=curBuy?Math.round((1-curSell/curBuy)*100):0;
-    const deltaBuy=(estBuy!=null?estBuy-curBuy:0);
-    document.getElementById('chart-stats').innerHTML=
-      `<span class="stat">买入 <b class="buy">${fmt(curBuy)}</b></span>`+
-      `<span class="stat">卖出 <b class="sell">${fmt(curSell)}</b> (${spreadPct}%off)</span>`+
-      `<span class="stat">${_chartDays}日买入最低 <b>${fmt(Math.min(...buyPrices))}</b></span>`+
-      `<span class="stat">${_chartDays}日买入最高 <b>${fmt(Math.max(...buyPrices))}</b></span>`+
-      `<span class="stat" style="${cls}">${trend.label}</span>`+
-      `<span class="stat">预计明日买入 <b class="buy">${fmt(estBuy||0)}</b> (${deltaBuy>=0?'+':''}${fmt(deltaBuy)})</span>`;
-  }else{
-    // 售出页：只展示售价变化（折线/预计基于纯物价；需求档位以独立标签提示成交修正）
-    const curSell=last.sell;
-    const deltaSell=(estSell!=null?estSell-curSell:0);
-    const _ds=(window.DemandEngine&&DemandEngine.getDemandState)?DemandEngine.getDemandState(GS.location,_chartItem,Math.floor(GS.day/CENTRAL_PERIOD)):'normal';
-    const _hotPct=Math.round(((window.DemandEngine&&DemandEngine.getHotBonus)?DemandEngine.getHotBonus(GS.location,_chartItem):(DemandEngine.HOT_BONUS||0.15))*100);
-    const dsNote=_ds==='hot'?`<span class="stat" style="color:#ff6b35">🔥 热门收购 +${_hotPct}%</span>`
-              :_ds==='cool'?`<span class="stat" style="color:#5a8ec9">🧊 需求冷淡 ×${DemandEngine.COOL_MULT||0.6}</span>`
-              :_ds==='reject'?`<span class="stat" style="color:var(--red)">🚫 本城拒收</span>`:'';
-    document.getElementById('chart-stats').innerHTML=
-      `<span class="stat">卖出 <b class="sell">${fmt(curSell)}</b></span>`+
-      `<span class="stat">${_chartDays}日最低 <b>${fmt(Math.min(...sellPrices))}</b></span>`+
-      `<span class="stat">${_chartDays}日最高 <b>${fmt(Math.max(...sellPrices))}</b></span>`+
-      `<span class="stat" style="${cls}">${trend.label}</span>`+
-      dsNote+
-      `<span class="stat">预计明日卖出 <b class="sell">${fmt(estSell||0)}</b> (${deltaSell>=0?'+':''}${fmt(deltaSell)})</span>`;
-  }
-  syncMarketHeightToChart();
-}
-
-// 以左侧“物价表 + 下方小标签”为唯一高度基准，锁定 .market-body 高度。
-// 右侧面板严格按该高度填充，超出部分由各自内部滚动承担（避免出现折线图下方冗余空白）。
-let __mh_inited=false;
-function syncMarketHeightToChart(){
-  const body=document.querySelector('.market-body');
-  const chart=document.querySelector('.market-chart .chart-panel');
-  if(!body || !chart) return;
-
-  // 使用 requestAnimationFrame，等 canvas 与 stats 更新后再取高度
-  requestAnimationFrame(()=>{
-    const cs=getComputedStyle(body);
-    const pad=(parseFloat(cs.paddingTop)||0)+(parseFloat(cs.paddingBottom)||0);
-    const h=Math.ceil(chart.getBoundingClientRect().height + pad);
-    if(h>0) body.style.height=h+'px';
-  });
-
-  if(__mh_inited) return;
-  __mh_inited=true;
-  window.addEventListener('resize', ()=>syncMarketHeightToChart());
-}
-
+/* v9.10.2：交易市场 UI 已拆至 src/economy/market-ui.js（renderMarketCards/toggleCard/refreshChartSelectForMarketTab/renderTradeDraftPanel/draftCapacityCheck/onDraftQtyChange/onDraftRemove/clearDraftManual/draftFromSlider/confirmDraft/execBuyDraft/execSellDraft/doAction/doSell/滑条/折线图/syncMarketHeightToChart） */
+// v9.10.2：数量滑条 / 折线图 / syncMarketHeightToChart 已随市场 UI 一并拆至 src/economy/market-ui.js
 // ===== 载具仓库面板（车站面板置顶，载具栏与仓库栏在下方） =====
 function renderVehicleWh(){
   const loc=GS.location,used=getUsedCargo(),cap=getVehicleCapacity();
@@ -3714,7 +3045,7 @@ function renderVehicleWh(){
 // ===== 事件绑定 =====
 function bindEvents(){
   if(currentTab==='map'&&MAP.needCenter){MAP.needCenter=false;centerOn(GS.location);applyMapView();} // 首次地图挂载后按真实尺寸居中
-  document.querySelectorAll('.city-node').forEach(circle=>{circle.onclick=function(e){e.stopPropagation();const destId=this.dataset.city;if(destId==='starfall')return toast('星陨城暂未开放','info');if(destId===GS.location&&!GS.traveling)return;if(GS.traveling)return toast('正在旅行中','info');const sp=shortestPath(GS.location,destId);if(!sp)return;const realSec=Math.round(sp.distance/getVehicleSpeed()*60);const destName=getCityName(destId);const durLoss=calcDurabilityLoss(sp.distance);showModal(`前往 ${destName}`,`${fmt(sp.distance)} 里路程 · 约 ${realSec} 秒抵达\n预计耐久 -${durLoss}点（当前耐久 ${Math.round(getDurabilityPct()*100)}%）`,'出发',()=>{const r=startTravel(destId);toast(r.msg,r.ok?'ok':'err');if(r.ok)render();});}});
+  document.querySelectorAll('.city-node').forEach(circle=>{circle.onclick=function(e){e.stopPropagation();const destId=this.dataset.city;if(destId===GS.location&&!GS.traveling)return;if(GS.traveling)return toast('正在旅行中','info');const sp=shortestPath(GS.location,destId);if(!sp)return;const realSec=Math.round(sp.distance/getVehicleSpeed()*60);const destName=getCityName(destId);const durLoss=calcDurabilityLoss(sp.distance);showModal(`前往 ${destName}`,`${fmt(sp.distance)} 里路程 · 约 ${realSec} 秒抵达\n预计耐久 -${durLoss}点（当前耐久 ${Math.round(getDurabilityPct()*100)}%）`,'出发',()=>{const r=startTravel(destId);toast(r.msg,r.ok?'ok':'err');if(r.ok)render();});}});
   document.querySelectorAll('.chart-time button').forEach(b=>{b.onclick=function(){document.querySelectorAll('.chart-time button').forEach(x=>x.classList.remove('active'));this.classList.add('active');_chartDays=parseInt(this.dataset.days);drawChart();}});
 }
 
@@ -3735,6 +3066,7 @@ setInterval(()=>{
   if(eb)eb.innerHTML=renderEventBoard();
   // 已接任务倒计时每秒局部刷新（仅城市页）
   if(currentTab==='city')updateTaskTimers();
+  if(window.Starfall)Starfall.tick(); // v9.9：星陨城活动倒计时/轮播/惰性轮转
   // 旅行中：仅增量更新地图位置点与进度（不重建地图，避免城市页/路网动画闪烁）
   // 抵达时 advanceDay 返回 arrived → 上面已全量 render()
   if(!dragging&&GS.traveling&&currentTab==='map'){updateTravelUI();}
@@ -3786,6 +3118,15 @@ else{(async()=>{
 <!-- 成就与排行榜样式（v7.5） -->
 
 <!-- 弹幕聊天室（v7.6） -->
+<div id="user-overlay" class="user-overlay" style="display:none">
+  <div class="user-panel">
+    <div class="user-head">
+      <span class="user-title">👤 用户中心</span>
+      <button class="user-close" onclick="closeUserPanel()" title="关闭">✕</button>
+    </div>
+    <div class="user-body" id="user-body"></div>
+  </div>
+</div>
 <div id="danmaku-layer"></div>
 <div id="chat-fab" title="弹幕聊天室">💬</div>
 <div id="chat-panel" style="display:none">
@@ -3796,7 +3137,7 @@ else{(async()=>{
     <button id="chat-send" onclick="chatSend()">发送</button>
   </div>
   <div id="chat-foot">
-    <span class="ch-tip">【玩家id】〈所在地〉：内容</span>
+    <span class="ch-tip">【昵称】〈所在地〉：内容</span>
     <button id="chat-hist-btn" onclick="toggleChatHist()">查看历史</button>
   </div>
 </div>

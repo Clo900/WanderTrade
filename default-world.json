@@ -1231,5 +1231,66 @@
       "amber": 120
     },
     "starfall": {}
+  },
+  "itemCategories": {
+    "special": [
+      "amber",
+      "beer",
+      "carpet",
+      "celadon",
+      "cheese",
+      "coral",
+      "dye",
+      "fish",
+      "fur",
+      "ginseng",
+      "herb",
+      "honey",
+      "iron_ingot",
+      "ivory",
+      "jade",
+      "leather",
+      "moon_crystal",
+      "mushroom",
+      "oak",
+      "oil",
+      "pearl",
+      "sailcloth",
+      "silk",
+      "spice",
+      "stariron",
+      "steel_blade",
+      "tapestry",
+      "tea",
+      "wine",
+      "wool"
+    ],
+    "basic": [
+      "candle",
+      "clay",
+      "cloth",
+      "cup",
+      "fishnet",
+      "flour",
+      "glass",
+      "grain",
+      "hemp",
+      "ink",
+      "ironware",
+      "linen",
+      "lumber",
+      "millet",
+      "pottery",
+      "roots",
+      "salt",
+      "soap",
+      "stone",
+      "tar",
+      "tissue"
+    ]
+  },
+  "starfallConfig": {
+    "runHours": 24,
+    "interHours": 48
   }
 }

@@ -13,6 +13,8 @@
 - 装配、升级不同类型的车厢和载具核心
 - 接取送货、载客等任务，提升城市声望
 - 解锁情报、仓库、成就和排行榜
+- 参与**星陨城边境建设活动**：运物资提交，推进全服建设度，按排名领取金币与星陨合金奖励
+- 收取**邮箱**（活动奖励 / GM 发放）并主动领取附件；接收**全服跑马灯公告**
 - 在线版支持账号存档、世界同步与公共聊天
 
 ## 快速开始
@@ -106,9 +108,14 @@ JSON 文件存储
 - `economy/trade-draft.js`：中转面板交易单（一次确认多物品成交）
 - `economy/trade-validate.js`：交易单预校验与惩罚提示汇总
 - `economy/trade-preview.js`：交易单汇总预览（仅总额展示）
+- `economy/demand-engine.js`：市场需求档位（热门/正常/冷淡/拒收，16h 轮换）
+- `economy/source-pricing.js`：产地买入差异化（距离即价格）
+- `economy/price-exceptions.js`：城市×物品卖出封顶/封底
 - `gameplay/pathing-core.js`：路径搜索与距离计算
+- `gameplay/starfall.js`：星陨城活动面板（动态图景/提交区/历史冠军）与单机本地结算
+- `gameplay/mailbox.js`：邮箱弹窗（列表/详情/领取附件）
 
-静态样式已从 `index.html` 抽离到 `styles/theme.css`（主题变量）与 `styles/app.css`（布局与组件），脚本按 `runtime → state → event-bus → ui-primitives → data → price-engine → events → trade-graph → tax → trade-draft → trade-validate → trade-preview → pathing-core` 顺序加载。
+静态样式已从 `index.html` 抽离到 `styles/theme.css`（主题变量）与 `styles/app.css`（布局与组件），脚本按 `runtime → state → event-bus → ui-primitives → data → price-engine → events → trade-graph → tax → trade-draft → trade-validate → trade-preview → demand-engine → source-pricing → price-exceptions → pathing-core → starfall → mailbox` 顺序加载。
 
 服务端基于 PowerShell 与 `.NET HttpListener`，负责：
 
@@ -116,7 +123,9 @@ JSON 文件存储
 - 注册、登录与玩家存档
 - 世界时间、库存和公共事件同步
 - 交易校验、排行榜与聊天
-- GM 管理命令
+- 星陨城活动状态机（确定性抽选/惰性轮转/结算）与奖励邮件投递
+- 邮箱接口与满仓自动清理、全服跑马灯公告（`lastBroadcast`）
+- GM 管理命令（timescale/setday/givegold/giveitem/broadcast/starfall/mail）与星陨城运维日志（`starfall_log.txt`）
 
 ## 目录结构
 
@@ -126,7 +135,7 @@ WanderTrade/
 │  ├─ index.html            页面结构、主脚本及游戏逻辑
 │  ├─ styles/               静态样式（theme.css 主题变量 / app.css 布局组件）
 │  └─ src/                  已拆分的客户端模块
-├─ Docs/                    开发与迁移文档（拆分清单 / 地图索引 / 样式文件表）
+├─ Docs/                    开发与迁移文档（拆分清单 / 地图索引 / 样式文件表 / 星陨城活动玩法设计）
 ├─ scripts/e2e/             浏览器回归套件（puppeteer-core + 系统 Chrome，`E2E_URL` 端口参数化）
 ├─ server.ps1               在线版 HTTP 服务端
 ├─ start-server.bat         本机一键启动脚本
@@ -146,9 +155,11 @@ WanderTrade/
 
 | 路径 | 内容 |
 | --- | --- |
-| `default-world.json` | 创建新世界时使用的基础配置 |
-| `world.json` | 当前世界时间、价格种子、库存配置和 GM 密钥 |
-| `players/*.json` | 各玩家账号与游戏存档 |
+| `default-world.json` | 创建新世界时使用的基础配置（含星陨城抽选物资池 `itemCategories`） |
+| `world.json` | 当前世界时间、价格种子、库存配置、GM 密钥与最近公告 `lastBroadcast` |
+| `starfall_activity.json` | 星陨城活动状态（期次/阶段/进度/排行榜/历史冠军） |
+| `starfall_log.txt` | 星陨城运维日志（结算/轮转/管理操作，`Write-SfLog` 追加写入） |
+| `players/*.json` | 各玩家账号与游戏存档（含邮箱 `mailbox`） |
 | `chat.json` | 公共聊天记录 |
 
 建议停止服务后定期备份 `world.json`、`players/` 和 `chat.json`。

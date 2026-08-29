@@ -1,7 +1,8 @@
 /* ============================================================
  * 艾尔希亚跑商 · 浏览器回归测试（E1）
- * 覆盖：v9.5~v9.7.2 关键链路
+ * 覆盖：v9.5~v9.10 关键链路（当前存档结构 SAVE_SCHEMA=973）
  *   - 在线：注册 → 市场面板（新增物资价格/图表）→ 售出需求标签
+ *   - E1 星陨城专项：GM 开期 → 发物资 → 提交（当期100/20/非当期1）→ 结算 → 邮箱领奖
  *   - 单机：旧档迁移（mergeWorldTable 补缺 + __saveSchema 登记）
  * 依赖：puppeteer-core（复用系统 Chrome，无需下载浏览器）
  * 用法：
@@ -38,6 +39,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await sleep(2500);
   const uname = 'e2e' + Date.now() % 1000000;
   await page.type('#auth-user', uname);
+  // v9.10.3：注册新增昵称（必填；puppeteer page.type 对 CJK 不迁移焦点，故直接赋值）
+  await page.evaluate(n => { document.getElementById('auth-nick').value = n; }, '回归旅人' + (Date.now() % 100000));
   await page.type('#auth-pass', 'pass1234');
   await page.evaluate(() => { toggleAuth('register'); return doRegister(); });
   await page.waitForFunction(() => window.__gsReady === true, { timeout: 15000 }).catch(()=>{});
@@ -49,7 +52,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     for(const c of Object.keys(window.BASE_PRICES)) for(const k of Object.keys(window.BASE_PRICES[c])) s.add(k);
     return s.size;
   });
-  if(results.online.saveSchema !== 972) fail('online.saveSchema', '期望 972 实际 ' + results.online.saveSchema);
+  if(results.online.saveSchema !== 973) fail('online.saveSchema', '期望 973 实际 ' + results.online.saveSchema);
   if(results.online.basePricesCount !== 51) fail('online.basePricesCount', '期望 51 实际 ' + results.online.basePricesCount);
 
   await page.evaluate(() => { currentTab = 'city'; renderContent(); });
@@ -99,6 +102,115 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   for(const gid of NEW){
     const v = results.online.newItemPrices[gid];
     if(v.buy == null || v.hist === 0) fail('online.newItem.' + gid, 'buy=' + v.buy + ' hist=' + v.hist);
+  }
+
+  // ================= E1：星陨城活动专项（在线真实链路） =================
+  // 流程：GM 开新期 → 存档 → GM 发物资 → 页面提交（当期特产100/普通20/非当期1）→ GM 结算 → 邮箱领奖
+  {
+    const world = JSON.parse(fs.readFileSync('E:/WanderTrade/world.json', 'utf8').replace(/^\uFEFF/, '')); // 去 BOM
+    const key = world.adminPass;
+    if(!key){ fail('e1.adminPass', 'world.json 缺少 adminPass'); }
+    const gm = body => page.evaluate(async (b) => {
+      const r = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      return await r.json();
+    }, body);
+
+    // 1) 保证处在新开建设期：先 end 结算可能存在的建设期 → 再 start 开新期
+    await gm({ key, cmd: 'starfall', action: 'end' });
+    const startR = await gm({ key, cmd: 'starfall', action: 'start' });
+    if(!startR.ok){ fail('e1.start', JSON.stringify(startR)); }
+    await sleep(400);
+    const st2 = await gm({ key, cmd: 'starfall', action: 'status' });
+    const special = st2.activity && st2.activity.special;
+    const normal = st2.activity && st2.activity.normal;
+    results.e1 = { period: st2.activity && st2.activity.period, special, normal: normal && normal[0], phase: st2.activity && st2.activity.phase };
+    if(!special || !normal || !normal.length){ fail('e1.goods', '新期未抽到物资：' + JSON.stringify(st2)); }
+    if(st2.activity.phase !== 'running') fail('e1.phase', '期望 running 实际 ' + st2.activity.phase);
+
+    // 2) 非当期物资：类别在 special/basic 全集内、但不在本期需求内 → 1 贡献/件
+    const other = await page.evaluate((req) => {
+      const rs = new Set([req.special, ...req.normal]);
+      return Object.keys(window.ITEMS).find(g => (window.ITEMS[g].cat === 'special' || window.ITEMS[g].cat === 'basic') && !rs.has(g));
+    }, { special, normal });
+    if(!other){ fail('e1.other', '未能挑出非当期物资'); }
+
+    // 3) 先落一次档（giveitem/contribute 需要服务端有玩家档）→ GM 发物资 → 本地 cargo 对齐
+    await page.evaluate(() => autoSave());
+    await sleep(900);
+    const give = (item, qty) => gm({ key, cmd: 'giveitem', user: uname, item, qty });
+    const g1 = await give(special, 3);
+    if(!g1.ok){ fail('e1.give.special', JSON.stringify(g1)); }
+    await give(normal[0], 5);
+    await give(other, 10);
+    await page.evaluate((c) => {
+      const cargo = Object.assign({}, GS.cargo);
+      cargo[c.special] = 3; cargo[c.normal] = 5; cargo[c.other] = 10;
+      GS.cargo = cargo;
+    }, { special, normal: normal[0], other });
+
+    // 4) 拉权威活动 → 进入星陨城面板 → 选择物资填数量提交（期望 2×100 + 5×20 + 10×1 = 310）
+    await page.evaluate(() => Starfall.sync());
+    await sleep(400);
+    await page.evaluate(() => { GS.location = 'starfall'; currentTab = 'city'; renderContent(); });
+    await sleep(500);
+    const submitR = await page.evaluate((sel) => new Promise(async (resolve) => {
+      const btn = document.querySelector('.sf-submit-btn');
+      if(!btn){ resolve({ ok: false, err: '星陨城提交面板未渲染' }); return; }
+      Starfall.toggleItem(sel.special);
+      Starfall.toggleItem(sel.normal);
+      Starfall.toggleItem(sel.other);
+      const set = (gid, q) => { const i = document.querySelector('.sf-draft-row .sf-qty[data-item="' + gid + '"]'); if(i) i.value = String(q); };
+      set(sel.special, 2); set(sel.normal, 5); set(sel.other, 10);
+      Starfall.updateSum();
+      const sumEl = document.getElementById('sf-sum');
+      const sum = sumEl ? sumEl.textContent : null;
+      btn.click();
+      const t0 = Date.now();
+      while(Date.now() - t0 < 6000){
+        const r = await fetch('/api/starfall/activity?user=' + encodeURIComponent(localStorage.getItem(AUTH_KEY))).then(x => x.json());
+        if(r.ok && r.activity && r.activity.myScore === 310){ resolve({ ok: true, sum }); return; }
+        await new Promise(r2 => setTimeout(r2, 200));
+      }
+      resolve({ ok: false, sum, err: 'myScore 未达 310' });
+    }), { special, normal: normal[0], other });
+    if(!submitR.ok) fail('e1.submit', (submitR.err || '') + ' sum=' + submitR.sum);
+    if(submitR.sum !== '310') fail('e1.sum', '提交面板合计显示 ' + submitR.sum + '（期望 310）');
+    if(results.e1) results.e1.sum = submitR.sum;
+
+    // 5) GM 结算 → 活动进入间隙期 → 邮箱收到奖励 → 领取附件到账
+    const endR = await gm({ key, cmd: 'starfall', action: 'end' });
+    if(!endR.ok){ fail('e1.end', JSON.stringify(endR)); }
+    await sleep(600);
+    const st3 = await gm({ key, cmd: 'starfall', action: 'status' });
+    if(st3.activity.phase !== 'intermission') fail('e1.phaseAfterEnd', '期望 intermission 实际 ' + st3.activity.phase);
+    if(results.e1) results.e1.champion = st3.activity.lastChampion;
+    if(st3.activity.lastChampion !== uname) fail('e1.champion', '冠军应为 ' + uname + ' 实际 ' + st3.activity.lastChampion);
+
+    const mailR = await page.evaluate(() => Mailbox.sync().then(() => {
+      const ms = Mailbox.box().filter(x => x.title && x.title.indexOf('星陨城') >= 0 && x.from === '边境城建指挥部');
+      const last = ms[ms.length - 1];
+      return last ? { title: last.title, gold: (last.attachments && last.attachments.gold) || 0, id: last.id } : null;
+    }));
+    if(!mailR){ fail('e1.mail', '未收到星陨城结算邮件'); }
+    else{
+      if(mailR.title.indexOf('第 ' + results.e1.period + ' 期') < 0) fail('e1.mail.title', '邮件期次不符：' + mailR.title);
+      if(!(mailR.gold > 0)) fail('e1.mail.gold', '奖励金币 <= 0，title=' + mailR.title);
+      results.e1.mail = mailR;
+      const goldBefore = await page.evaluate(() => GS.gold);
+      const claimed = await page.evaluate((id) => new Promise((res) => {
+        Mailbox.claim(id);
+        const t0 = Date.now();
+        const iv = setInterval(() => {
+          const m = Mailbox.box().find(x => x.id === id);
+          if(m && m.claimed){ clearInterval(iv); res(true); }
+          else if(Date.now() - t0 > 5000){ clearInterval(iv); res(false); }
+        }, 150);
+      }), mailR.id);
+      await sleep(400);
+      if(!claimed) fail('e1.claim', '附件领取未生效');
+      const goldAfter = await page.evaluate(() => GS.gold);
+      if(!(goldAfter >= goldBefore + mailR.gold)) fail('e1.gold', '领取后金币未增加：' + goldBefore + ' -> ' + goldAfter);
+    }
   }
 
   // ================= 单机：旧档迁移 =================
@@ -151,12 +263,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     };
   });
   if(results.standalone.itemsAfterMigrate !== 51) fail('standalone.itemsAfterMigrate', '期望 51 实际 ' + results.standalone.itemsAfterMigrate);
-  if(results.standalone.saveSchema !== 972) fail('standalone.saveSchema', '期望 972 实际 ' + results.standalone.saveSchema);
+  if(results.standalone.saveSchema !== 973) fail('standalone.saveSchema', '期望 973 实际 ' + results.standalone.saveSchema);
   if(results.standalone.rootsBuy == null) fail('standalone.rootsBuy', '新增物资价格为空');
 
   // ================= 汇总 =================
   console.log('\n===== 回归测试结果 =====');
-  console.log(JSON.stringify({ online: { saveSchema: results.online.saveSchema, basePricesCount: results.online.basePricesCount, market: results.online.market, sellPanel: results.online.sellPanel }, standalone: results.standalone, jsErrors: results.errors.filter(e => !e.startsWith('✗')) }, null, 2));
+  console.log(JSON.stringify({ online: { saveSchema: results.online.saveSchema, basePricesCount: results.online.basePricesCount, market: results.online.market, sellPanel: results.online.sellPanel }, e1: results.e1, standalone: results.standalone, jsErrors: results.errors.filter(e => !e.startsWith('✗')) }, null, 2));
   if(results.errors.filter(e => e.startsWith('✗')).length){
     console.log('\n失败断言:');
     results.errors.filter(e => e.startsWith('✗')).forEach(e => console.log('  ' + e));
