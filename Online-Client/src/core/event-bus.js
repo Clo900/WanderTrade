@@ -65,6 +65,7 @@
     ACHIEVEMENT:      'achievement-unlocked',
     TASK_COMPLETE:    'task-complete',
     DAMAGE_TAKEN:     'damage-taken',
+    DRAFT_CHANGED:    'draft-changed', // v9.13.1：中转面板变更（加入/移除/清空）——引导分阶段同步用
     NOTIFICATION:     'notification'
   };
 

@@ -283,7 +283,11 @@ function draftFromSlider(mode,gid){
 }
 async function confirmDraft(mode){
   if(GS.traveling)return toast('旅行中不可交易','info');
-  advanceDay(); // 确认时推进一次游戏日（与单笔交易口径一致）
+  // v9.13.6：确认成交时推进游戏日，但期间跳过"日/中枢变化清空中转面板"的拦截弹窗
+  //（在线模式日由服务器时间驱动，确认时恰逢翻日会清空 draft 打断成交；成交本就是使用当前 draft 的意图）
+  __confirmingDraft=true;
+  try{ advanceDay(); }
+  finally{ __confirmingDraft=false; }
   if(!window.TradeDraft||!window.TradeValidate||!window.TradePreview)return toast('模块未就绪','err');
   const td=TradeDraft.getDraftState();
   const draft=td[mode];
@@ -293,7 +297,7 @@ async function confirmDraft(mode){
     const msg=`物品种类：${v.list.length}\n小计：${fmt(v.subtotal)}\n税率：${Math.round(v.taxRate*100)}%\n税额：${fmt(v.tax)}\n应付总额：${fmt(v.total)}`;
     showModal('🧾 确认购入（中转面板）',msg,'确认购入',async()=>{
       const ok = await execBuyDraft(v.list, v.total);
-      if(ok){TradeDraft.clearAll('buy-confirm');render();}
+      if(ok){TradeDraft.clearAll('buy-confirm');render();refreshMarketTab();}
     });
     return;
   }
@@ -306,7 +310,9 @@ async function confirmDraft(mode){
     const msg=`物品种类：${pre.list.length}\n预计收入：${fmt(pre.revenue)}\n税率：${Math.round(pre.taxRate*100)}%\n税额：${fmt(pre.tax)}\n预计到手：${fmt(pre.net)}`;
     showModal('🧾 确认售出（中转面板）',msg,'确认售出',async()=>{
       const ok = await execSellDraft(pre.list, pre.net);
-      if(ok){TradeDraft.clearAll('sell-confirm');render();}
+      // v9.13.6：成交后同步刷新市场区域（render 内 setTimeout(0) 异步刷新在教程完成等时序下可能被延迟/竞态，
+      // 导致售出页短暂保持卖出前快照；此处同步 refreshMarketTab 保证"直接刷新"体验）
+      if(ok){TradeDraft.clearAll('sell-confirm');render();refreshMarketTab();}
     });
   };
   if(warns.length){

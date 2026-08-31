@@ -79,6 +79,8 @@
     // 保证不会残留 0/NaN 项导致 anyNonEmpty 误判
     sanitizeDraft(d);
     State.set('tradeDraft', td);
+    // v9.13.1：广播中转面板变更事件（引导分阶段同步等监听方按需订阅）
+    if(window.EventBus) EventBus.emit(EventBus.EVENTS.DRAFT_CHANGED, { mode: mode, gid: gid, qty: q });
   }
   function remove(mode, gid){
     const td = getDraftState();
@@ -86,9 +88,11 @@
     if(d && d.items){ delete d.items[gid]; }
     sanitizeDraft(d);
     State.set('tradeDraft', td);
+    if(window.EventBus) EventBus.emit(EventBus.EVENTS.DRAFT_CHANGED, { mode: mode, gid: gid, qty: 0 });
   }
   function clearAll(reason){
     State.set('tradeDraft', {buy: emptyDraft(), sell: emptyDraft(), _lastClearReason: reason||''});
+    if(window.EventBus) EventBus.emit(EventBus.EVENTS.DRAFT_CHANGED, { mode: 'all', gid: null, qty: 0, reason: reason || '' });
   }
 
   window.TradeDraft = {

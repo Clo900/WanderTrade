@@ -127,20 +127,28 @@
     for(var u in act.scores){ arr.push({ user: u, score: act.scores[u], ts: act.firstOrder[u] || 0 }); }
     arr.sort(function(a, b){ return b.score - a.score || a.ts - b.ts; });
     var ratio = Math.min(1, act.totalProgress / GOAL);
+    // v9.13.6：目标未达成（建设度 < 目标）时不发素材与称号（仅金币按比例折算；与在线结算一致）
+    var goalMet = ratio >= 1;
     for(var i = 0; i < arr.length; i++){
       var t = tierOf(i + 1);
       var gold = Math.floor(t.gold * ratio), alloy = Math.floor(t.alloy * ratio);
-      // v9.10.3：按排名发放活动称号（与在线结算一致；客户端领取邮件时入称号栏）
-      var titleId = 'sf_participant';
-      if(i === 0) titleId = 'sf_champion';
-      else if(i < 3) titleId = 'sf_top3';
-      else if(i < 10) titleId = 'sf_top10';
+      var mats = goalMet && alloy > 0 ? { staralloy: alloy } : {};
+      var titleId = null;
+      if(goalMet){
+        if(i === 0) titleId = 'sf_champion';
+        else if(i < 3) titleId = 'sf_top3';
+        else if(i < 10) titleId = 'sf_top10';
+        else titleId = 'sf_participant';
+      }
+      var attachments = { gold: gold };
+      if(mats && Object.keys(mats).length) attachments.mats = mats;
+      if(titleId) attachments.title = titleId;
       Mailbox.localDeliver({
         title: '星陨城第 ' + act.period + ' 期建设奖励',
         from: '边境城建指挥部',
         body: '本期建设圆满结束，感谢你对星陨城的贡献。\n你的排名：第 ' + (i + 1) + ' 名 · 累计贡献 ' + fmt(arr[i].score) +
-          ' · 全服建设度 ' + Math.floor(ratio * 100) + '%' + (ratio < 1 ? '（未达标，奖励按比例折算）' : ''),
-        attachments: { gold: gold, mats: alloy > 0 ? { staralloy: alloy } : {}, title: titleId }
+          ' · 全服建设度 ' + Math.floor(ratio * 100) + '%' + (ratio < 1 ? '（目标未达成，本次仅发放金币奖励）' : ''),
+        attachments: attachments
       });
     }
     act.history = act.history || [];

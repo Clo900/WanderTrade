@@ -51,8 +51,8 @@
      * 策划可按需增删示例条目，id 建议以 ex_ 前缀命名。 */
     'ex_frontier_hero': { name: '边境英雄',   icon: '🛡️', rarity: 'exclusive', desc: '边境城建指挥部特别授予，表彰对星陨城建设的卓越贡献' },
     'ex_founder':       { name: '奠基者',     icon: '🏰', rarity: 'exclusive', desc: '边境城建指挥部特别授予，见证艾尔希亚大陆拓荒的元老' },
-    'ex_merchant_king': { name: '商路之王',   icon: '👑', rarity: 'exclusive', desc: '边境城建指挥部特别授予，商路传奇的至高荣誉' }
-    'ex_darklord': { name: '黑暗魔君',   icon: '👑', rarity: 'exclusive', desc: '鲤鱼饭，鱼饭，饭' }
+    'ex_merchant_king': { name: '商路之王',   icon: '👑', rarity: 'exclusive', desc: '边境城建指挥部特别授予，商路传奇的至高荣誉' },
+    'ex_darklord':      { name: '黑暗魔君',   icon: '👑', rarity: 'exclusive', desc: '鲤鱼饭，鱼饭，饭' }
   };
 
   var RARITY = { common: '普通', rare: '稀有', epic: '史诗', legend: '传说', exclusive: '专属' };

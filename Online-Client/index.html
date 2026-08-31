@@ -11,8 +11,8 @@
   }catch(e){}
 })();
 </script>
-<link rel="stylesheet" href="styles/theme.css">
-<link rel="stylesheet" href="styles/app.css">
+<link rel="stylesheet" href="styles/theme.css?v=9135">
+<link rel="stylesheet" href="styles/app.css?v=9135">
 </head>
 <body>
 <div id="auth-overlay" class="auth-overlay" style="display: none;">
@@ -109,6 +109,7 @@
 <!-- v9.11.11：称号配置表（策划统一修改入口，须在 titles.js 之前加载） v9.12.0：迁移至共享模块 title-defs.js（浏览器/服务端复用） -->
 <script src="src/data/title-defs.js?v=912"></script>
 <script src="src/gameplay/titles.js?v=912"></script> <!-- v9.10.3：称号系统 -->
+<script src="src/gameplay/guide.js?v=913"></script> <!-- v9.13.0：引导层（Spotlight 遮罩/气泡/定位，纯表现层） -->
 <script src="src/gameplay/starfall-core.js?v=9112"></script> <!-- v9.11.x：星陨城确定性逻辑共享核心（浏览器/Node 双端复用） -->
 <script src="src/gameplay/starfall.js?v=9112"></script>
 <script src="src/economy/market-ui.js?v=974"></script> <!-- v9.10.2：交易市场 UI 自主内联拆出 -->
@@ -183,7 +184,11 @@ State.subscribe('traveling', function(traveling){
 
 // ===== vNext：中转面板锚点变化 → 提示并清空（buy/sell 两个 draft 同时清空） =====
 let __draftLastHub = (window.TradeGraph&&TradeGraph.hub)?TradeGraph.hub(State.get('day')):0;
+// v9.13.6：确认成交中标志（confirmDraft 推进游戏日期间置位）——成交是明确使用当前 draft 的意图，
+// 不应被"日/中枢变化清空中转面板"的拦截弹窗打断（在线模式日由服务器时间驱动，确认时恰逢翻日会破坏成交流程）
+let __confirmingDraft=false;
 function clearDraftOnAnchorChange(reason){
+  if(__confirmingDraft)return;
   if(!window.TradeDraft||!TradeDraft.anyNonEmpty||!TradeDraft.anyNonEmpty())return;
   showModal('⚠ 物价已更新',
     `由于游戏日/中枢点/城市/面板发生变化，为避免按旧价成交，已清空中转面板内容。`,
@@ -462,6 +467,23 @@ const SAVE_MIGRATIONS = {
     if(!Array.isArray(saved.mailbox)) saved.mailbox = [];
   }
 };
+// v9.13.0：确保城市库存表完整——新档（无存档）与旧档共用初始化/补缺，
+//          避免新手教程/市场无可购物资（空表复用 initCityStocks，消除重复实现）
+function ensureCityStocks(){
+  var cs = State.get('cityStocks');
+  if(!cs || typeof cs !== 'object' || Object.keys(cs).length === 0){
+    State.set('cityStocks', initCityStocks());
+    return;
+  }
+  var dirty = false;
+  for(const c of CITIES){
+    cs[c.id] = cs[c.id] || {};
+    for(const gid of c.goods){
+      if(cs[c.id][gid] == null){ cs[c.id][gid] = PURCHASE_LIMITS[c.id]?.[gid] || 100; dirty = true; }
+    }
+  }
+  if(dirty) State.set('cityStocks', cs);
+}
 // 返回存档当前版本；旧档无版本视为 0。按版本顺序执行迁移管线。
 function migrateSaveSchema(saved){
   let sv = typeof saved.__saveSchema==='number' ? saved.__saveSchema : 0;
@@ -470,7 +492,11 @@ function migrateSaveSchema(saved){
   return SAVE_SCHEMA;
 }
 function applySaved(saved){
-  if(!saved)return;
+  if(!saved){
+    // v9.13.0：单机新档（无存档）初始化市场库存，避免新手教程/市场无可购物资
+    ensureCityStocks();
+    return;
+  }
   migrateSaveSchema(saved); // v9.7.2：存档版本登记/迁移（旧档世界表补缺由下方运行时逻辑执行）
   State.batch(function(){
     // v8.26：存档无 day（在线剔除后）兜底 1，随后由世界锚点对齐
@@ -523,16 +549,7 @@ function applySaved(saved){
     State.set('__loaded', true);
   });
   // v9.7.2：单机旧档补齐新增物资库存（需在 __purchaseLimits 合并后），否则新增物资库存为 0 无法交易
-  var csStocks = State.get('cityStocks');
-  if(csStocks){
-    for(const c of CITIES){
-      csStocks[c.id] = csStocks[c.id] || {};
-      for(const gid of c.goods){
-        if(csStocks[c.id][gid] == null) csStocks[c.id][gid] = PURCHASE_LIMITS[c.id]?.[gid] || 100;
-      }
-    }
-    State.set('cityStocks', csStocks);
-  }
+  ensureCityStocks(); // v9.13.0：统一补缺逻辑（新档/旧档共用）
   // v9.7.2：登记存档结构版本（保存时随档写入；旧档下次保存即升级）
   State.set('__saveSchema', SAVE_SCHEMA);
   // 车厢兜底（v7.9.1）：老存档/异常数据无 wagons 时补默认装配
@@ -2432,8 +2449,8 @@ function taskCardHtml(t,mode,slotId){
     ?`<button class="task-refresh" onclick="refreshTask('${slotId}')" title="刷新任务">🔄</button>`
     :`<button class="task-x" onclick="abandonTask('${t.id}')" title="放弃任务">✖</button>`;
   const mainBtn=mode==='active'
-    ?`<button class="btn btn-primary station-btn" onclick="completeTask('${t.id}')" ${t.delivered?'':'disabled'} style="margin-top:8px">✅ 领取奖励</button>`
-    :`<button class="btn station-btn" style="background:${canAccept?'var(--accent)':'var(--card)'};color:${canAccept?'#111':'var(--text3)'}" onclick="acceptTask('${slotId}')" ${canAccept?'':'disabled'}>${canAccept?'📥 接取':'⛔ '+reason}</button>`;
+    ?`<button class="btn btn-primary station-btn" data-tut="task-claim" onclick="completeTask('${t.id}')" ${t.delivered?'':'disabled'} style="margin-top:8px">✅ 领取奖励</button>`
+    :`<button class="btn station-btn" data-tut="task-accept" style="background:${canAccept?'var(--accent)':'var(--card)'};color:${canAccept?'#111':'var(--text3)'}" onclick="acceptTask('${slotId}')" ${canAccept?'':'disabled'}>${canAccept?'📥 接取':'⛔ '+reason}</button>`;
   const timeLine=mode==='open'
     ?`<div class="task-time">⏱️ 时限：${taskTimeLimitMinutes(t)} 分钟</div>`
     :'';
@@ -2441,7 +2458,7 @@ function taskCardHtml(t,mode,slotId){
   const cd=cdState
     ?`<div class="task-cd-wrap"><div class="task-cd${cdState.cls?' '+cdState.cls:''}" id="task-cd-${t.id}">${cdState.text}</div><div class="task-bar"><div class="task-bar-fill" id="task-bar-${t.id}" style="width:${cdState.pct==null?100:cdState.pct*100}%"></div></div></div>`
     :'';
-  return `<div class="task-card rarity-${t.rarity}" style="border-color:${R.color}">
+  return `<div class="task-card rarity-${t.rarity}" data-slot="${slotId||''}" style="border-color:${R.color}">
     <div class="task-top"><span class="task-rarity" style="color:${R.color}">${R.name} · 品质${Q}</span>${urgencyTag}${topBtn}</div>
     <div class="task-desc">${t.desc}</div>
     ${timeLine}
@@ -2535,30 +2552,196 @@ function doUpgradeVehicle(){
     });
 }
 
-// ===== 新手引导（v6.14：买物资→接任务→前往→完成→卖物资） =====
+// ===== 新手引导（v6.14：买物资→接任务→前往→完成→卖物资；v9.13.0：Spotlight 引导层联动） =====
+// 字段：icon/title/desc/hint 气泡文案（v9.13.1 起支持函数，按引导阶段动态生成）；
+//       tab 导航页签；sub 市场页签（buy/sell）；noAutoTab 不自动切导航页签（引导玩家自行点击）；
+//       noAutoSub 不自动切市场页签；introCheck/introAction 中转面板介绍「下一步」环节；
+//       sel 引导目标定位（选择器字符串或函数，供 guide.js 遮罩高亮 + 滚动定位）
 const TUTORIAL_STEPS=[
   null,
-  {icon:'🛒',title:'购买基础物资',desc:'在市场页签选择基础物资（如谷物）购入，装进你的载具',hint:'去市场买基础物资',tab:'city',btn:'🛒 去市场'},
-  {icon:'📋',title:'接取任务',desc:'在城市页签的任务板接取一个送货/送客任务',hint:'去任务板接取任务',tab:'city',btn:'📋 去任务板'},
-  {icon:'🗺️',title:'前往任务目的地',desc:'在地图点击任务目的地城市，出发旅行',hint:'前往任务目的地',tab:'map',btn:'🗺️ 去地图'},
-  {icon:'✅',title:'完成任务',desc:'抵达后回到城市页签，在任务板领取任务奖励',hint:'领取任务奖励',tab:'city',btn:'✅ 去领取'},
-  {icon:'💰',title:'卖出物资',desc:'在市场页签卖出携带的物资，赚取金币',hint:'去市场卖出物资',tab:'city',btn:'💰 去卖货'}
+  // v9.13.1/v9.13.2：分阶段引导——去城市页 → 选物资 → 加入中转（介绍中转面板+下一步）→ 确认购入
+  {icon:'🛒',title:'购买基础物资',tab:'city',sub:'buy',btn:'🛒 去市场',noAutoTab:true,
+   introCheck:function(){return tutHasDraft('buy')&&!tutPhase.buyIntroDone;},
+   introAction:function(){tutPhase.buyIntroDone=true;syncTutorialGuide(1);},
+   desc:function(){
+     if(currentTab!=='city')return '先前往「城市」页面，在市场中购入基础物资';
+     if(tutHasDraft('buy')&&!tutPhase.buyIntroDone)return '这就是「中转面板」（购物车）——可先加入多种物资，最后统一确认成交';
+     return '在市场购入一件基础物资（如谷物），装进你的载具';
+   },
+   hint:function(){
+     if(currentTab!=='city')return '点击下方导航栏的「🏙 城市」按钮';
+     if(tutHasDraft('buy')&&!tutPhase.buyIntroDone)return '了解中转面板后，点击「下一步」继续完成购买';
+     if(tutHasDraft('buy'))return '在右侧中转面板点击「确认购入」，完成本次购买';
+     return '在购入页选中基础物资卡片，点击「加入中转面板」';
+   },
+   sel:function(){
+     if(currentTab!=='city')return document.querySelector('nav button[data-tab="city"]');
+     if(tutHasDraft('buy')&&!tutPhase.buyIntroDone)return document.querySelector('#trade-draft')||document.querySelector('.side-pane')||null;
+     if(tutHasDraft('buy'))return document.querySelector('#trade-draft .td-confirm')||document.querySelector('.td-confirm');
+     const cs=[].slice.call(document.querySelectorAll('.item-card[data-gid]'));
+     for(const c of cs){const g=window.ITEMS&&window.ITEMS[c.getAttribute('data-gid')];if(g&&g.cat==='basic')return c;}
+     return cs[0]||null;
+   }},
+  // v9.13.2：高亮目的地距离最短的可接任务（避免接取过长任务拖慢教学）
+  {icon:'📋',title:'接取任务',desc:'在城市页签的任务板接取一个送货/送客任务',hint:'选择目的地最近的任务（更快抵达，节省教学时间）',tab:'city',btn:'📋 去任务板',
+   sel:function(){
+     let best=null,bestD=Infinity;
+     for(const s of (GS.tasks&&GS.tasks.board)||[]){
+       if(s.state!=='task'||!s.t)continue;
+       if(s.t.capType==='cargo'&&getCargoFree()<s.t.qty)continue;
+       if(s.t.capType==='pass'&&getPassFree()<s.t.qty)continue;
+       const d=s.t.dist||Infinity;
+       if(d<bestD){bestD=d;best=s;}
+     }
+     if(best)return document.querySelector('.task-card[data-slot="'+best.id+'"] [data-tut="task-accept"]');
+     return document.querySelector('[data-tut="task-accept"]')||null;
+   }},
+  // v9.13.2：引导玩家自行点击「地图」页签 → 点击目的地城市出发；旅行中无遮罩提示等待
+  {icon:'🗺️',title:'前往任务目的地',tab:'map',btn:'🗺️ 去地图',noAutoTab:true,
+   desc:function(){return GS.traveling?('正在前往 '+getCityName(GS.traveling.to)+'，请稍候…'):'在地图点击任务目的地城市，出发旅行';},
+   hint:function(){
+     if(GS.traveling)return '旅行中请稍候，抵达后将继续引导';
+     if(currentTab!=='map')return '点击下方导航栏的「🗺 地图」按钮';
+     return '在地图上点击任务目的地城市（金色脉冲处）';
+   },
+   sel:function(){
+     if(GS.traveling)return null;
+     if(currentTab!=='map')return document.querySelector('nav button[data-tab="map"]');
+     const t=GS.tasks&&GS.tasks.active&&GS.tasks.active[0];if(!t||!t.to)return null;
+     return document.querySelector('.city-node[data-city="'+t.to+'"]')||null;
+   }},
+  {icon:'✅',title:'完成任务',desc:'抵达后回到城市页签，在任务板领取任务奖励',hint:'在任务板点击「领取奖励」',tab:'city',btn:'✅ 去领取',
+   sel:function(){return document.querySelector('[data-tut="task-claim"]')||null;}},
+  // v9.13.2：引导玩家自行点击「售出」页签（不自动切换）→ 选物资 → 加入中转 → 确认售出
+  {icon:'💰',title:'卖出物资',tab:'city',btn:'💰 去卖货',noAutoSub:true,
+   desc:function(){
+     if(tutHasDraft('sell'))return '在中转面板确认售出，赚取金币';
+     return document.querySelector('.sell-tab.active')?'在市场售出页卖出携带的物资，赚取金币':'先切换到「售出」页签，再卖出携带的物资';
+   },
+   hint:function(){
+     if(tutHasDraft('sell'))return '在右侧中转面板点击「确认售出」，完成本次卖出';
+     if(!document.querySelector('.sell-tab.active'))return '点击市场顶部的「💰 售出」页签';
+     return '在售出页选中物资卡片，点击「加入中转面板」';
+   },
+   sel:function(){
+     if(tutHasDraft('sell'))return document.querySelector('#trade-draft .td-confirm')||document.querySelector('.td-confirm');
+     if(!document.querySelector('.sell-tab.active'))return document.querySelector('.sell-tab')||null;
+     const cs=[].slice.call(document.querySelectorAll('#market-cards .item-card'));
+     for(const c of cs){const b=c.querySelector('.btn-sell');if(b&&!b.classList.contains('disabled'))return c;}
+     return cs[0]||null;
+   }}
 ];
+// v9.13.2：引导分阶段子状态（step1 中转面板介绍是否已点「下一步」）
+var tutPhase={buyIntroDone:false};
+// v9.13.1：判断中转面板指定方向（buy/sell）是否有待确认条目（买卖分阶段引导用）
+function tutHasDraft(mode){
+  const td=(GS&&GS.tradeDraft)||{};
+  const d=td[mode];
+  return !!(d&&d.items&&Object.keys(d.items).length>0);
+}
+// v9.13.2：组装 Guide.show 参数（分阶段文案/目标 + 中转介绍「下一步」 + 内容 DOM 实时刷新回调）
+// v9.13.4：中转介绍阶段气泡放目标左侧（介绍中转面板不遮挡右侧操作区）
+function tutGuideOpts(s){
+  const o={
+    title:'🎓 '+s.icon+' '+s.title,
+    desc:typeof s.desc==='function'?s.desc():s.desc,
+    hintHtml:'<b>操作提示：</b>'+(typeof s.hint==='function'?s.hint():s.hint),
+    target:s.sel,
+    onSkip:skipTutorial,
+    container:document.getElementById('content')||document.body,
+    onChange:function(){syncTutorialGuide(GS.tutorial&&GS.tutorial.step);}
+  };
+  if(s.introCheck&&s.introCheck()&&typeof s.introAction==='function'){
+    o.actionText='下一步';
+    o.onAction=s.introAction;
+    o.placement='left'; // v9.13.4：介绍中转面板时提示出现在左边
+  }
+  return o;
+}
+// v9.13.2：旅行中无遮罩等待提示（抵达后由 sync 恢复正常引导）
+function tutGuideWaiting(s){
+  const to=GS.traveling&&GS.traveling.to;
+  Guide.show({
+    title:'🎓 '+s.icon+' '+s.title,
+    desc:'正在前往 '+(to?getCityName(to):'目的地')+'，请稍候…',
+    hintHtml:'<b>提示：</b>抵达后将自动继续引导',
+    mask:false,target:null,
+    onSkip:skipTutorial,
+    container:document.getElementById('content')||document.body,
+    onChange:function(){syncTutorialGuide(GS.tutorial&&GS.tutorial.step);}
+  });
+}
+// v9.13.0：启动当前步骤的 Spotlight 引导（切 tab/市场页签 → 滚动定位 → 遮罩气泡）
+// v9.13.1：noAutoTab 步骤不自动切导航页签（如 step1 引导玩家自行点击「城市」按钮）；desc/hint 支持函数
+// v9.13.2：noAutoSub 步骤不自动切市场页签；旅行中显示无遮罩等待提示
+function showTutorialGuide(step){
+  const s=TUTORIAL_STEPS[step];if(!s||!window.Guide)return;
+  if(s.noAutoTab!==true&&s.tab){
+    const b=document.querySelector('nav button[data-tab="'+s.tab+'"]');
+    if(b&&currentTab!==s.tab)b.click(); // click → render 同步完成，目标 DOM 就绪
+  }
+  if(s.noAutoSub!==true&&s.sub&&window.switchMarket&&currentTab==='city')switchMarket(s.sub);
+  // 等视图/卡片渲染完成再定位目标（市场卡片经 setTimeout 刷新）
+  setTimeout(function(){
+    if(GS.traveling){tutGuideWaiting(s);return;} // v9.13.2：旅行中无遮罩提示等待
+    Guide.show(tutGuideOpts(s));
+  },120);
+}
+// v9.13.1：同步引导目标/文案到当前阶段（玩家切换视图/加入中转面板后调用）——
+//          目标变化时重建引导（如 step1：城市按钮 → 物资卡片 → 确认购入）；
+//          视图未就绪（sel 命中为空，如点击城市后 view-city 尚未渲染）时延后重试
+// v9.13.2：旅行中切为无遮罩等待提示；重建时携带动作按钮与内容 DOM 变化监听
+function syncTutorialGuide(step, attempt){
+  const s=TUTORIAL_STEPS[step];if(!s||!window.Guide||!Guide.isActive())return;
+  if(GS.traveling){ // v9.13.2：旅行中无遮罩等待（已在等待态则不重复重建，避免闪烁）
+    const bb=document.getElementById('tut-bubble');
+    const d=bb&&bb.querySelector('#tut-bubble-desc');
+    if(!d||d.textContent.indexOf('正在前往')<0)tutGuideWaiting(s);
+    return;
+  }
+  if(typeof s.sel!=='function')return;
+  let target=null;try{target=s.sel();}catch(e){}
+  const n=(attempt||0);
+  if(!target){
+    if(n<4)setTimeout(function(){syncTutorialGuide(step,n+1);},150);
+    return;
+  }
+  // v9.13.4：比较「文案快照」而非仅目标元素——MutationObserver 回调先 refresh() 切高光、后 onChange 同步，
+  // 若只比较 .tut-target 会因目标已切换而短路，导致气泡文字停留在上一阶段（点城市页→点物资时文字不同步）。
+  const opts=tutGuideOpts(s);
+  const snap=window.Guide.snapshot();
+  const textSame = snap && snap.desc===opts.desc;
+  const cur=document.querySelector('.tut-target');
+  if(cur!==target || !textSame)Guide.show(opts);
+}
+// v9.13.1：中转面板变化（加入/移除/清空）后同步引导目标（买卖分阶段引导）
+if(window.EventBus){EventBus.on(EventBus.EVENTS.DRAFT_CHANGED,function(){syncTutorialGuide(GS.tutorial&&GS.tutorial.step);});}
 // 步骤推进：仅当当前步骤匹配时前进（顺序教学）
 function advanceTutorial(n){
   if(!GS.tutorial||GS.tutorial.step!==n)return;
+  tutPhase={buyIntroDone:false}; // v9.13.2：子阶段状态随步骤推进重置
   var tut = State.get('tutorial') || {};
   tut.step = n+1;
-  if(tut.step>=6){tut.step=6;toast('🎓 新手教程完成！愿商路顺遂','ok');if(window.Titles)Titles.unlock('novice');} // v9.10.3：完成教程送称号「新手上路」
-  else toast(`✅ 完成「${TUTORIAL_STEPS[n].title}」，下一步：${TUTORIAL_STEPS[tut.step].title}`,'ok');
+  if(tut.step>=6){
+    tut.step=6;
+    if(window.Guide)Guide.hide(); // v9.13.0：完成关闭引导层
+    toast('🎓 新手教程完成！愿商路顺遂','ok');
+    if(window.Titles)Titles.unlock('novice'); // v9.10.3：完成教程送称号「新手上路」
+  } else {
+    toast(`✅ 完成「${TUTORIAL_STEPS[n].title}」，下一步：${TUTORIAL_STEPS[tut.step].title}`,'ok');
+    showTutorialGuide(tut.step); // v9.13.0：自动进入下一步引导
+  }
   State.set('tutorial', tut);
   saveNow();
 }
-function startTutorial(){var tut=State.get('tutorial')||{step:0};tut.step=1;State.set('tutorial',tut);render();toast('🎓 新手引导开始：购买基础物资','ok');}
-function skipTutorial(){var tut=State.get('tutorial')||{step:0};tut.step=6;State.set('tutorial',tut);render();if(window.Titles)Titles.unlock('novice');toast('已跳过新手引导，可在任意城市自由探索','info');}
+function startTutorial(){var tut=State.get('tutorial')||{step:0};tut.step=1;State.set('tutorial',tut);tutPhase={buyIntroDone:false};render();showTutorialGuide(1);toast('🎓 新手引导开始：购买基础物资','ok');}
+function skipTutorial(){var tut=State.get('tutorial')||{step:0};tut.step=6;State.set('tutorial',tut);tutPhase={buyIntroDone:false};if(window.Guide)Guide.hide();render();if(window.Titles)Titles.unlock('novice');toast('已跳过新手引导，可在任意城市自由探索','info');}
 function goTutorial(){
   const s=TUTORIAL_STEPS[GS.tutorial.step];
-  if(s&&s.tab){const b=document.querySelector('nav button[data-tab="'+s.tab+'"]');if(b)b.click();}
+  if(!s)return;
+  if(s.tab){const b=document.querySelector('nav button[data-tab="'+s.tab+'"]');if(b)b.click();}
+  if(s.sub&&window.switchMarket)switchMarket(s.sub);
+  if(window.Guide)Guide.refresh(); // v9.13.0：重新定位目标（遮罩/气泡跟随）
 }
 function renderTutorial(){
   // v8.19：step 缺失/非数字一律视为已完成（不显示教程），防止服务器旧档/异常结构导致教程复现
@@ -2567,11 +2750,16 @@ function renderTutorial(){
   if(st===0)return `<div class="tutorial-panel"><div class="tut-head">🎓 新手引导</div>
     <div class="tut-body">欢迎来到全王国！跟随 5 步学会跑商：<b>买物资 → 接任务 → 前往目的地 → 完成任务 → 卖物资</b></div>
     <div class="tut-btns"><button class="btn btn-primary" onclick="startTutorial()">🚀 开始引导</button></div></div>`;
-  const s=TUTORIAL_STEPS[st];
+  // v9.13.3：刷新/重进后 Guide 未激活时自动恢复引导（防中断）；已激活则同步阶段
+  if(!window.Guide||!Guide.isActive()){
+    if(st===1&&tutHasDraft('buy'))tutPhase.buyIntroDone=true; // 已有中转条目视为已过中转介绍
+    showTutorialGuide(st);
+  }else{
+    syncTutorialGuide(st);
+  }
+  // v9.13.3：顶部面板精简为纯进度条（提示与操作移入右侧引导面板，修复 desc 函数被插值成源码）
   const steps=TUTORIAL_STEPS.slice(1).map((x,i)=>`<span class="tut-step ${i+1<st?'tut-done':(i+1===st?'tut-cur':'')}">${i+1<st?'✔':x.icon} ${x.title}</span>`).join('');
   return `<div class="tutorial-panel"><div class="tut-head">🎓 新手引导 <span class="tut-progress">${st}/5</span></div>
-    <div class="tut-body"><b>${s.icon} ${s.title}</b>：${s.desc}</div>
-    <div class="tut-btns"><button class="btn btn-primary" onclick="goTutorial()">${s.btn}</button><button class="btn" onclick="skipTutorial()">跳过教程</button></div>
     <div class="tut-steps">${steps}</div></div>`;
 }
 
@@ -3213,7 +3401,7 @@ else{(async()=>{
   if(Runtime.isStandalone){
     // 单机启动只读取 localStorage，不发起任何 /api 请求。
     if(getUsers().includes(__bootUser)){
-      const saved=getStoredGS(__bootUser);if(saved)applySaved(saved);
+      applySaved(getStoredGS(__bootUser)); // v9.13.0：无存档时也初始化（ensureCityStocks 补库存）
       window.__gsReady=true;render();
     }else{
       localStorage.removeItem(AUTH_KEY);

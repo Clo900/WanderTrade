@@ -100,27 +100,35 @@ export function createStarfall(ctx, world, players, mailbox) {
       arr.sort((a, b) => b.score - a.score || a.ts - b.ts);
       const ratio = Math.min(1, totalProgress / GOAL);
       const pct = Math.floor(ratio * 100);
-      log('[Settle] 第 ' + period + ' 期结算开始：参与 ' + arr.length + ' 人，建设度 ' + pct + '%（' + totalProgress + '/' + GOAL + '）');
+      // v9.13.6：目标未达成（建设度 < 目标）时不发素材与称号（仅金币按比例折算）
+      const goalMet = ratio >= 1;
+      log('[Settle] 第 ' + period + ' 期结算开始：参与 ' + arr.length + ' 人，建设度 ' + pct + '%（' + totalProgress + '/' + GOAL + '）' + (goalMet ? '' : ' · 目标未达成，仅发金币'));
 
       for (let i = 0; i < arr.length; i++) {
         const t = Core.tierFor(i + 1, TIERS);
         const gold = Math.floor(t.gold * ratio);
         const alloy = Math.floor(t.alloy * ratio);
-        const mats = alloy > 0 ? { staralloy: alloy } : {};
+        const mats = goalMet && alloy > 0 ? { staralloy: alloy } : {};
         let body = '本期建设圆满结束，感谢你对星陨城的贡献。\n你的排名：第 ' + (i + 1) + ' 名 · 累计贡献 ' + arr[i].score +
           ' · 全服建设度 ' + pct + '%';
-        if (ratio < 1.0) body += '（未达标，奖励按比例折算）';
+        if (ratio < 1.0) body += '（目标未达成，本次仅发放金币奖励）';
         const rank = i + 1;
-        let titleId = 'sf_participant';
-        if (rank === 1) titleId = 'sf_champion';
-        else if (rank <= 3) titleId = 'sf_top3';
-        else if (rank <= 10) titleId = 'sf_top10';
+        let titleId = null;
+        if (goalMet) {
+          if (rank === 1) titleId = 'sf_champion';
+          else if (rank <= 3) titleId = 'sf_top3';
+          else if (rank <= 10) titleId = 'sf_top10';
+          else titleId = 'sf_participant';
+        }
+        const attachments = { gold };
+        if (Object.keys(mats).length) attachments.mats = mats;
+        if (titleId) attachments.title = titleId;
         try {
           await mailbox.deliver(arr[i].user, {
             title: '星陨城第 ' + period + ' 期建设奖励',
             from: '边境城建指挥部',
             body,
-            attachments: { gold, mats, title: titleId }
+            attachments
           });
         } catch (e) {
           log('[Settle] ⚠ 第 ' + period + ' 期奖励投递失败 user=' + arr[i].user + ' rank=' + rank + ' err=' + (e && e.message));
