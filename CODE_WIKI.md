@@ -22,7 +22,7 @@
   - [4.10 星陨城活动模块 gameplay/starfall.js](#410-星陨城活动模块-gameplaystarfalljs)
   - [4.11 邮箱模块 gameplay/mailbox.js](#411-邮箱模块-gameplaymailboxjs)
 - [5. 服务端模块详解](#5-服务端模块详解)
-  - [5.1 HTTP 服务器 server.ps1](#51-http-服务器-serverps1)
+  - [5.1 HTTP 服务器 server/（Node.js）](#51-http-服务器-servernodejs)
   - [5.2 数据模型](#52-数据模型)
   - [5.3 API 路由](#53-api-路由)
 - [6. 核心系统设计](#6-核心系统设计)
@@ -59,7 +59,7 @@
 | 项目名称 | 艾尔希亚跑商 (Aierxiya Trade) |
 | 版本 | v9.7 |
 | 项目类型 | Browser MMORPG（Web 多人跑商游戏） |
-| 技术栈 | 原生 HTML5 + CSS3 + JavaScript（客户端），PowerShell + .NET HttpListener（服务端） |
+| 技术栈 | 原生 HTML5 + CSS3 + JavaScript（客户端），Node.js 内置模块（服务端，零 npm 依赖） |
 | 数据库 | JSON 文件存档（world.json + players/*.json） |
 | 部署方式 | 零依赖，纯文件分发 |
 | 目标用户 | 轻度策略/贸易类玩家 |
@@ -97,56 +97,63 @@
 │  │       ③ src/core/event-bus.js        (事件总线)             │ │
 │  │       ④ src/core/ui-primitives.js    (toast/modal)          │ │
 │  │       ⑤ src/core/data.js             (CITIES/ROADS/ITEMS)   │ │
-│  │       ⑥ src/economy/price-engine.js  (价格引擎)             │ │
-│  │       ⑦ src/economy/events.js        (事件系统)             │ │
-│  │       ⑧ src/economy/trade-graph.js   (经济距离图)           │ │
-│  │       ⑨ src/economy/tax.js           (税务系统)             │ │
-│  │       ⑩ src/economy/trade-draft.js   (交易单/中转面板)       │ │
-│  │       ⑪ src/economy/trade-validate.js(交易单校验)           │ │
-│  │       ⑫ src/economy/trade-preview.js (交易单预览/总额)       │ │
-│  │       ⑬ src/economy/demand-engine.js (需求引擎 v9.5)         │ │
-│  │       ⑭ src/economy/source-pricing.js(产地买入差异化)        │ │
-│  │       ⑮ src/economy/price-exceptions.js(卖出封顶/封底)       │ │
+│  │       ⑥ src/economy/source-pricing.js(产地买入差异化)       │ │
+│  │       ⑦ src/economy/price-exceptions.js(卖出封顶/封底)      │ │
+│  │       ⑧ src/economy/price-engine.js  (价格引擎)             │ │
+│  │       ⑨ src/economy/demand-engine.js (需求引擎)             │ │
+│  │       ⑩ src/economy/events.js        (事件系统)             │ │
+│  │       ⑪ src/economy/trade-graph.js   (经济距离图)           │ │
+│  │       ⑫ src/economy/tax.js           (税务系统)             │ │
+│  │       ⑬ src/economy/trade-draft.js   (交易单/中转面板)       │ │
+│  │       ⑭ src/economy/trade-validate.js(交易单校验)           │ │
+│  │       ⑮ src/economy/trade-preview.js (交易单预览/总额)       │ │
 │  │       ⑯ src/gameplay/pathing-core.js (寻路算法)             │ │
-│  │       ⑰ src/gameplay/starfall.js     (星陨城活动 v9.9)       │ │
-│  │       ⑱ src/gameplay/mailbox.js      (邮箱系统 v9.9)         │ │
+│  │       ⑰ src/gameplay/starfall-core.js(星陨城确定性核心★双端共用)││
+│  │       ⑱ src/gameplay/starfall.js     (星陨城活动面板)        │ │
+│  │       ⑲ src/gameplay/mailbox.js      (邮箱系统)              │ │
 │  └─────────────────────────────────────────────────────────────┘ │
 │                              │                                   │
-│                     fetch/async/await                            │
+│                     fetch/async/await + EventSource(SSE)         │
 │                              │                                   │
 └──────────────────────────────┼──────────────────────────────────┘
                                │ HTTP (REST JSON)
 ┌──────────────────────────────┼──────────────────────────────────┐
-│                   服务端 (PowerShell HttpListener)               │
+│                服务端 (Node.js, 内存态 + 异步原子落盘)           │
 │  ┌─────────────────────────────────────────────────────────────┐ │
-│  │  server.ps1 (v4)                                           │ │
-│  │  ├── 静态文件分发: Online-Client/ → HTTP 路由               │ │
-│  │  ├── 世界管理: LoadWorld / SaveWorld / RefillAllPlayers    │ │
-│  │  ├── 用户认证: SHA256+salt 密码哈希                        │ │
-│  │  ├── 存档 API: register / login / save / player            │ │
-│  │  ├── 交易 API: trade / tradeBatch / stocks                 │ │
-│  │  ├── 聊天 API: chat POST/GET                              │ │
-│  │  ├── 排行榜: rankings                                     │ │
-│  │  └── GM 后台: admin (timescale/setday/givegold/...)       │ │
+│  │  server/index.mjs (入口/优雅退出)                           │ │
+│  │  server/routes.mjs   (路由: 静态 + 全部 API + SSE)          │ │
+│  │  server/store.mjs    (原子 JSON 读写 + 防抖落盘)            │ │
+│  │  server/world.mjs    (世界加载/迁移/补货/公告)               │ │
+│  │  server/players.mjs  (玩家存档内存缓存 + 落盘)              │ │
+│  │  server/auth.mjs     (注册/登录/昵称/密码)                  │ │
+│  │  server/trade.mjs    (trade / tradeBatch 权威结算)          │ │
+│  │  server/chat.mjs     (聊天环形缓冲 + SSE 推流)              │ │
+│  │  server/starfall.mjs (星陨城状态机★复用客户端核心)           │ │
+│  │  server/mailbox.mjs  (邮箱投递/操作)                        │ │
+│  │  server/rankings.mjs (排行榜)                               │ │
+│  │  server/admin.mjs    (GM 指令)                              │ │
 │  └─────────────────────────────────────────────────────────────┘ │
 │                              │                                   │
 │                   JSON 文件系统 (无数据库)                       │
 │  ┌─────────────────────────────────────────────────────────────┐ │
 │  │  world.json          世界状态 (时间/种子/GM密码)            │ │
 │  │  default-world.json  世界模板 (13城价格/限额)               │ │
-│  │  players/*.json      玩家存档 (每账号一个)                  │ │
-│  │  chat.json           聊天记录 (最近200条)                   │ │
+│  │  players/*.json      玩家存档 (每账号一个, 防抖落盘)        │ │
+│  │  chat.json           聊天记录 (最近200条, 防抖落盘)         │ │
+│  │  starfall_activity.json  星陨城活动状态 (防抖落盘)          │ │
 │  └─────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### 架构特点
 
-1. **零依赖**：服务端仅使用 Windows 自带的 PowerShell 5.1 + .NET HttpListener，无需安装任何框架
-2. **前后端分离**：客户端通过 REST API 与服务端通信，支持断线重连和离线模式
+1. **零依赖**：服务端仅使用 Node.js 内置模块（`node:http`/`node:fs`/`node:crypto`），无需 npm 安装任何框架
+2. **前后端分离**：客户端通过 REST API + SSE 与服务端通信，支持断线重连和离线模式
 3. **全局状态**：客户端使用 `window.GS` 作为全局游戏状态对象，所有模块通过挂载到 `window` 的函数互相调用
 4. **纯函数引擎**：价格引擎和事件系统都是确定性计算，相同输入必定产生相同输出
 5. **时间权威**：世界时间由服务器 `worldStart` 权威驱动，杜绝客户端作弊改天数
+6. **双端共享逻辑**：星陨城确定性逻辑（周期/抽选/档位/轮转）统一在 `starfall-core.js`（UMD），浏览器与 Node 复用同一份代码
+7. **内存态 + 防抖落盘**：玩家存档/聊天/活动状态常驻内存，变更后 0.5~1s 批量原子写盘，退出时全量落盘兜底（性能与数据安全的折中）
 
 ---
 
@@ -191,9 +198,9 @@ e:\WanderTrade\
 │   ├── 颜色与样式文件表.md          # 客户端 CSS 文件职责与维护边界
 │   └── 星陨城活动玩法设计.md        # 星陨城活动设计（v9.9 已落地）
 │
-├── server.ps1                      # HTTP 服务器主程序
+├── server/                         # Node.js 服务端 (index.mjs + 12 模块)
 ├── start-server.bat                # 一键启动脚本
-├── setup-admin.ps1                 # 局域网权限注册 (管理员运行)
+├── setup-admin.ps1                 # 局域网防火墙放行 (管理员运行)
 ├── world.json                      # 运行中世界状态 (自动生成)
 ├── default-world.json              # 世界模板 (价格种子)
 ├── players/                        # 玩家存档目录 (自动创建)
@@ -578,35 +585,53 @@ getActiveEvents() → getItemMult(city, item, mode) → priceFor() → 市场价
 
 ## 5. 服务端模块详解
 
-### 5.1 HTTP 服务器 server.ps1
+### 5.1 HTTP 服务器 server/（Node.js）
 
-**文件路径**：`server.ps1`
+**文件路径**：`server/`（`index.mjs` 入口 + 12 个模块，纯 `node:http`/`node:fs`/`node:crypto`，零 npm 依赖）
 
-**技术栈**：PowerShell 5.1 + `System.Net.HttpListener`
+**技术栈**：Node.js 18+（内置模块）
 
 **启动参数**：
 ```powershell
-server.ps1 [-Port 8080] [-Lan]
+node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 ```
 
 | 参数 | 说明 |
 |------|------|
 | `-Port` | 监听端口，默认 8080 |
-| `-Lan` | 启用局域网访问（绑定 `http://+:$Port/`，需管理员权限注册 URL ACL） |
+| `-Lan` | 启用局域网访问（绑定 `0.0.0.0`；无需管理员/URL ACL，仅需防火墙放行 `setup-admin.ps1`） |
+| `-Bind` | 指定监听地址（默认 `localhost`） |
+
+#### 模块划分
+
+| 模块 | 职责 |
+|------|------|
+| `index.mjs` | 入口：参数解析、服务装配、优雅退出（先全量落盘再关闭） |
+| `routes.mjs` | 路由：静态资源分发 + 全部 API 端点 + SSE（`/api/chat/stream`） |
+| `store.mjs` | 原子 JSON 读写（tmp+rename）+ 防抖落盘器（Debouncer） |
+| `world.mjs` | 世界加载/迁移/重建（`__schema` 兼容旧版）、`GetWorldDay`、30 分钟补货、公告 |
+| `players.mjs` | 玩家存档内存缓存（Map + 并发加载去重）、防抖落盘、昵称/聊天档案 |
+| `auth.mjs` | 注册/登录/改昵称/改密码（SHA256+salt，昵称全服唯一） |
+| `trade.mjs` | `trade` / `tradeBatch` 权威结算（守恒校验 + 价格范围 [0.3,3] + `__savedAt` 防覆盖） |
+| `chat.mjs` | 聊天内存环形缓冲（200 条）+ 落盘 + **SSE 订阅/广播** |
+| `starfall.mjs` | 星陨城状态机——**复用客户端 `starfall-core.js`**（确定性抽选/轮转）+ 服务端权威结算投递/日志 |
+| `mailbox.mjs` | 投递 / 已读 / 删除 / 领取，满 50 自动清理最旧 |
+| `rankings.mjs` | 排行榜（基于内存缓存，Top 20） |
+| `admin.mjs` | GM 指令（timescale/setday/givegold/giveitem/broadcast/starfall/mail） |
 
 #### 核心功能
 
 1. **静态文件分发**：将 `Online-Client/` 目录映射为 HTTP 静态资源
-2. **世界状态管理**：加载/保存世界数据，30 分钟自动补货
+2. **世界状态管理**：加载/保存世界数据，30 分钟自动补货（内存操作 + 防抖落盘）
 3. **用户认证**：注册、登录、密码哈希
-4. **玩家存档**：读写玩家 JSON 存档，并发版本保护
-5. **交易结算**：买入/卖出全量结算——库存扣减/回补 + 资金/持仓权威记账（per-player 模式；v9.7.3 起 `/api/tradeBatch` 为经济权威接口，单笔在线交易也走该接口）
-6. **聊天室**：消息存储与增量拉取（保留最近 200 条）
+4. **玩家存档**：内存缓存 + 防抖原子落盘，并发版本保护（`__savedAt`）
+5. **交易结算**：买入/卖出全量结算——库存扣减/回补 + 资金/持仓权威记账（per-player 模式；`/api/tradeBatch` 为经济权威接口）
+6. **聊天室**：内存环形缓冲（200 条）+ **SSE 实时推流**（`/api/chat/stream`），轮询接口 `/api/chat?since=` 保留为回退
 7. **排行榜**：全服 Top 20 统计
-8. **星陨城活动（v9.9）**：活动状态机（确定性抽选 / 惰性轮转 `Invoke-MaybeSfRotate` / 结算 `Invoke-SettleStarfall`），提交权威扣货记账，奖励邮件投递，历史冠军归档
+8. **星陨城活动（v9.9）**：活动状态机（确定性抽选 / 惰性轮转 / 结算）——**确定性逻辑来自双端共享核心 `starfall-core.js`**，服务端只做权威扣货记账、奖励邮件投递、历史冠军归档
 9. **邮箱（v9.9）**：投递 / 已读 / 删除 / 领取附件，满 50 自动清理最旧
 10. **跑马灯公告（v9.9）**：`world.json lastBroadcast`，活动 start/end/next 自动发布
-11. **星陨城运维（v9.10）**：`Write-SfLog` 结算/轮转/管理日志（控制台 + `starfall_log.txt`）；`/api/admin starfall status` 状态快照；`/api/admin mail` 自定义 title/body 补发；结算投递单玩家失败兜底
+11. **星陨城运维（v9.10）**：结算/轮转/管理日志（控制台 + `starfall_log.txt`）；`/api/admin starfall status` 状态快照；`/api/admin mail` 自定义 title/body 补发；结算投递单玩家失败兜底
 12. **GM 后台**：世界时间流速、天数设置、发钱、广播、starfall、mail
 
 > **v9.7.1 世界配置版本化**：`LoadWorld` 检测 `default-world.json` 的 `__schema`，若 `world.json.__schema < default.__schema` 则自动重建世界配置（仅刷新 `basePrices`/`purchaseLimits`/`tradeRoads`/`sourceConfig`/`sellExceptions`/`demandProfile`，保留 `worldStart`/`stockMode`/`timeScale`/`lastStockRefill`/`lastRefillDay`/`lastBroadcast`/`adminPass` 等运行时字段），玩家 Day 不重置。未来版本升级只需递增 `default-world.json` 的 `__schema`。
@@ -937,11 +962,20 @@ server.ps1 [-Port 8080] [-Lan]
 
 ### 6.10 GM 指令系统
 
-#### 本地指令（无需密码）
+> **权限（v9.11.x）**：单机版本地调试指令随便使用；在线版普通玩家仅可用查看类（`/help` `/gold` `/time`）与 `/gm` 通道，本地调试指令一律禁用（前端 `runCmd` 在线守卫拦截并提示"仅 GM 可用"）。GM 在线通过 `/gm <密码>` 走服务端权威执行。
+
+#### 查看类指令（单机/在线普通玩家均可用）
 
 | 指令 | 说明 |
 |------|------|
 | `/help` | 查看帮助 |
+| `/gold` | 查看金币 |
+| `/time` | 查看服务器时间校准状态 |
+
+#### 本地调试指令（仅单机版；在线仅 GM 可用）
+
+| 指令 | 说明 |
+|------|------|
 | `/addgold <金额>` | 加金币 |
 | `/addcargo <物品> <数量>` | 加货物 |
 | `/addmat <类型> <数量>` | 加材料 |
@@ -951,9 +985,8 @@ server.ps1 [-Port 8080] [-Lan]
 | `/setrep <城市> <经验>` | 设置声望 |
 | `/stock <城市> <物品> <数量>` | 设置库存 |
 | `/day <天数>` | 本地推进天数 |
-| `/gold` | 查看金币 |
 
-#### GM 指令（需密码）
+#### GM 指令（需密码，服务器权威执行）
 
 | 指令 | 说明 |
 |------|------|
@@ -963,9 +996,14 @@ server.ps1 [-Port 8080] [-Lan]
 | `/gm <密码> giveitem <玩家> <物品> <数量>` | 给玩家发物资 |
 | `/gm <密码> broadcast <消息>` | 全服跑马灯广播 |
 | `/gm <密码> starfall start\|end\|next\|status` | 星陨城活动：开始/结算/下一期/查看状态（v9.9，status 为 v9.10） |
-| `/gm <密码> mail <玩家> <金币> <星陨合金> [title] [body]` | 给玩家发奖励邮件（v9.9，title/body 为 v9.10） |
+| `/gm <密码> titles` | 列出全部称号 id（邮件称号附件用，v9.11.x；专属称号标注「专属」，v9.12.0） |
+| `/gm <密码> mail <玩家> [金币] [合金] [称号id] ["标题"] ["正文"] [发件人]` | 发邮件给指定玩家（- 跳过；全空=纯通知；称号走 `attachments.title` 解锁链路；发件人缺省 GM，v9.11.x；专属称号只能通过本指令单独发放，v9.12.0） |
+| `/gm <密码> mailall [金币] [合金] [称号id] ["标题"] ["正文"] [发件人]` | 发邮件给全体玩家（遍历 players 投递，单失败不中断；发件人缺省 GM，v9.11.x；携带专属称号会被拒绝，v9.12.0） |
 
 > **单机免密**：单机模式下 `starfall` / `mail` / `broadcast` 三个 GM 子指令可省略密码（`LOCAL_GM`），其余 GM 指令仅在线可用；指令错误统一返回「指令有误」。
+> **邮件正文换行**：正文中的 `\n`（两个字符）会被转成真实换行，渲染时按行显示（`esc(m.body).replace(/\n/g,'<br>')`），如 `"第一行\n第二行"`。
+> **专属称号（v9.12.0）**：`rarity: 'exclusive'` 的称号仅供策划通过 `/gm mail <玩家>` 单独发放给特定玩家，`mailall` 群发会被服务端拒绝；称号 id 由服务端对照共享配置表 `Online-Client/src/data/title-defs.js` 校验（未知 id 拒绝发放）；未获得的专属称号在用户面板自动隐藏（获得后才可见可装备），徽章样式为最高档金紫流光（`.t-exclusive`）。
+> **边界**：前端禁用能拦住正常玩家；防"懂技术玩家绕过前端直接调 `/api/save` 改档"需服务端存档字段权威校验（后续加固方向）。
 
 ---
 
@@ -1010,9 +1048,10 @@ runtime.js (运行模式判定，最先加载，无依赖)
 | `price-engine.js` | `data.js`, `events.js`(运行时) | 主脚本 |
 | `events.js` | `data.js`, `GS`(全局) | `price-engine.js`, 主脚本 |
 | `pathing-core.js` | `data.js` | 主脚本 |
-| `starfall.js` (v9.9) | `data.js`, `state.js`, `ui-primitives.js`, `mailbox.js`(单机结算投递), `GS/State` | 主脚本（`renderCity` 星陨城分支）、`server.ps1`（在线活动接口） |
+| `starfall.js` (v9.9) | `data.js`, `state.js`, `ui-primitives.js`, `starfall-core.js`(确定性核心), `mailbox.js`(单机结算投递), `GS/State` | 主脚本（`renderCity` 星陨城分支）、`server/starfall.mjs`（在线活动接口） |
+| `starfall-core.js` | 无（纯函数，UMD） | `starfall.js`、`server/starfall.mjs`（双端共用） |
 | `mailbox.js` (v9.9) | `data.js`, `ui-primitives.js`, `GS/State` | 主脚本（顶栏按钮）、`starfall.js`（奖励投递） |
-| `server.ps1` | `default-world.json`, `starfall_activity.json`, `.NET HttpListener` | 无（独立运行） |
+| `server/` (Node) | `default-world.json`, `starfall_activity.json`, `starfall-core.js`, `world.json`, `players/`, `chat.json` | 无（独立运行，`node server\index.mjs`） |
 
 ---
 
@@ -1024,8 +1063,8 @@ runtime.js (运行模式判定，最先加载，无依赖)
 # 方式一：双击启动
 start-server.bat
 
-# 方式二：命令行
-powershell -File server.ps1 -Port 8080
+# 方式二：命令行（需 Node.js 18+）
+node server\index.mjs -Port 8080
 
 # 访问
 # 浏览器打开 http://localhost:8080
@@ -1035,11 +1074,11 @@ powershell -File server.ps1 -Port 8080
 
 1. **服务器电脑**（主机）：
 ```powershell
-# 首次：管理员注册 URL ACL
+# 首次：管理员放行防火墙（Node 服务端无需注册 URL ACL）
 powershell -File setup-admin.ps1
 
-# 启动局域网服务
-powershell -File server.ps1 -Lan
+# 启动局域网服务（绑定 0.0.0.0）
+node server\index.mjs -Lan
 ```
 
 2. **获取本机 IP**：`ipconfig` → IPv4 地址（如 `192.168.3.28`）
@@ -1142,7 +1181,7 @@ runCmd("/gm <adminPass> setday <正确天数>")
 
 世界种子文件，定义 13 城的基础价格和限购量：
 
-- **__schema**：世界配置版本号（v9.7.1 起，`server.ps1` 据此自动重建旧 world）
+- **__schema**：世界配置版本号（v9.7.1 起，服务端据此自动重建旧 world）
 - **basePrices**：每城 × 每物的基础价格（13 城 × 51 物，v9.7.1 重建）
 - **purchaseLimits**：每城 × 每物的限购量（按城市等级梯度设计）
 - **tradeRoads / sourceConfig / sellExceptions / demandProfile**：经济距离与 v9.5/v9.7 经济配置

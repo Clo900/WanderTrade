@@ -103,13 +103,14 @@
 <script src="src/gameplay/task-bad-record.js"></script>
 <script src="src/economy/task-reward.js"></script>
 <!-- v9.9：星陨城活动 + 邮箱系统（独立模块，低耦合挂载） -->
-<script src="src/gameplay/mailbox.js?v=973"></script>
+<script src="src/gameplay/mailbox.js?v=9112"></script>
 <!-- v9.11.10：成就配置表（策划统一修改入口，需在 events.js 之后加载以引用 EVENT_TABLE） -->
 <script src="src/data/achievements.js?v=9110"></script>
-<!-- v9.11.11：称号配置表（策划统一修改入口，须在 titles.js 之前加载） -->
-<script src="src/data/titles.js?v=9111"></script>
-<script src="src/gameplay/titles.js?v=974"></script> <!-- v9.10.3：称号系统 -->
-<script src="src/gameplay/starfall.js?v=974"></script>
+<!-- v9.11.11：称号配置表（策划统一修改入口，须在 titles.js 之前加载） v9.12.0：迁移至共享模块 title-defs.js（浏览器/服务端复用） -->
+<script src="src/data/title-defs.js?v=912"></script>
+<script src="src/gameplay/titles.js?v=912"></script> <!-- v9.10.3：称号系统 -->
+<script src="src/gameplay/starfall-core.js?v=9112"></script> <!-- v9.11.x：星陨城确定性逻辑共享核心（浏览器/Node 双端复用） -->
+<script src="src/gameplay/starfall.js?v=9112"></script>
 <script src="src/economy/market-ui.js?v=974"></script> <!-- v9.10.2：交易市场 UI 自主内联拆出 -->
 <script src="src/map/road-curves.js?v=974"></script> <!-- v9.10.2：路网曲线模块拆出 -->
 <script src="src/map/map-render.js?v=974"></script> <!-- v9.10.2：地图渲染模块拆出 -->
@@ -786,12 +787,13 @@ function renderUserPanel(){
   const nick=GS.nickname||user||'未登录';
   const eq=Titles.equippedId();
   const owned=Titles.ownedList();
-  const cards=Object.keys(Titles.TITLES).map(id=>{
+  const cards=Titles.panelList().map(id=>{ // v9.12.0：panelList——未获得的专属称号隐藏
     const t=Titles.TITLES[id],has=owned.indexOf(id)>=0,sel=eq===id;
     const act=has?(sel?'已装备 · 点击卸下':'点击装备'):'未获得';
+    const tag=Titles.isExclusive(id)?'<span class="user-title-tag">专属</span>':'';
     return `<div class="user-title-card ${has?'':'locked'} ${sel?'sel':''}" onclick="equipTitle('${id}')">
       ${Titles.badgeHTML(id)||(''+t.icon)}
-      <span class="user-title-rarity">${Titles.RARITY[t.rarity]||''}</span>
+      <span class="user-title-rarity">${Titles.RARITY[t.rarity]||''}${tag}</span>
       <span class="user-title-desc">${t.desc}</span>
       <span class="user-title-act">${act}</span>
     </div>`;
@@ -1170,13 +1172,21 @@ function renderEventCatalog(){
   return html;
 }
 
-// ===== 后台指令系统（v7.4 GM/作弊，在线可用） =====
+// ===== 后台指令系统（v7.4 GM/作弊） =====
 // 用法：点击右下角 🛠 打开指令台，或浏览器控制台运行 runCmd("...")
-// 本地指令（无需密码，仅影响本账号）：/help /addgold /addcargo /addmat /repair /core /wagon /setrep /stock /day
+// 权限（v9.11.x）：
+//   - 单机版：本地调试指令随便用；/gm starfall|mail|broadcast 免密可用
+//   - 在线版：普通玩家仅可用查看类（/help /gold /time）与 /gm 通道；
+//     本地调试指令（addgold/addcargo/...）一律禁用，仅 GM 可用（走 /gm <密码>）
 // GM 指令（需世界管理密码，服务器执行）：/gm <密码> timescale|setday|givegold|giveitem|broadcast ...
+const ONLINE_PLAYER_CMDS=['/help','/h','help','/gold','/time']; // v9.11.x：在线普通玩家白名单（仅查看类）
 const CMD_HELP=[
+  '—— 查看类（在线版普通玩家可用）——',
   '/help                          显示本帮助',
-  '/addgold <金额>                给自己加金币',
+  '/gold                          查看当前金币',
+  '/time                          查看服务器时间校准状态（nowMs/clockOffset）',
+  '—— 本地调试指令（仅单机版；在线仅 GM 可用，走 /gm 通道）——',
+  '/addgold <金额>                给自己加金币（在线请用 /gm givegold）',
   '/addcargo <物品id> <数量>      给自己加货物（如 grain、salt、ironware…）',
   '/addmat <类型> <数量>          加升级材料（gear/repair_kit/fuel_tank/engine）',
   '/repair                        车辆耐久修满',
@@ -1185,22 +1195,45 @@ const CMD_HELP=[
   '/setrep <城市id> <经验>        设置某城市声望经验（如 greentown 5000）',
   '/stock <城市id> <物品id> <数量> 设置自己在该城该物品的库存',
   '/day <天数>                    本地推进到指定天数（在线由世界天数主导）',
-  '/gold                          查看当前金币',
-  '/time                          查看服务器时间校准状态（nowMs/clockOffset）',
+  '—— GM 指令（需世界管理密码，服务器执行）——',
   '/gm <密码> timescale <0.1~100> 世界时间流速倍率（全服生效，1=正式10分钟/日）',
   '/gm <密码> setday <天数>       设置世界天数（全服生效）',
   '/gm <密码> givegold <玩家> <金额> 给指定玩家发钱（在线存档生效）',
   '/gm <密码> giveitem <玩家> <物品id> <数量> 给指定玩家发物资',
   '/gm <密码> broadcast <消息>    全服跑马灯公告（单机免密：/gm broadcast <消息> 本地演示）',
   '/gm <密码> starfall start|end|next|status|cycle <建设期h> <间隙期h>  星陨城活动：立即开始/结束/进入下一期/查看状态/改周期（单机免密码：/gm starfall start）',
-  '/gm <密码> mail <玩家> <金币> <星陨合金>  给指定玩家发奖励邮件（单机免密：/gm mail <金币> <合金> 投递本地测试邮件）'
+  '/gm <密码> titles                  列出全部称号 id（邮件称号附件用；专属称号仅可单独发放）',
+  '/gm <密码> mail <玩家> [金币] [合金] [称号id] ["标题"] ["正文"] [发件人]  发邮件给指定玩家（- 跳过；全空=纯通知；专属称号只能单独发）',
+  '/gm <密码> mailall [金币] [合金] [称号id] ["标题"] ["正文"] [发件人]  发邮件给全体玩家（全空=纯通知；不可携带专属称号）',
+  '  例：/gm <密码> mail alice 10000 5 sf_champion "活动奖励" "恭喜夺冠！" "运营团队"',
+  '  例：/gm <密码> mailall - - - "停服公告" "今晚 22:00 维护" "运营团队"'
 ];
 function cmdOut(msg){const el=document.getElementById('cmd-out');if(el){const d=document.createElement('div');d.textContent=msg;el.appendChild(d);el.scrollTop=el.scrollHeight;}}
+// v9.11.x：引号感知分词（/gm mail|mailall 的自定义标题/正文；"" 保留为空串 token，- 表示跳过参数）
+function splitArgs(s){
+  const out=[];let cur='',inQ=false,hasTok=false;
+  for(let i=0;i<s.length;i++){
+    const ch=s[i];
+    if(ch==='"'){inQ=!inQ;hasTok=true;continue;}
+    if(ch===' '&&!inQ){
+      if(hasTok){out.push(cur);cur='';hasTok=false;}
+      continue;
+    }
+    cur+=ch;hasTok=true;
+  }
+  if(hasTok)out.push(cur);
+  return out;
+}
 function runCmd(line){
   if(!line||!line.trim())return cmdOut('❌ 指令有误：未输入任何指令');
   const p=line.trim().split(/\s+/);
   const c=(p[0]||'').toLowerCase();
   const arg=(i,d)=>{const v=parseFloat(p[i]);return isNaN(v)?d:v};
+  // v9.11.x：在线版权限守卫——普通玩家仅可查看类指令与 /gm 通道，本地调试指令禁用
+  if(ONLINE&&c!=='/gm'&&c!=='/admin'&&!ONLINE_PLAYER_CMDS.includes(c)){
+    cmdOut('❌ 在线模式该指令仅 GM 可用，请使用 /gm <密码> …（/help 查看帮助）');
+    return;
+  }
   if(c==='/help'||c==='/h'||c==='help'){CMD_HELP.forEach(x=>cmdOut(x));return;}
   if(c==='/gold'){cmdOut('💰 当前金币：'+GS.gold);return;}
   if(c==='/time'){const off=GS.__clockOffset||0;cmdOut(`🕐 nowMs=${nowMs()} · clockOffset=${off>0?'+':''}${off}ms · 本地=${Date.now()}`);return;}
@@ -1214,13 +1247,13 @@ function runCmd(line){
   if(c==='/stock'){const city=(p[1]||''),it=(p[2]||''),n=Math.floor(arg(3,0));if(!city||!it)return cmdOut('用法：/stock <城市id> <物品id> <数量>');GS.cityStocks=GS.cityStocks||{};GS.cityStocks[city]=GS.cityStocks[city]||{};GS.cityStocks[city][it]=n;cmdOut('📦 '+city+' '+it+' 库存 → '+n);render();return;}
   if(c==='/day'){if(ONLINE)return cmdOut('📅 在线模式天数由世界锚点统一驱动，/day 仅离线可用');const n=Math.floor(arg(1,1));GS.day=Math.max(1,n);cmdOut('📅 本地天数 → '+n);render();return;}
   if(c==='/gm'||c==='/admin'){
-    const GM_SUB=['timescale','setday','givegold','giveitem','broadcast','starfall','mail'];
+    const GM_SUB=['timescale','setday','givegold','giveitem','broadcast','starfall','mail','mailall','titles']; // v9.11.x：+mailall/titles
     let key=(p[1]||''),sub=(p[2]||'').toLowerCase();
     // v9.9.1：单机模式 starfall 免密码——输入 "/gm starfall start" 时 key 位被误判为子指令名，做一次前移纠偏
     if(!ONLINE&&!GM_SUB.includes(sub)&&GM_SUB.includes(key.toLowerCase())){
       sub=key.toLowerCase();key='';
     }
-    const LOCAL_GM=['starfall','mail','broadcast']; // v9.9.1：单机模式免密可用的 GM 子指令
+    const LOCAL_GM=['starfall','mail','broadcast','titles']; // v9.9.1：单机免密；v9.11.x：titles 只读列表免密
     if(!key&&!LOCAL_GM.includes(sub))return cmdOut('❌ 指令有误：用法：/gm <密码> <指令> …（单机 starfall/mail/broadcast 指令可省略密码）');
     const payload={key:key,cmd:sub};
     if(sub==='timescale'){payload.x=arg(3,1);}
@@ -1232,8 +1265,35 @@ function runCmd(line){
       payload.action=((key?p[3]:p[2])||'').toLowerCase();
       if(payload.action==='cycle'){payload.runH=key?p[4]:p[3];payload.interH=key?p[5]:p[4];}
     }
-    else if(sub==='mail'){payload.user=(p[3]||'');payload.gold=Math.floor(arg(4,0));payload.alloy=Math.floor(arg(5,0));} // v9.9：GM 邮件发放
-    else return cmdOut('❌ 指令有误：未知 GM 指令 "'+(sub||'<空>')+'"（可用：timescale / setday / givegold / giveitem / broadcast / starfall / mail）');
+    else if(sub==='mail'||sub==='mailall'){
+      // v9.11.x：GM 邮件——引号感知分词；[金币] [合金] [称号id] ["标题"] ["正文"]，- / "" 表示跳过（服务端用默认）
+      const q=splitArgs(line);
+      const off=(sub==='mail')?4:3; // mail: q[3]=玩家,q[4]起为参数；mailall: q[3]起为参数
+      const num=(i,d)=>{const v=q[off+i];if(v===undefined||v===''||v==='-')return d;const n=parseFloat(v);return isNaN(n)?d:Math.floor(n);};
+      const str=(i)=>{const v=q[off+i];return (v===undefined||v==='-')?'':v;};
+      if(sub==='mail')payload.user=(q[3]||'');
+      payload.gold=num(0,0);
+      payload.alloy=num(1,0);
+      payload.titleId=str(2);
+      payload.title=str(3);
+      payload.body=str(4);
+      payload.sender=str(5); // v9.11.x：自定义发件人（缺省 GM）
+    }
+    else if(sub==='titles'){ /* 客户端本地列出称号，见下 */ }
+    else return cmdOut('❌ 指令有误：未知 GM 指令 "'+(sub||'<空>')+'"（可用：timescale / setday / givegold / giveitem / broadcast / starfall / mail / mailall / titles）');
+    // v9.11.x：/gm titles 只读列出全部称号 id（无需服务端，任何模式可用）
+    if(sub==='titles'){
+      if(window.Titles&&window.Titles.TITLES){
+        cmdOut('🎖️ 可用称号 id（/gm mail 的 [称号id] 参数；专属称号不可群发）：');
+        const ts=window.Titles.TITLES;
+        for(const id of Object.keys(ts)){
+          const t=ts[id];
+          const ex=window.Titles.isExclusive?window.Titles.isExclusive(id):(t.rarity==='exclusive');
+          cmdOut('  '+id+'  「'+t.name+'」 '+(t.icon||'')+'（'+(window.RARITY&&window.RARITY[t.rarity]?window.RARITY[t.rarity]:t.rarity)+(ex?' · 专属':'')+'）');
+        }
+      }else cmdOut('❌ 称号配置未加载');
+      return;
+    }
     if(!ONLINE){
       // v9.9.1：单机模式 starfall/mail/broadcast 免密本地可用（内测）；其余 GM 指令仅在线
       if(sub==='starfall'&&window.Starfall){Starfall.adminCmd(payload.action,cmdOut,payload);return;}
@@ -1264,6 +1324,11 @@ function runCmd(line){
 function toggleCmdPanel(){
   const el=document.getElementById('cmd-panel');
   if(el)el.style.display=el.style.display==='none'?'flex':'none';
+  // v9.11.x：在线模式首次打开指令台提示权限边界（仅一次，不刷屏）
+  if(el&&el.style.display==='flex'&&ONLINE&&!window.__cmdModeHinted){
+    window.__cmdModeHinted=true;
+    cmdOut('ℹ 在线模式：本地调试指令已禁用，仅 GM 可用（/gm <密码> …）');
+  }
 }
 function cmdInputKey(e){if(e.key==='Enter'){runCmd(e.target.value);e.target.value='';}}
 
@@ -1311,6 +1376,8 @@ function chatLoad(){
 function chatAdd(m,danmaku){
   if(!m)return;
   m=chatNorm(m);
+  // v9.11.x：SSE 推流与轮询可能重叠投递同一批消息，按 id 去重
+  for(let i=0;i<CHAT.msgs.length;i++){if(CHAT.msgs[i].id===m.id)return;}
   CHAT.msgs.push(m);if(CHAT.msgs.length>300)CHAT.msgs=CHAT.msgs.slice(-300);
   if(m.id>CHAT.since)CHAT.since=m.id;
   if(danmaku)spawnDanmaku(m);
@@ -1399,11 +1466,44 @@ function clampChatPanel(){
   if(b>maxB)p.style.bottom=maxB+'px';
 }
 function chatKey(e){if(e.key==='Enter')chatSend();}
-// 在线聊天轮询（3 秒）：首拉只入历史不弹幕，之后增量弹幕
+// 在线聊天（v9.11.x：SSE 推流优先，失败自动回退 3s 轮询）
+// 服务端 /api/chat/stream 连接建立即补发 since 之后的历史，之后实时推送；
+// 轮询接口 /api/chat?since= 保留为兼容/回退路径，两者共用 chatAdd 按 id 去重。
 function startChatPolling(){
   if(window.__chatPoll)return;
+  window.__chatPoll=true; // 启动标记
+  if(ONLINE&&window.EventSource){
+    let tries=0;
+    const openSSE=()=>{
+      if(!ONLINE)return;
+      let es=null;
+      try{es=new EventSource('/api/chat/stream?since='+CHAT.since);}
+      catch(e){window.__chatSSE=false;startChatPollFallback();return;}
+      window.__chatSSE=true;
+      es.onmessage=ev=>{
+        if(!ONLINE)return;
+        try{
+          const m=JSON.parse(ev.data);
+          if(m&&m.id){const first=CHAT.firstPull;CHAT.firstPull=false;chatAdd(m,!first);}
+        }catch(e){}
+      };
+      es.onerror=()=>{
+        es.close();window.__chatSSE=false;tries++;
+        if(tries<3)setTimeout(openSSE,3000); // 断线自动重连
+        else startChatPollFallback();        // 多次失败回退轮询
+      };
+    };
+    openSSE();
+    // 兜底：5s 内 SSE 未建立（如代理吞掉/不支持）则回退轮询
+    setTimeout(()=>{if(!window.__chatSSE)startChatPollFallback();},5000);
+    return;
+  }
+  startChatPollFallback();
+}
+function startChatPollFallback(){
+  if(window.__chatInterval)return;
   const poll=async()=>{
-    if(!ONLINE)return;
+    if(!ONLINE||window.__chatSSE)return; // SSE 活跃时不轮询
     const r=await NET.get('/api/chat?since='+CHAT.since);
     if(r&&r.ok&&r.msgs&&r.msgs.length){
       const first=CHAT.firstPull;CHAT.firstPull=false;
@@ -1411,7 +1511,7 @@ function startChatPolling(){
     }
   };
   poll(); // 登录后首个成功轮询即拉历史
-  window.__chatPoll=setInterval(poll,3000);
+  window.__chatInterval=setInterval(poll,3000);
 }
 // 通用可拖动（el=目标元素，handle=拖动手柄；onClick 在无位移的点击时触发；opts.bottomAnchored=保持底部锚定拖动）
 function makeDraggable(el,handle,opts){

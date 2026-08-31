@@ -18,10 +18,10 @@ npm.cmd install
 
 ## 运行
 
-1. 先启动游戏服务器（默认 8080）：
+1. 先启动游戏服务器（默认 8080，需 Node.js 18+）：
 
    ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File server.ps1
+   node server\index.mjs
    ```
 
 2. 运行回归（服务器端口非 8080 时用 `E2E_URL` 覆盖）：

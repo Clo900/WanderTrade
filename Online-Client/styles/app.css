@@ -707,13 +707,16 @@ h3{font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
 /* ============================================================
  * v9.10.3 称号系统（Title Badge）：聊天 / 弹幕 / 排行榜 / 用户面板复用
  * 稀有度逐级绚丽：普通=纯色底 → 稀有=蓝渐变 → 史诗=紫渐变+紫光 → 传说=金紫渐变+光晕+呼吸星芒
+ * v9.12.0：+exclusive 专属（金紫幻彩+呼吸流光，视觉最高档，仅策划单独发放）
  * ============================================================ */
 .title-badge{display:inline-flex;align-items:center;gap:3px;padding:1px 9px;border-radius:999px;font-size:10px;font-weight:800;line-height:1.7;white-space:nowrap;letter-spacing:.3px;vertical-align:baseline;user-select:none}
 .title-badge.t-common{color:#cfd6e4;background:linear-gradient(180deg,#454b58,#333845);border:1px solid #5a6273;text-shadow:0 1px 1px rgba(0,0,0,.5)}
 .title-badge.t-rare{color:#cdeaff;background:linear-gradient(180deg,#1f5478,#16344f);border:1px solid #4d8fc4;text-shadow:0 1px 2px rgba(0,0,0,.55);box-shadow:0 0 4px rgba(77,143,196,.35)}
 .title-badge.t-epic{color:#ffe0a8;background:linear-gradient(135deg,#5b2f8f,#31206b 55%,#251a52);border:1px solid #a678e8;text-shadow:0 1px 2px rgba(0,0,0,.6);box-shadow:0 0 7px rgba(166,120,232,.5)}
 .title-badge.t-legend{color:#fff6d8;background:linear-gradient(135deg,#7a4a0e 0%,#a03a12 42%,#6a2a4e 72%,#3a2a7a 100%);border:1px solid #ffd86b;text-shadow:0 0 6px rgba(255,215,0,.75);box-shadow:0 0 10px rgba(255,210,90,.55),0 0 3px rgba(255,255,255,.65);animation:titleLegend 2.8s ease-in-out infinite}
+.title-badge.t-exclusive{color:#fffbe8;background:linear-gradient(135deg,#4a1d7a 0%,#7a1d6e 35%,#b8860b 70%,#3a1d8a 100%);border:1px solid #ffd86b;text-shadow:0 0 8px rgba(255,230,150,.9),0 0 2px rgba(255,255,255,.9);box-shadow:0 0 12px rgba(255,215,0,.65),0 0 4px rgba(255,255,255,.75),inset 0 0 6px rgba(255,215,0,.25);animation:titleExclusive 2.4s ease-in-out infinite}
 @keyframes titleLegend{0%,100%{box-shadow:0 0 8px rgba(255,210,90,.45),0 0 3px rgba(255,255,255,.55)}50%{box-shadow:0 0 14px rgba(255,210,90,.75),0 0 5px rgba(255,255,255,.85)}}
+@keyframes titleExclusive{0%,100%{box-shadow:0 0 10px rgba(255,215,0,.55),0 0 4px rgba(255,255,255,.65),inset 0 0 6px rgba(255,215,0,.2)}50%{box-shadow:0 0 18px rgba(255,215,0,.9),0 0 8px rgba(255,230,150,.9),inset 0 0 10px rgba(255,215,0,.4)}}
 
 /* 顶栏用户 chip 可点击（v9.10.3） */
 .tb-user-chip.clickable{cursor:pointer;border:1px solid transparent;transition:all .2s}
@@ -750,6 +753,7 @@ h3{font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
 .user-title-card.locked{opacity:.55;cursor:default}
 .user-title-card.locked:hover{border-color:var(--text3);transform:none}
 .user-title-rarity{font-size:10px;font-weight:800;color:var(--text3);letter-spacing:1px}
+.user-title-tag{margin-left:4px;padding:0 5px;border-radius:999px;font-size:9px;font-weight:800;color:#fffbe8;background:linear-gradient(135deg,#7a1d6e,#b8860b);border:1px solid rgba(255,216,107,.7);vertical-align:1px}
 .user-title-card.sel .user-title-rarity{color:var(--gold)}
 .user-title-desc{font-size:10px;color:var(--text3);line-height:1.5}
 .user-title-act{font-size:11px;font-weight:700;color:var(--text2)}

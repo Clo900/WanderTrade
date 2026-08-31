@@ -189,3 +189,86 @@
 [2026-08-31 12:29:14] [Settle] 第 127 期结算开始：参与 1 人，建设度 0%（310/200000）
 [2026-08-31 12:29:14] [Settle] 第 127 期结算完成：冠军=e2e547081，奖励邮件 1 封
 [2026-08-31 12:29:14] [Admin] starfall end：第 127 期结算并进入间隙期
+[2026-08-31 05:53:25] [Admin] starfall start：第 128 期建设开始，special=mushroom
+[2026-08-31 05:53:25] [Settle] 第 128 期结算开始：参与 1 人，建设度 0%（400/200000）
+[2026-08-31 05:53:25] [Settle] 第 128 期结算完成：冠军=smoke1，奖励邮件 1 封
+[2026-08-31 05:53:25] [Admin] starfall end：第 128 期结算并进入间隙期
+[2026-08-31 05:54:49] [Admin] starfall start：第 129 期建设开始，special=fur
+[2026-08-31 05:54:51] [Settle] 第 129 期结算完成：冠军=e2e685788，奖励邮件 1 封
+[2026-08-31 05:54:51] [Settle] 第 129 期结算开始：参与 1 人，建设度 0%（310/200000）
+[2026-08-31 05:54:51] [Admin] starfall end：第 129 期结算并进入间隙期
+[2026-08-31 05:55:55] [Admin] starfall start：第 130 期建设开始，special=jade
+[2026-08-31 05:55:57] [Settle] 第 130 期结算完成：冠军=e2e751606，奖励邮件 1 封
+[2026-08-31 05:55:57] [Admin] starfall end：第 130 期结算并进入间隙期
+[2026-08-31 05:55:57] [Settle] 第 130 期结算开始：参与 1 人，建设度 0%（310/200000）
+[2026-08-31 06:06:39] [Admin] starfall start：第 131 期建设开始，special=spice
+[2026-08-31 06:06:41] [Settle] 第 131 期结算完成：冠军=e2e395747，奖励邮件 1 封
+[2026-08-31 06:06:41] [Settle] 第 131 期结算开始：参与 1 人，建设度 0%（310/200000）
+[2026-08-31 06:06:41] [Admin] starfall end：第 131 期结算并进入间隙期
+[2026-08-31 06:14:01] [Admin] starfall start：第 132 期建设开始，special=amber
+[2026-08-31 06:14:04] [Settle] 第 132 期结算开始：参与 1 人，建设度 0%（310/200000）
+[2026-08-31 06:14:04] [Admin] starfall end：第 132 期结算并进入间隙期
+[2026-08-31 06:14:04] [Settle] 第 132 期结算完成：冠军=e2e838229，奖励邮件 1 封
+[2026-08-31 06:47:25] [Admin] starfall start：第 133 期建设开始，special=tapestry
+[2026-08-31 06:47:27] [Settle] 第 133 期结算开始：参与 1 人，建设度 0%（310/200000）
+[2026-08-31 06:47:27] [Admin] starfall end：第 133 期结算并进入间隙期
+[2026-08-31 06:47:27] [Settle] 第 133 期结算完成：冠军=e2e841877，奖励邮件 1 封
+[2026-08-31 07:26:29] [Admin] mailall：7 人收到，称号=sf_participant
+[2026-08-31 07:26:29] [Admin] mail：ma1 gold=0 staralloy=0（纯通知）
+[2026-08-31 07:26:29] [Admin] mail：ma1 gold=5000 staralloy=3 title=sf_champion
+[2026-08-31 07:26:29] [Admin] mailall：7 人收到（纯通知）
+[2026-08-31 07:26:56] [Admin] mail：ma1 gold=5000 staralloy=3 title=sf_champion
+[2026-08-31 07:26:56] [Admin] mailall：7 人收到，称号=sf_participant
+[2026-08-31 07:26:56] [Admin] mail：ma1 gold=0 staralloy=0（纯通知）
+[2026-08-31 07:26:56] [Admin] mailall：7 人收到（纯通知）
+[2026-08-31 07:27:59] [Admin] mail：gmt277891 gold=888 staralloy=2 title=sf_participant
+[2026-08-31 07:28:00] [Admin] mailall：9 人收到（纯通知）
+[2026-08-31 07:29:18] [Admin] mail：gmt356272 gold=888 staralloy=2 title=sf_participant
+[2026-08-31 07:29:19] [Admin] mailall：10 人收到（纯通知）
+[2026-08-31 07:29:59] [Admin] starfall start：第 134 期建设开始，special=dye
+[2026-08-31 07:30:01] [Settle] 第 134 期结算开始：参与 1 人，建设度 0%（310/200000）
+[2026-08-31 07:30:01] [Settle] 第 134 期结算完成：冠军=e2e395477，奖励邮件 1 封
+[2026-08-31 07:30:01] [Admin] starfall end：第 134 期结算并进入间隙期
+[2026-08-31 07:40:59] [Admin] mail：nl59588 gold=0 staralloy=0（纯通知）
+[2026-08-31 07:54:25] [Admin] mail：sd865758 发件人=运营团队 gold=0 staralloy=0（纯通知）
+[2026-08-31 07:54:25] [Admin] mail：sd865758 发件人=这个发件人名字实在是太长太长太长太长了 gold=0 staralloy=0（纯通知）
+[2026-08-31 07:54:25] [Admin] mail：sd865758 发件人=系统 gold=0 staralloy=0（纯通知）
+[2026-08-31 07:54:25] [Admin] mail：sd865758 发件人=GM gold=0 staralloy=0（纯通知）
+[2026-08-31 07:54:25] [Admin] mailall：7 人收到 发件人=边境城建指挥部（纯通知）
+[2026-08-31 07:54:40] [Admin] mail：sd879999 发件人=运营团队 gold=0 staralloy=0（纯通知）
+[2026-08-31 07:54:40] [Admin] mail：sd879999 发件人=GM gold=0 staralloy=0（纯通知）
+[2026-08-31 07:54:40] [Admin] mail：sd879999 发件人=系统 gold=0 staralloy=0（纯通知）
+[2026-08-31 07:54:40] [Admin] mailall：7 人收到 发件人=边境城建指挥部（纯通知）
+[2026-08-31 07:55:05] [Admin] mailall：9 人收到 发件人=边境城建指挥部（纯通知）
+[2026-08-31 07:55:39] [Admin] mail：sd939377 发件人=运营团队 gold=0 staralloy=0（纯通知）
+[2026-08-31 07:55:39] [Admin] mailall：9 人收到 发件人=边境城建指挥部（纯通知）
+[2026-08-31 07:55:39] [Admin] mail：sd939377 发件人=系统 gold=0 staralloy=0（纯通知）
+[2026-08-31 07:55:39] [Admin] mail：sd939377 发件人=GM gold=0 staralloy=0（纯通知）
+[2026-08-31 08:08:17] [Admin] mail：sd696490 发件人=运营团队 gold=0 staralloy=0（纯通知）
+[2026-08-31 08:08:17] [Admin] mail：sd696490 发件人=GM gold=0 staralloy=0（纯通知）
+[2026-08-31 08:08:17] [Admin] mailall：11 人收到 发件人=边境城建指挥部（纯通知）
+[2026-08-31 08:08:17] [Admin] mail：sd696490 发件人=系统 gold=0 staralloy=0（纯通知）
+[2026-08-31 08:08:17] [Admin] mail：sd697131 发件人=运营团队 gold=0 staralloy=0（纯通知）
+[2026-08-31 08:08:17] [Admin] mail：sd697131 发件人=系统 gold=0 staralloy=0（纯通知）
+[2026-08-31 08:08:17] [Admin] mailall：12 人收到 发件人=边境城建指挥部（纯通知）
+[2026-08-31 08:08:17] [Admin] mail：sd697131 发件人=GM gold=0 staralloy=0（纯通知）
+[2026-08-31 08:08:18] [Admin] mail：sd697757 发件人=运营团队 gold=0 staralloy=0（纯通知）
+[2026-08-31 08:08:18] [Admin] mailall：13 人收到 发件人=边境城建指挥部（纯通知）
+[2026-08-31 08:08:18] [Admin] mail：sd697757 发件人=GM gold=0 staralloy=0（纯通知）
+[2026-08-31 08:08:18] [Admin] mail：sd697757 发件人=系统 gold=0 staralloy=0（纯通知）
+[2026-08-31 08:08:59] [Admin] mail：sf722918 发件人=运营团队 gold=0 staralloy=0（纯通知）
+[2026-08-31 08:09:00] [Admin] mailall：14 人收到 发件人=边境 城建指挥部（纯通知）
+[2026-08-31 08:09:01] [Admin] mail：sf722918 发件人=GM gold=0 staralloy=0（纯通知）
+[2026-08-31 08:09:09] [Admin] starfall start：第 135 期建设开始，special=amber
+[2026-08-31 08:09:11] [Settle] 第 135 期结算开始：参与 1 人，建设度 0%（310/200000）
+[2026-08-31 08:09:11] [Settle] 第 135 期结算完成：冠军=e2e745768，奖励邮件 1 封
+[2026-08-31 08:09:11] [Admin] starfall end：第 135 期结算并进入间隙期
+[2026-08-31 08:25:49] [Admin] mail：txagz4ez7 发件人=边境城建指挥部 gold=0 staralloy=0 title=ex_frontier_hero（专属）
+[2026-08-31 08:25:49] [Admin] mail：txbgz4ez7 发件人=GM gold=100 staralloy=0 title=sf_participant
+[2026-08-31 08:26:09] [Admin] mail：txagz4ulz 发件人=边境城建指挥部 gold=0 staralloy=0 title=ex_frontier_hero（专属）
+[2026-08-31 08:26:09] [Admin] mail：txbgz4ulz 发件人=GM gold=100 staralloy=0 title=sf_participant
+[2026-08-31 08:26:09] [Admin] mailall：4 人收到 发件人=GM，称号=sf_participant
+[2026-08-31 08:27:56] [Admin] starfall start：第 136 期建设开始，special=spice
+[2026-08-31 08:27:58] [Settle] 第 136 期结算开始：参与 1 人，建设度 0%（310/200000）
+[2026-08-31 08:27:58] [Settle] 第 136 期结算完成：冠军=e2e872362，奖励邮件 1 封
+[2026-08-31 08:27:58] [Admin] starfall end：第 136 期结算并进入间隙期

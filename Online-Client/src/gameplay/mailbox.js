@@ -360,4 +360,10 @@
     claim: claim
   };
 
+  // v9.11.x：定期同步服务端邮箱（GM 发邮件 / 星陨城结算后玩家无需刷新即可看到；
+  //   单机模式 ONLINE=false 时 sync 内部直接返回，无副作用）
+  setInterval(function(){
+    if(window.ONLINE && localStorage.getItem(AUTH_KEY)) sync();
+  }, 60000);
+
 })(window);

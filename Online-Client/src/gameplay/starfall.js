@@ -23,6 +23,10 @@
 (function(global){
   'use strict';
 
+  // v9.11.x：确定性逻辑统一走共享核心 StarfallCore（starfall-core.js，浏览器/Node 共用），
+  // 消灭"客户端 JS vs 服务端 PS 逐位复刻"的双份实现。本文件只保留 UI/状态/副作用层。
+  var Core = global.StarfallCore;
+
   var GOAL = 200000;
   var CONTRIB = { special: 100, normal: 20, other: 1 }; // v9.9.3：非当期物资 1 贡献/件
   // v9.10.2：周期参数化——默认建设期 24h / 间隙期 48h；在线由服务端 sfConfig 覆盖，单机由 GM cycle 或存档 sfConfig 覆盖
@@ -79,103 +83,40 @@
   ];
   function linesFor(phase){ return phase === 'running' ? LINES_RUNNING : LINES_INTER; }
 
-  function tierOf(rank){
-    for(var i = 0; i < TIERS.length; i++){ if(rank <= TIERS[i].max) return TIERS[i]; }
-    return TIERS[TIERS.length - 1];
-  }
+  function tierOf(rank){ return Core.tierFor(rank, TIERS); }
 
   function esc(s){
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  /* ===== 周期状态机 ===== */
-  // 周期基准：固定 UTC+8 的 2026-01-01 08:00（与服务端 Get-SfEpoch 一致，跨时区/单机在线期次不跳变）
-  //   Date.UTC(2026,0,1,0,0,0) = UTC 2026-01-01 00:00 = 北京时间 08:00，再减 8h 即北京时间 2026-01-01 08:00
-  function epoch(){ return Date.UTC(2026, 0, 1, 0, 0, 0) - 8 * 3600 * 1000; }
-
-  // mulberry32 确定性伪随机（种子 = 期次）
-  function rng(seed){
-    return function(){
-      seed |= 0; seed = seed + 0x6D2B79F5 | 0;
-      var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
-      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-      return ((t ^ t >>> 14) >>> 0) / 4294967296;
-    };
-  }
+  /* ===== 周期状态机（确定性逻辑均在 StarfallCore，此处仅做参数接线） ===== */
+  function epoch(){ return Core.epoch(); }
 
   /* 确定性抽选：每期 1 特产 + 3 普通（池与 data.js ITEMS 同步：cat==='special'/'basic'） */
-  function pickGoods(period){
-    var specials = [], basics = [];
-    for(var id in ITEMS){
-      if(ITEMS[id].cat === 'special') specials.push(id);
-      else if(ITEMS[id].cat === 'basic') basics.push(id);
-    }
-    specials.sort(); basics.sort(); // 固定顺序，保证种子结果可复现
-    var r = rng(period * 1000003 + 7);
-    var sp = specials[Math.floor(r() * specials.length)];
-    var normals = [], pool = basics.slice();
-    while(normals.length < 3 && pool.length){
-      var idx = Math.floor(r() * pool.length);
-      normals.push(pool.splice(idx, 1)[0]);
-    }
-    return { special: sp, normal: normals };
-  }
+  function pickGoods(period){ return Core.pickGoods(period, Core.categoriesFromItems(ITEMS)); }
 
   /* 贡献率：当期特产 100/件、当期普通 20/件、其他物资 1/件（v9.9.3 放开提交范围） */
-  function contribRate(itemId, req){
-    if(req && itemId === req.special) return CONTRIB.special;
-    if(req && req.normal && req.normal.indexOf(itemId) >= 0) return CONTRIB.normal;
-    return CONTRIB.other;
-  }
+  function contribRate(itemId, req){ return Core.contribRate(itemId, req, CONTRIB); }
 
   /* ===== 单机活动状态（存 GS.sfActivity，随本地档保存） ===== */
   function localAct(){
     if(GS.sfActivity && typeof GS.sfActivity !== 'object') GS.sfActivity = null;
     if(GS.sfActivity && GS.sfActivity.sfConfig){ applyCycle(GS.sfActivity.sfConfig.runMs, GS.sfActivity.sfConfig.interMs); } // v9.10.2：单机恢复周期配置
     if(!GS.sfActivity){
-      var now = nowMs();
-      var ep = epoch();
-      var p = Math.floor((now - ep) / CYCLE_MS) + 1;
-      var pStart = ep + (p - 1) * CYCLE_MS;
-      var running = now < pStart + RUN_MS;
-      GS.sfActivity = {
-        period: p,
-        phase: running ? 'running' : 'intermission',
-        phaseStartedAt: running ? pStart : pStart + RUN_MS,
-        phaseEndsAt: running ? pStart + RUN_MS : pStart + CYCLE_MS,
-        target: GOAL,
-        required: pickGoods(p),
-        totalProgress: 0,
-        scores: {}, firstOrder: {},
-        settled: false,
-        history: []
-      };
+      GS.sfActivity = Core.newActivity(nowMs(), {
+        runMs: RUN_MS, interMs: INTER_MS, goal: GOAL, ep: Core.epoch(),
+        cats: Core.categoriesFromItems(ITEMS)
+      });
     }
     return GS.sfActivity;
   }
 
-  /* 单机惰性轮转（复刻服务端 MaybeRefill 模式）：阶段到期推进，running 结束先结算 */
+  /* 单机惰性轮转（阶段推进逻辑在 StarfallCore；running 结束先本地结算投递奖励） */
   function rotateLocal(){
-    var act = localAct(), now = nowMs(), changed = false;
-    while(now >= act.phaseEndsAt){
-      if(act.phase === 'running'){
-        settleLocal(act);
-        act.phase = 'intermission';
-        act.phaseStartedAt = act.phaseEndsAt;
-        act.phaseEndsAt = act.phaseEndsAt + INTER_MS;
-      }else{
-        act.period++;
-        act.required = pickGoods(act.period);
-        act.totalProgress = 0;
-        act.scores = {}; act.firstOrder = {};
-        act.settled = false;
-        act.phase = 'running';
-        act.phaseStartedAt = act.phaseEndsAt;
-        act.phaseEndsAt = act.phaseEndsAt + RUN_MS;
-      }
-      changed = true;
-    }
-    return changed;
+    return Core.rotate(localAct(), nowMs(), {
+      runMs: RUN_MS, interMs: INTER_MS, ep: Core.epoch(),
+      cats: Core.categoriesFromItems(ITEMS)
+    }, settleLocal);
   }
 
   /* 单机结算：排名（贡献降序，同分先达到者优先）→ 进度折算 → 邮箱投递奖励 → 归档冠军 */
