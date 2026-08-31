@@ -119,7 +119,7 @@ $script:SfTiers = @(
   @{ max=[int64]15;   gold=[int64]20000;  alloy=[int64]3 },
   @{ max=[int64]50;   gold=[int64]10000;  alloy=[int64]2 },
   @{ max=[int64]100;  gold=[int64]5000;   alloy=[int64]1 },
-  @{ max=[int64]9223372036854775807; gold=[int64]1000; alloy=[int64]0 }
+  @{ max=[int64]9223372036854775807; gold=[int64]1000; alloy=[int64]1 }
 )
 $script:sfCats = $null
 # 星陨城运维日志（内测/运营排障；控制台输出 + 追加写入 starfall_log.txt）

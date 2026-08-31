@@ -1494,7 +1494,9 @@ const WAGON_TYPES={
   cargo:{name:'货运车厢',icon:'📦',cap:[60,120,200,300,450],pass:[0,0,0,0,0],spd:0.95,dur:[1.2,1.35,1.5,1.65,1.8],hp:[40,70,110,160,230],base:30000,color:'var(--accent)'},
   pass:{name:'载客车厢',icon:'🧳',cap:[0,0,0,0,0],pass:[8,12,16,20,25],spd:1.05,dur:[1.2,1.35,1.5,1.65,1.8],hp:[30,55,85,120,170],base:30000,color:'var(--travel)'},
   balanced:{name:'均衡车厢',icon:'⚖️',cap:[30,60,100,150,220],pass:[4,6,8,10,12],spd:0.97,dur:[1.1,1.22,1.34,1.46,1.58],hp:[35,60,95,140,200],base:45000,color:'var(--green)'},
-  engine:{name:'动力车厢',icon:'⚙️',cap:[0,0,0,0,0],pass:[0,0,0,0,0],spd:[1.1,1.2,1.3,1.45,1.6],dur:[0.85,0.75,0.65,0.55,0.45],hp:[25,45,70,100,140],base:60000,color:'var(--gold)'}
+  engine:{name:'动力车厢',icon:'⚙️',cap:[0,0,0,0,0],pass:[0,0,0,0,0],spd:[1.1,1.2,1.3,1.45,1.6],dur:[0.85,0.75,0.65,0.55,0.45],hp:[25,45,70,100,140],base:60000,color:'var(--gold)'},
+  // v9.11.14：武装车厢（占位符）——为后续版本战斗/护卫玩法铺垫；locked 标记未开放，属性为占位数值
+  armed:{name:'武装车厢',icon:'🛡️',cap:[0,0,0,0,0],pass:[0,0,0,0,0],spd:1.0,dur:[1.2,1.35,1.5,1.65,1.8],hp:[40,70,110,160,230],base:75000,color:'var(--sell)',locked:true}
 };
 // 费用梯度（指数分布）：1级几万 → 4级大几十万 → 5级小几百万（货运 base 3万：3万/9万/24万/60万/180万）
 const WAGON_COST_MUL=[1,3,8,20,60];
@@ -1968,7 +1970,8 @@ function rollRarity(){
   for(let i=0;i<TASK_RARITY.length;i++){acc+=w[i];if(r<acc)return TASK_RARITY[i];}
   return TASK_RARITY[0];
 }
-// 素材产出：稀有 20% / 史诗 45% / 传说 80%；普通任务不产素材
+// v9.11.14：素材产出削减——任务仅产基础升级素材（齿轮/套件/燃油/引擎），且概率与数量整体下调约 55%：
+//   稀有 8% / 史诗 20% / 传说 35%（传说 1~2 件）；星陨合金为活动独家产出，任务不再产。
 function pickMat(){
   const r=Math.random();
   if(r<0.45)return'gear';
@@ -1977,9 +1980,9 @@ function pickMat(){
   return'engine';
 }
 function rollMat(R){
-  if(R.id==='legend')return Math.random()<0.8?[{id:pickMat(),qty:1}]:[];
-  if(R.id==='epic')return Math.random()<0.45?[{id:pickMat(),qty:1}]:[];
-  if(R.id==='rare')return Math.random()<0.2?[{id:pickMat(),qty:1}]:[];
+  if(R.id==='legend')return Math.random()<0.35?[{id:pickMat(),qty:1+Math.floor(Math.random()*2)}]:[];
+  if(R.id==='epic')return Math.random()<0.20?[{id:pickMat(),qty:1}]:[];
+  if(R.id==='rare')return Math.random()<0.08?[{id:pickMat(),qty:1}]:[];
   return[];
 }
 // 送客人数：与任务稀有度挂钩（旅游团/大迁徙），高级城市放大人数
@@ -2394,9 +2397,12 @@ function renderTaskBoard(){
 
 // ===== 载具升级（金币 + 素材；v6.8 只加车厢位 + 耐久上限） =====
 // 车厢位：Lv1=1、每级 +1（Lv10=10）；耐久上限每级 +20；消耗机制不变（金币+素材）
+// v9.11.14：成长曲线——星陨合金为活动独家产出，载具升级在关口等级（升 Lv5/Lv8/Lv10）梯度消耗：
+//   升 Lv5 需 2 · 升 Lv8 需 5 · 升 Lv10 需 10；其余等级不需合金（前期靠任务素材即可推进）
 function getUpgradeCost(){
   const lv=GS.vehicle.level;
-  return{gold:4000*lv*lv,gear:Math.ceil(lv/2),repair_kit:lv>=2?Math.floor((lv-1)/2):0};
+  return{gold:4000*lv*lv,gear:Math.ceil(lv/2),repair_kit:lv>=2?Math.floor((lv-1)/2):0,
+    staralloy:lv>=9?10:(lv>=7?5:(lv>=4?2:0))};
 }
 function doUpgradeVehicle(){
   if(GS.traveling)return toast('旅行中不可操作','info');
@@ -2404,10 +2410,12 @@ function doUpgradeVehicle(){
   if(GS.gold<cost.gold)return toast('资金不足，升级需 '+fmt(cost.gold)+' 金币','err');
   if((GS.materials.gear||0)<cost.gear)return toast('精密齿轮不足，完成本城任务可获得','err');
   if((GS.materials.repair_kit||0)<cost.repair_kit)return toast('维修套件不足，完成本城任务可获得','err');
+  if(cost.staralloy&&(GS.materials.staralloy||0)<cost.staralloy)return toast('星陨合金不足（需 '+cost.staralloy+'），参与星陨城建设可获得','err');
   const newSlots=getWagonSlots()+1;
   const oldMax=getDurabilityMax(),newMax=getDurabilityMaxByLevel(lv+1)+getCoreDurability()+getWagonHpAll();
+  const matLine=`⚙️精密齿轮×${cost.gear}${cost.repair_kit?' · 🧰维修套件×'+cost.repair_kit:''}${cost.staralloy?' · 💫星陨合金×'+cost.staralloy:''}`;
   showModal('🚛 载具升级',
-    `升级至 Lv${lv+1}\n车厢位 ${getWagonSlots()} → ${newSlots} · 耐久上限 ${oldMax} → ${newMax}\n消耗：${fmt(cost.gold)} 金币 · ⚙️精密齿轮×${cost.gear}${cost.repair_kit?' · 🧰维修套件×'+cost.repair_kit:''}`,
+    `升级至 Lv${lv+1}\n车厢位 ${getWagonSlots()} → ${newSlots} · 耐久上限 ${oldMax} → ${newMax}\n消耗：${fmt(cost.gold)} 金币 · ${matLine}`,
     '确认升级',()=>{
       var veh = GS.vehicle;
       veh.level++;
@@ -2416,6 +2424,7 @@ function doUpgradeVehicle(){
       var mats = State.get('materials') || {};
       mats.gear = (mats.gear||0) - cost.gear;
       mats.repair_kit = (mats.repair_kit||0) - cost.repair_kit;
+      if(cost.staralloy)mats.staralloy = (mats.staralloy||0) - cost.staralloy;
       State.batch(function(){
         State.set('vehicle', veh);
         State.set('materials', mats);
@@ -2686,13 +2695,15 @@ function replaceWagon(i){
     if(p>0)caps.push(`旅客${p}起`);
     caps.push(`损耗${T.dur[0]}~${T.dur[4]}`);
     const hasType=Object.keys(w.owned||{}).some(k=>k.startsWith(type+'_'));
-    opts+=`<div class="wagon-cat" style="border-color:${T.color}" onclick="showWagonLevels(${i},'${type}')"><span style="font-size:20px">${T.icon}</span><span style="flex:1"><span style="color:${T.color}">${T.name}${hasType?' <span style="font-size:10px;color:var(--green)">✔ 已解锁</span>':''}</span><br><span style="font-size:11px;color:var(--text3);font-weight:600">${caps.join(' · ')}</span></span><span class="wc-arrow" style="color:${T.color}">›</span></div>`;
+    const lockTag=T.locked?' <span style="font-size:10px;color:var(--sell)">🔒 即将开放</span>':'';
+    opts+=`<div class="wagon-cat" style="border-color:${T.color}" onclick="showWagonLevels(${i},'${type}')"><span style="font-size:20px">${T.icon}</span><span style="flex:1"><span style="color:${T.color}">${T.name}${lockTag}${hasType?' <span style="font-size:10px;color:var(--green)">✔ 已解锁</span>':''}</span><br><span style="font-size:11px;color:var(--text3);font-weight:600">${caps.join(' · ')}</span></span><span class="wc-arrow" style="color:${T.color}">›</span></div>`;
   }
   showModal('🚂 选择车厢类型（已解锁的免费装配）',opts,'关闭',()=>{});
 }
 function showWagonLevels(i,type){
   if(GS.traveling)return toast('旅行中不可操作','info');
   const T=WAGON_TYPES[type];
+  if(T&&T.locked)return showModal('🛡️ 武装车厢','武装车厢为后续版本预留（占位），敬请期待后续战斗/护卫玩法更新。','知道了',()=>{}); // v9.11.14：占位拦截
   const w=GS.vehicle.wagons[i]||{cur:null,owned:{}};
   let opts=`<div class="wagon-cat" onclick="backToWagonTypes(${i})"><span style="font-size:16px">↩</span><span style="flex:1">返回类型选择</span><span class="wc-arrow">‹</span></div>`;
   for(let lv=1;lv<=5;lv++){
@@ -2717,6 +2728,7 @@ function backToWagonTypes(i){
 }
 function buyWagon(i,type,lv){
   if(i<0||i>=getWagonSlots())return toast('车厢位不存在','err');
+  if(WAGON_TYPES[type]&&WAGON_TYPES[type].locked)return toast('武装车厢为后续版本预留，暂不可解锁','err'); // v9.11.14：占位拦截
   var veh = State.get('vehicle') || {};
   veh.wagons = veh.wagons || [];
   const slot=veh.wagons[i]||{cur:null,owned:{}};
@@ -2767,21 +2779,27 @@ function unloadWagon(i){
   toast('车厢已卸下（已解锁的车厢保留，可免费重新装配）','info');render();
 }
 // 载具核心：通过提交特殊道具对速度/耐久进行额外提升（材料数量随核心等级递增）
+// v9.11.14：合金关口——核心 Lv 升至 5/10/15…（本次升级后等级 n）时需星陨合金，梯度 2/4/6…：
+//   合金为活动独家产出，想持续强化核心必须参与星陨城建设
 function openCoreUpgrade(){
   if(GS.traveling)return toast('旅行中不可操作','info');
   var veh = State.get('vehicle') || {};
   veh.core = veh.core || {lv:0,speed:0,dura:0};
   const core=veh.core;
   const n=core.lv+1;
+  const alloyNeed=Math.floor(n/5)*2; // 关口：n=5→2、10→4、15→6、20→8…
   const has=(m)=>GS.materials[m]||0;
+  const alloyTxt=alloyNeed>0?` · 💫星陨合金×${alloyNeed}（活动获取）`:'';
   showChoice('⚙️ 载具核心',
-    `核心 Lv${core.lv}（升级材料随次数递增，当前需 ×${n}）\n当前加成：疾驰 +${core.speed} 速 · 强化 +${core.dura*50} 耐久\n\n持有：🧰维修套件${has('repair_kit')} · 🛢️燃油舱${has('fuel_tank')} · 🔩引擎核心${has('engine')}`,
-    `⚡ 疾驰（基础速度+1：🛢️×${n} + 🔩×${n}）`,
-    `🛡 强化（耐久上限+50：🧰×${n} + 🔩×${n}）`,
+    `核心 Lv${core.lv}（升级材料随次数递增，当前需 ×${n}）\n当前加成：疾驰 +${core.speed} 速 · 强化 +${core.dura*50} 耐久\n\n持有：🧰维修套件${has('repair_kit')} · 🛢️燃油舱${has('fuel_tank')} · 🔩引擎核心${has('engine')} · 💫星陨合金${has('staralloy')}`,
+    `⚡ 疾驰（基础速度+1：🛢️×${n} + 🔩×${n}${alloyTxt}）`,
+    `🛡 强化（耐久上限+50：🧰×${n} + 🔩×${n}${alloyTxt}）`,
     ()=>{
       if(has('fuel_tank')<n||has('engine')<n)return toast('材料不足，完成高稀有度任务可获得','err');
+      if(alloyNeed&&has('staralloy')<alloyNeed)return toast('星陨合金不足（需 '+alloyNeed+'），参与星陨城建设可获得','err');
       var mats = State.get('materials') || {};
       mats.fuel_tank -= n; mats.engine -= n;
+      if(alloyNeed)mats.staralloy -= alloyNeed;
       veh.core.lv++; veh.core.speed++;
       State.batch(function(){
         State.set('vehicle', veh);
@@ -2792,8 +2810,10 @@ function openCoreUpgrade(){
     },
     ()=>{
       if(has('repair_kit')<n||has('engine')<n)return toast('材料不足，完成高稀有度任务可获得','err');
+      if(alloyNeed&&has('staralloy')<alloyNeed)return toast('星陨合金不足（需 '+alloyNeed+'），参与星陨城建设可获得','err');
       var mats2 = State.get('materials') || {};
       mats2.repair_kit -= n; mats2.engine -= n;
+      if(alloyNeed)mats2.staralloy -= alloyNeed;
       veh.core.lv++; veh.core.dura++;
       State.batch(function(){
         State.set('vehicle', veh);
