@@ -9,6 +9,16 @@
 (function(global){
   'use strict';
 
+  // v9.10.4：24h 滚动窗口 → 全服 0 点统一刷新（按自然日统计；0 点后昨日记录自动作废）
+  // 记录时间戳来自调用方的 nowMs()（在线含服务器时钟校准），保证与服务端日期对齐
+  // v9.10.5：固定 UTC+8 服务器时区——"全服 0 点"以服务器日期为准（与星陨城周期基准一致），
+  //   非 UTC+8 客户端的自然日边界不再偏移
+  function dayKeyOf(ts){
+    const d = new Date(ts || Date.now());
+    const t = new Date(d.getTime() + 8 * 3600 * 1000);
+    return t.getUTCFullYear() + '-' + (t.getUTCMonth() + 1) + '-' + t.getUTCDate();
+  }
+
   function getLog(){
     if(!GS.taskBadLog || typeof GS.taskBadLog !== 'object'){
       GS.taskBadLog = { abandonAt: [], failAt: [] };
@@ -19,10 +29,11 @@
     return log;
   }
 
-  function prune(log, nowMs, windowMs){
-    const cutoff = nowMs - windowMs;
-    log.abandonAt = log.abandonAt.filter(function(t){ return t > cutoff; });
-    log.failAt = log.failAt.filter(function(t){ return t > cutoff; });
+  // 只保留"今日"的记录；跨过 0 点后昨日记录自然失效（全服统一刷新）
+  function prune(log, nowMs){
+    const today = dayKeyOf(nowMs);
+    log.abandonAt = (log.abandonAt||[]).filter(function(t){ return dayKeyOf(t)===today; });
+    log.failAt = (log.failAt||[]).filter(function(t){ return dayKeyOf(t)===today; });
   }
 
   /**
@@ -33,7 +44,7 @@
     const log = getLog();
     const key = kind === 'abandon' ? 'abandonAt' : 'failAt';
     log[key].push(nowMs);
-    prune(log, nowMs, cfg.WINDOW_MS);
+    prune(log, nowMs); // 自然日裁剪（0 点统一刷新，UTC+8）
     return count(log);
   }
 

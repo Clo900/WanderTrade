@@ -53,7 +53,7 @@
   function anchorForNow(){
     const cityId = (window.GS && GS.location) ? GS.location : State.get('location');
     const day = (window.GS && GS.day) ? GS.day : State.get('day');
-    const hub = (window.TradeGraph && TradeGraph.hub) ? TradeGraph.hub(day) : Math.floor((Math.max(1,day)-1)/12);
+    const hub = (window.TradeGraph && TradeGraph.hub) ? TradeGraph.hub(day) : Math.floor((Number(day)||0)/12); // v9.10.5：fallback 与权威口径一致
     return {cityId, day, hub};
   }
   function ensureAnchor(mode){
@@ -91,7 +91,7 @@
     if(window.EventBus) EventBus.emit(EventBus.EVENTS.DRAFT_CHANGED, { mode: mode, gid: gid, qty: 0 });
   }
   function clearAll(reason){
-    State.set('tradeDraft', {buy: emptyDraft(), sell: emptyDraft(), _lastClearReason: reason||''});
+    State.set('tradeDraft', {buy: emptyDraft(), sell: emptyDraft()});
     if(window.EventBus) EventBus.emit(EventBus.EVENTS.DRAFT_CHANGED, { mode: 'all', gid: null, qty: 0, reason: reason || '' });
   }
 

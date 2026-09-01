@@ -62,10 +62,9 @@
     MIN_ABANDON_PENALTY: 50       // 最低放弃罚金
   };
 
-  // 24h 不良记录（仅统计：放弃 + 严重超时；迟到不计入）
+  // 今日不良记录（仅统计：放弃 + 严重超时；迟到不计入；v9.10.4 起按自然日统计，全服 0 点统一刷新）
   const TASK_BAD_RECORD_CONFIG = {
-    WINDOW_MS: 24 * 60 * 60 * 1000,   // 滚动窗口：24 小时
-    thresholds: [10, 20, 30],         // badCount24h 触发阈值
+    thresholds: [10, 20, 30],         // 今日违约次数触发阈值
     // 与 thresholds 一一对应：{任务金币倍率, 史诗/传说刷新权重倍率}
     debuffs: [
       { goldMult:0.95, rareWeightMult:0.9 },

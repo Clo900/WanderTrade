@@ -26,7 +26,7 @@
 
 ### 落地补充（2026-08-20）
 
-- P1 产地买入差异化：新增 `source-pricing.js`，`price-engine.js` 买入端注入 `getBuyMult`。
+- P1 特产本城买入折扣（原“产地买入差异化”）：新增 `source-pricing.js`，`price-engine.js` 买入端注入 `getBuyMult`（v9.10.4 移除“非产地溢价”）。
 - P3 卖出封顶/封底：新增 `price-exceptions.js`，`getSellPrice` 最终返回前调用 `applySell`。
 
 ---
@@ -52,6 +52,7 @@
 
 - 表现层继续：`ROADS` → `shortestPath()`（用于旅行耗时、地图绘制、动画）
 - 经济层使用：`world.tradeRoads` → `TradeGraph.distance()`（用于定价/税务/例外等）
+  - **现状标注（v9.10.5）**：`TradeGraph.distance` 因无消费者已删除（仅保留 `hub`/`setRoads`）；经济距离目前**未接入定价/税务**（`SPECIAL_PRICE_TABLE` 距离即价格 + ROADS 里程已覆盖现状），本方案"经济距离用于定价"待后续真正落地时再接入。
 
 这样策划可以改“后台距离”而不影响表现层地图，也不会出现“为了改物价距离必须改地图/路网”的耦合回归。
 
@@ -73,8 +74,8 @@
 - `hub(day)`：统一 hub 计算（DRY）
 
 2. `Online-Client/src/economy/source-pricing.js`
-- `getBuyMult(cityId,itemId)` 或 `applyBuyCenter(...)`
-- 仅影响买入端（方案1）：远途收益来自产地更低买入价
+- `getBuyMult(cityId,itemId)`（本城买入折扣；v9.10.4 移除“非产地溢价”，特产仅本城可购）
+- 仅影响买入端（方案1）：远途收益来自特产本城更低买入价
 
 3. `Online-Client/src/economy/tax.js`
 - `getRate(cityId, repLevel)`：B 曲线 `max(0.03, 0.15 - 0.005*repLevel)`

@@ -19,6 +19,8 @@
   function computeTimeLimit(distance, speed, cfg, urgencyMult){
     const baseSeconds = speed > 0 ? (distance / speed) * 60 : 0;
     const factor = cfg.compactFactor(distance);
+    // v9.10.4：回归文档 §5.3 公式（移除保底 floor）——加急/紧急"极紧时限"是设计内风险（§4A 最高收益与风险），
+    //   配合"抵达目标城计时暂停"已保证到城后不被催促；保底会导致长距时效档位区分度坍缩（加急=紧急时限）
     return Math.max(1, Math.round(baseSeconds * factor * (urgencyMult || 1) + cfg.TIME_BUFFER_SECONDS));
   }
 

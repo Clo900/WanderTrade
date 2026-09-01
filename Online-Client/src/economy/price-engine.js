@@ -154,14 +154,25 @@ function getDayPrice(cityId,itemId,day){
   const srcMult = (window.SourcePricing && SourcePricing.getBuyMult) ? SourcePricing.getBuyMult(cityId,itemId) : 1;
   return priceFor(cityId,itemId,day,0,undefined,getItemMult(cityId,itemId,day,'buy')*srcMult);
 }
-// —— 纯物价卖出价（不含需求档位）：供趋势标注 / 折线图 / 需求引擎趋势感知使用 ——
+// —— 纯中枢买入价（无事件乘数/产地折扣）：物价表显示与顺价判定的原始数据 ——
+// v9.10.4：物价只由中枢控制；产地折扣/事件/声望等加成独立于物价，仅在买卖结算时应用
+function getBaseBuyPrice(cityId,itemId,day){
+  return priceFor(cityId,itemId,day,0,undefined,1);
+}
+// —— 纯中枢卖出价（无事件乘数/声望加成，保留买卖价差）：物价表显示与顺价判定的原始数据 ——
+function getBaseSellPrice(cityId,itemId,day){
+  const base=BASE_PRICES[cityId]?.[itemId];if(base==null)return null;
+  return Math.round(priceFor(cityId,itemId,day,100,Math.round(base*(1-getSpreadRate(cityId,day))),1));
+}
+// —— 纯物价卖出价（含事件乘数/声望加成，不含需求档位）：供趋势标注 / 折线图 / 需求引擎趋势感知使用 ——
 function rawSellPrice(cityId,itemId,day){
   const base=BASE_PRICES[cityId]?.[itemId];if(base==null)return null;
   return Math.round(priceFor(cityId,itemId,day,100,Math.round(base*(1-getSpreadRate(cityId,day))),getItemMult(cityId,itemId,day,'sell'))*getRepSellBonus(cityId));
 }
 // 实际成交卖出价 = 纯物价 × 需求档位（v9.5 四档；v9.6 三档轮换）→ P3 封顶/封底
-function getSellPrice(cityId,itemId,day){
-  const raw=rawSellPrice(cityId,itemId,day);if(raw==null)return null;
+// v9.10.4：档位/P3 应用逻辑抽为 applyDemandAndCaps（成交结算口径；物价表显示用 getBaseSellPrice 纯价）
+function applyDemandAndCaps(cityId,itemId,day,raw){
+  if(raw==null)return null;
   const state=(window.DemandEngine&&DemandEngine.getDemandState)?DemandEngine.getDemandState(cityId,itemId,Math.floor(day/CENTRAL_PERIOD)):'normal';
   if(state==='reject')return null;
   let r=raw;
@@ -170,17 +181,41 @@ function getSellPrice(cityId,itemId,day){
   if(window.PriceExceptions && PriceExceptions.applySell)return PriceExceptions.applySell(cityId,itemId,r);
   return r;
 }
-// 纯物价卖出价（不含需求档位；含 P3 封顶/封底）
-function getSellPriceBase(cityId,itemId,day){
-  const raw=rawSellPrice(cityId,itemId,day);if(raw==null)return null;
-  if(window.PriceExceptions && PriceExceptions.applySell)return PriceExceptions.applySell(cityId,itemId,raw);
-  return raw;
+function getSellPrice(cityId,itemId,day){
+  return applyDemandAndCaps(cityId,itemId,day,rawSellPrice(cityId,itemId,day));
 }
-// 未来物价方向（纯物价口径，供需求引擎趋势感知）：1 涨 / 0 平 / -1 跌
+// —— 价格构成拆解（v9.10.4）：纯中枢价与各加成独立展示，供卡片详情/结算面板说明 ——
+// 返回 {baseBuy,baseSell,eventBuyMult,eventSellMult,localMult,repBonus,demand,demandMult,reject,buyPrice,sellPrice}
+// buyPrice/sellPrice 为实际结算价（含全部加成），其余字段为独立拆解因子（multiplier=1 表示无此项）
+function getPriceBreakdown(cityId,itemId,day){
+  const baseBuy=getBaseBuyPrice(cityId,itemId,day);
+  const baseSell=getBaseSellPrice(cityId,itemId,day);
+  if(baseBuy==null&&baseSell==null)return null;
+  const eventBuyMult=getItemMult(cityId,itemId,day,'buy');
+  const eventSellMult=getItemMult(cityId,itemId,day,'sell');
+  const localMult=(window.SourcePricing&&SourcePricing.getBuyMult)?SourcePricing.getBuyMult(cityId,itemId):1; // 特产本城买入折扣
+  const repBonus=(window.getRepSellBonus)?getRepSellBonus(cityId):1;
+  const hub=Math.floor(day/CENTRAL_PERIOD);
+  const ds=(window.DemandEngine&&DemandEngine.getDemandState)?DemandEngine.getDemandState(cityId,itemId,hub):'normal';
+  let demand='normal',demandMult=1,reject=false;
+  if(ds==='hot'){demand='hot';demandMult=1+((DemandEngine.getHotBonus?DemandEngine.getHotBonus(cityId,itemId):DemandEngine.HOT_BONUS)||0.15);}
+  else if(ds==='cool'){demand='cool';demandMult=DemandEngine.COOL_MULT||0.6;}
+  else if(ds==='reject'){demand='reject';reject=true;}
+  return {
+    baseBuy:baseBuy, baseSell:baseSell,
+    eventBuyMult:eventBuyMult, eventSellMult:eventSellMult,
+    localMult:localMult, repBonus:repBonus,
+    demand:demand, demandMult:demandMult, reject:reject,
+    buyPrice:getDayPrice(cityId,itemId,day),
+    sellPrice:getSellPrice(cityId,itemId,day)
+  };
+}
+// 未来物价方向（纯中枢价口径，供需求引擎趋势感知）：1 涨 / 0 平 / -1 跌
+// v9.10.5：改用 getBaseSellPrice——与 UI 趋势标注（getTrend）同口径，事件/声望等加成独立于物价
 function getPriceDirection(cityId,itemId,hub){
   const day=(hub||0)*CENTRAL_PERIOD+1;
-  const cur=getSellPriceBase(cityId,itemId,day);
-  const fut=getSellPriceBase(cityId,itemId,day+CENTRAL_PERIOD);
+  const cur=getBaseSellPrice(cityId,itemId,day);
+  const fut=getBaseSellPrice(cityId,itemId,day+CENTRAL_PERIOD);
   if(cur==null||fut==null)return 0;
   const pct=(fut-cur)/cur;
   if(pct>=0.03)return 1;
@@ -189,7 +224,8 @@ function getPriceDirection(cityId,itemId,hub){
 }
 function getPriceHistory(cityId,itemId,days=120){
   const h=[];for(let d=Math.max(1,GS.day-days+1);d<=GS.day;d++){
-    const p=getDayPrice(cityId,itemId,d),s=getSellPriceBase(cityId,itemId,d);
+    // v9.10.4：历史走势用纯中枢价（加成独立于物价，图表展示原始行情）
+    const p=getBaseBuyPrice(cityId,itemId,d),s=getBaseSellPrice(cityId,itemId,d);
     if(p!==null&&s!==null)h.push({day:d,price:p,sell:s});
   }return h;
 }
@@ -205,10 +241,11 @@ function getMarketPhase(cityId,itemId,day){
 }
 // —— 趋势标注：未来中枢价格变动指向（mode 区分买入/卖出，分别对应各自未来趋势） ——
 // v9.6：卖出侧基于纯物价（不含需求档位），趋势标注永远指向物价自身；需求热度由档位标签独立展示
+// v9.10.4：买入/卖出均基于纯中枢价（事件/声望/产地等加成独立，不进入物价走势）
 function getTrend(cityId,itemId,mode){
   if(!BASE_PRICES[cityId]||!BASE_PRICES[cityId][itemId])return{label:'数据不足',cls:''};
   const isSell = (mode==='sell');
-  const priceFn = isSell ? getSellPriceBase : getDayPrice;
+  const priceFn = isSell ? getBaseSellPrice : getBaseBuyPrice;
   const day=GS.day;
   const cur=priceFn(cityId,itemId,day);
   // 趋势指向：未来一个中枢周期后的价格相对当前价的变动方向（宏观预案，非当前阶段/日内噪声）
@@ -224,12 +261,15 @@ function getTrend(cityId,itemId,mode){
 window.BASE_PRICES = BASE_PRICES;
 window.PURCHASE_LIMITS = PURCHASE_LIMITS;
 window.SPECIAL_PRICE_TABLE = SPECIAL_PRICE_TABLE;
+window.CENTRAL_PERIOD = CENTRAL_PERIOD; // v9.10.4：导出，供 trade-graph/trade-draft 锚点统一口径（消除此前 fallback 死代码）
 window.buildBasePrices = buildBasePrices;
 window.buildSpecialPrice = buildSpecialPrice;
 window.buildLimits = buildLimits;
 window.getDayPrice = getDayPrice;
+window.getBaseBuyPrice = getBaseBuyPrice;
+window.getBaseSellPrice = getBaseSellPrice;
 window.getSellPrice = getSellPrice;
-window.getSellPriceBase = getSellPriceBase;
+window.getPriceBreakdown = getPriceBreakdown;
 window.getPriceDirection = getPriceDirection;
 window.getPriceHistory = getPriceHistory;
 window.getMarketPhase = getMarketPhase;

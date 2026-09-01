@@ -3,7 +3,7 @@
  * 功能分区：市场卡片 / 中转面板 / 数量滑条 / 行情折线图 / 单笔与批量交易
  * 依赖全局（调用时求值，加载顺序见 index.html）：
  *   GS / State / ONLINE / AUTH_KEY / NET / localStorage / CENTRAL_PERIOD
- *   getCity / getItem / getBuyableGoods / getDayPrice / getSellPrice / getSellPriceBase
+ *   getCity / getItem / getBuyableGoods / getDayPrice / getSellPrice
  *   getCurStock / getMaxStock / getUsedCargo / getTaskCargoUsed / getVehicleCapacity
  *   getCargoFree / getRepLevel / getPriceHistory / getTrend
  *   fmt / toast / showModal / render / advanceDay
@@ -18,7 +18,7 @@ let marketTab='buy',_chartDays=60,_chartItem=null,expandedCard=null,sliderVals={
 
 function getChartableItems(){
   const loc=GS.location,city=getCity(loc);
-  // vNext：列表随“购入/售出”切换
+  // v9.10.x：列表随“购入/售出”切换
   if(marketTab==='buy'){
     return getBuyableGoods(loc);
   }
@@ -35,7 +35,7 @@ function refreshMarketTab(){
 }
 function switchMarket(tab){
   if(tab===marketTab)return;
-  // vNext：中转面板有内容时，切换买卖也必须提示并清空（清空 buy/sell 两个 draft）
+  // v9.10.x：中转面板有内容时，切换买卖也必须提示并清空（清空 buy/sell 两个 draft）
   if(window.TradeDraft&&TradeDraft.anyNonEmpty&&TradeDraft.anyNonEmpty()){
     showModal('⚠ 物价已更新',
       `中转面板中仍有未确认的交易单。\n为避免按旧价成交，切换面板将清空中转面板内容。`,
@@ -57,44 +57,60 @@ function renderMarketCards(){
   document.querySelector('.sell-tab')?.classList.toggle('active',marketTab==='sell');
   const items=[];
   if(marketTab==='buy'){
-    for(let gid of getBuyableGoods(loc)){
-      const it=getItem(gid),price=getDayPrice(loc,gid,GS.day),yest=getDayPrice(loc,gid,Math.max(1,GS.day-1));
+    // v9.10.3：声望未解锁的物资也展示（置灰锁定），已解锁在前
+    const{goods:allGoods,locked:lockedMap}=getCityGoodsDetail(loc);
+    for(let gid of allGoods){
+      const it=getItem(gid);
+      // v9.10.4：物价表显示纯中枢价（原始数据）；加成独立，结算价在详情/结算中展示
+      const price=getBaseBuyPrice(loc,gid,GS.day),yest=getBaseBuyPrice(loc,gid,Math.max(1,GS.day-1));
       const ch=yest&&price?price-yest:0,stock=getCurStock(loc,gid),max=getMaxStock(loc,gid);
-      items.push({gid,it,price,ch,stock,max,type:'buy'});
+      const breakdown=(window.getPriceBreakdown)?getPriceBreakdown(loc,gid,GS.day):null;
+      items.push({gid,it,price,ch,stock,max,type:'buy',lockLv:lockedMap[gid]||0,breakdown});
     }
+    items.sort((a,b)=>(a.lockLv?1:0)-(b.lockLv?1:0));
   }else{
-    // vNext：售出仅显示车厢持有（不含仓库）
+    // v9.10.x：售出仅显示车厢持有（不含仓库）
     const hubNow=Math.floor(GS.day/CENTRAL_PERIOD);
     for(let gid of Object.keys(GS.cargo)){if(!GS.cargo[gid])continue;
       const it=getItem(gid);if(!it)continue;
       // v9.5：需求四档（hot/normal/cool/reject）
       const ds=(window.DemandEngine&&DemandEngine.getDemandState)?DemandEngine.getDemandState(loc,gid,hubNow):'normal';
-      const sPrice=getSellPrice(loc,gid,GS.day);
-      const sYest=getSellPrice(loc,gid,Math.max(1,GS.day-1));
+      // v9.10.4：物价表显示纯中枢卖出价；需求热度由独立标签展示
+      const sPrice=getBaseSellPrice(loc,gid,GS.day);
+      const sYest=getBaseSellPrice(loc,gid,Math.max(1,GS.day-1));
       const ch=sYest&&sPrice?sPrice-sYest:0;
       const rejectReason=ds==='reject'?((window.DemandEngine&&DemandEngine.getRejectReason(loc,gid))||'本城无人收购'):'';
-      items.push({gid,it,price:getDayPrice(loc,gid,GS.day),sPrice,ch,held:GS.cargo[gid],cost:GS.buyPrice[gid]||0,type:'sell',ds,rejectReason});
+      const breakdown=(window.getPriceBreakdown)?getPriceBreakdown(loc,gid,GS.day):null;
+      items.push({gid,it,price:getBaseBuyPrice(loc,gid,GS.day),sPrice,ch,held:GS.cargo[gid],cost:GS.buyPrice[gid]||0,type:'sell',ds,rejectReason,breakdown});
     }
   }
   let html='';
   for(let r of items){
     const isExp = expandedCard===r.gid;
     const chCls=r.ch>0?'up':(r.ch<0?'down':'flat'),chStr=r.ch>0?`+${r.ch}`:(r.ch<0?r.ch:0);
-    html+=`<div class="item-card${isExp?' expanded':''}${r.ds==='reject'?' ic-reject':''}" data-gid="${r.gid}" onclick="toggleCard('${r.gid}')">`;
+    html+=`<div class="item-card${isExp?' expanded':''}${r.lockLv?' ic-lock':''}${r.ds==='reject'?' ic-reject':''}" data-gid="${r.gid}" onclick="toggleCard('${r.gid}')">`;
     html+=`<span class="ic-icon">${r.it.icon}</span><span class="ic-name">${r.it.name}</span>`;
     html+=`<span class="ic-cat">${r.it.cat==='basic'?'基础':'特产'}</span>`;
     if(r.type==='buy'){
-      html+=`<div class="ic-price buy">${fmt(r.price)}</div>`;
-      html+=`<div class="ic-change ${chCls}">${chStr}</div>`;
-      html+=`<div class="ic-limit">库存 ${r.stock}/${r.max}</div>`;
-      html+=`<div class="ic-cargo-info">🚛 ${getUsedCargo()+getTaskCargoUsed()}/${getVehicleCapacity()}</div>`;
-      const afford=Math.max(0, Math.floor(GS.gold/Math.max(1,r.price||1)));
-      const maxBuy=Math.min(r.stock, afford, getCargoFree());
-      if(maxBuy<=0){
-        const why=GS.gold<0?'欠债中，无法购入（先卖货或完成任务还债）':'资金/货舱/库存不足';
-        html+=`<div class="ic-detail"><div class="row" style="color:${GS.gold<0?'var(--red)':'var(--text3)'}">${why}</div></div>`;
+      if(r.lockLv){
+        // v9.10.3：声望未解锁 → 置灰锁定，点击卡片查看解锁条件
+        html+=`<div class="ic-lock-tip">🔒 声望 Lv${r.lockLv} 解锁</div>`;
+        html+=`<div class="ic-cargo-info">点击查看解锁条件</div>`;
       }else{
-        html+=`<div class="ic-detail">${qtySliderHTML(r.gid,maxBuy,Math.min(1,maxBuy))}<div class="row"><button class="btn-action btn-buy" onclick="event.stopPropagation();draftFromSlider('buy','${r.gid}')">加入中转面板</button></div></div>`;
+        html+=`<div class="ic-price buy">${fmt(r.price)}</div>`;
+        html+=`<div class="ic-change ${chCls}">${chStr}</div>`;
+        html+=`<div class="ic-limit">库存 ${r.stock}/${r.max}</div>`;
+        html+=`<div class="ic-cargo-info">🚛 ${getUsedCargo()+getTaskCargoUsed()}/${getVehicleCapacity()}</div>`;
+        // v9.10.4：购买力按实际结算价计算（含产地折扣/事件加成）；物价表展示的是纯中枢价
+        const settle=r.breakdown&&r.breakdown.buyPrice!=null?r.breakdown.buyPrice:(r.price||0);
+        const afford=Math.max(0, Math.floor(GS.gold/Math.max(1,settle)));
+        const maxBuy=Math.min(r.stock, afford, getCargoFree());
+        if(maxBuy<=0){
+          const why=GS.gold<0?'欠债中，无法购入（先卖货或完成任务还债）':'资金/货舱/库存不足';
+          html+=`<div class="ic-detail"><div class="row" style="color:${GS.gold<0?'var(--red)':'var(--text3)'}">${why}</div></div>`;
+        }else{
+          html+=`<div class="ic-detail">${priceBreakdownHTML(r)}${qtySliderHTML(r.gid,maxBuy,Math.min(1,maxBuy))}<div class="row"><button class="btn-action btn-buy" onclick="event.stopPropagation();draftFromSlider('buy','${r.gid}')">加入中转面板</button></div></div>`;
+        }
       }
     }else{
       // v9.5：拒收标红 + 需求标签
@@ -112,7 +128,7 @@ function renderMarketCards(){
       const sellBtn = r.ds==='reject'
         ? `<button class="btn-action btn-sell disabled" onclick="event.stopPropagation();showModal('🚫 本城无人收购','<b>${r.it.name}</b>：${r.rejectReason||'本城不收购此物资'}', '知道了', ()=>{})">无法售出</button>`
         : `<button class="btn-action btn-sell" onclick="event.stopPropagation();draftFromSlider('sell','${r.gid}')">加入中转面板</button>`;
-      html+=`<div class="ic-detail">${qtySliderHTML(r.gid,r.held,Math.min(1,r.held))}<div class="row">${sellBtn}</div></div>`;
+      html+=`<div class="ic-detail">${priceBreakdownHTML(r)}${qtySliderHTML(r.gid,r.held,Math.min(1,r.held))}<div class="row">${sellBtn}</div></div>`;
     }
     html+=`</div>`;
   }
@@ -125,6 +141,16 @@ function renderMarketCards(){
   }
 }
 function toggleCard(gid){
+  // v9.10.3：声望未解锁的物资点击 → 弹窗说明解锁条件（不展开）
+  if(marketTab==='buy'){
+    const{goods,locked}=getCityGoodsDetail(GS.location);
+    if(locked[gid]){
+      const it=getItem(gid),lv=getRepLevel(GS.location);
+      showModal('🔒 声望不足',
+        `<b>${it.icon} ${it.name}</b>：本城声望需达到 <b>Lv${locked[gid]}</b> 才可购买（当前 Lv${lv}）。<br><br>💡 提升途径：在本城进行买卖交易、完成本城送货/送客任务。`,'知道了');
+      return;
+    }
+  }
   expandedCard = (expandedCard===gid)?null:gid;
   renderMarketCards();
   if(_chartItem)drawChart();
@@ -346,14 +372,19 @@ async function execBuyDraft(list,total){
     if(!r)return false;
     // 本地轻记账（lots/成本/声望/事件；资金与持仓以服务端为准）
     for(const it of list){
-      buyItem(it.gid,it.qty,{skipAdvance:true,serverLedger:true});
+      // v9.10.4：不再忽略 buyItem 返回值——失败（如声望解锁异常）时暴露警告（服务端已结算，资金/持仓不受影响）
+      const rr=buyItem(it.gid,it.qty,{skipAdvance:true,serverLedger:true});
+      if(!rr.ok)toast('⚠ 本地记账异常：'+rr.msg,'err');
     }
     toast('✅ 已完成购入（中转面板）','ok');
     return true;
   }
-  // 本地落地（一次确认，多物品成交；单笔交易不再重复推进游戏日）
+  // 本地落地（一次确认，多物品成交；v9.10.4：总额一次计税扣款，与确认弹窗/在线模式一致，消除逐件税额舍入差异）
+  // 库存/资金/容量已由 validateBuyDraft 校验；此处按弹窗总额扣款一次，逐件以 skipGold 记账（货物/库存/成本/lots/声望）
+  if(GS.gold < (total||0)){toast('资金不足','err');return false;}
+  State.set('gold', GS.gold-total);
   for(const it of list){
-    const rr=buyItem(it.gid,it.qty,{skipAdvance:true});
+    const rr=buyItem(it.gid,it.qty,{skipAdvance:true,skipGold:true});
     if(!rr.ok){toast('购入失败：'+rr.msg,'err');return false;}
   }
   toast('✅ 已完成购入（中转面板）','ok');
@@ -372,63 +403,49 @@ async function execSellDraft(list,net){
     toast('✅ 已完成售出（中转面板）','ok');
     return true;
   }
+  // 本地落地（一次确认，多物品成交；v9.10.4：总额一次计税入账，与确认弹窗/在线模式一致，消除逐件税额舍入差异）
+  // 逐件真实扣 lots（含同城同次惩罚）→ 汇总收入一次计税入账；cargo 扣减/声望/事件由 sellItem(skipGold) 完成
+  let revenue=0; const results=[];
   for(const it of list){
-    const rr=sellItem(it.gid,it.qty,{skipAdvance:true});
-    if(!rr.ok){toast('售出失败：'+rr.msg,'err');return false;}
+    const lr=consumeLots(it.gid,it.qty);
+    results.push({it,lr});
+    revenue+=lr.revenue;
+  }
+  const rate=(window.Tax&&Tax.getRate)?Tax.getRate(getRepLevel(GS.location)):0;
+  const tax=(window.Tax&&Tax.calc)?Tax.calc(revenue,rate):0;
+  const netAmount=revenue-tax; // 总额一次计税（参数 net 为弹窗预览值，此处以真实结算为准）
+  State.set('gold', GS.gold+netAmount);
+  for(const {it,lr} of results){
+    sellItem(it.gid,it.qty,{skipAdvance:true,skipGold:true,lotsResult:lr});
   }
   toast('✅ 已完成售出（中转面板）','ok');
   return true;
 }
-async function doAction(type,gid){
-  const qty=getSliderVal(gid);
-  if(type==='buy'){
-    // C1：单笔买入在线也走服务端权威结算
-    if(ONLINE){
-      const city=GS.location;
-      const price=getDayPrice(city,gid,GS.day)||0;
-      const total=price*qty;
-      const taxRate=(window.Tax&&Tax.getRate)?Tax.getRate(getRepLevel(city)):0;
-      const tax=(window.Tax&&Tax.calc)?Tax.calc(total,taxRate):0;
-      const pay=total+tax;
-      const r=await onlineTradeBatch('buy',[{item:gid,qty}],{total:Math.round(pay)});
-      if(!r)return;
-      const rr=buyItem(gid,qty,{skipAdvance:true,serverLedger:true});
-      toast(rr.msg,rr.ok?'ok':'err');
-      if(rr.ok){delete sliderVals[gid];render();}
-      return;
-    }
-    const r=buyItem(gid,qty);toast(r.msg,r.ok?'ok':'err');if(r.ok){delete sliderVals[gid];render();}return;
-  }
-  // 卖出前：同城同次 + 本城买入价<卖出价（顺价可套利）时弹窗确认 60% 惩罚
-  const info=getSameVisitArbitrage(gid,qty);
-  if(info){
-    const unit60=Math.round(info.buy*0.6);
-    showModal('⚠️ 同城倒卖警告',
-      `本城该物资当前「买入价 ${fmt(info.buy)}」低于「卖出价 ${fmt(info.sPrice)}」\n本次出售中有 ${info.sameQty} 件为本城本次停留期间买入\n若确认出售，这 ${info.sameQty} 件将按当前买入价的 60%（${fmt(unit60)} 金/件）结算`,
-      '确认出售',()=>{doSell(gid,qty);});
-    return;
-  }
-  doSell(gid,qty);
-}
-async function doSell(gid,qty){
-  // C1：单笔卖出在线也走服务端权威结算
-  if(ONLINE){
-    const lr=consumeLots(gid,qty); // 真实扣 lots（含惩罚），返回 revenue 供服务端记账
-    const taxRate=(window.Tax&&Tax.getRate)?Tax.getRate(getRepLevel(GS.location)):0;
-    const tax=(window.Tax&&Tax.calc)?Tax.calc(lr.revenue,taxRate):0;
-    const net=lr.revenue-tax;
-    const r=await onlineTradeBatch('sell',[{item:gid,qty}],{net:Math.round(net)});
-    if(!r)return;
-    const rr=sellItem(gid,qty,{skipAdvance:true,serverLedger:true,lotsResult:lr});
-    toast(rr.msg,rr.ok?'ok':'err');
-    if(rr.ok){delete sliderVals[gid];render();}
-    return;
-  }
-  const r=sellItem(gid,qty);
-  toast(r.msg,r.ok?'ok':'err');
-  if(r.ok){delete sliderVals[gid];render();}
-}
 function getSliderVal(gid){const sl=document.getElementById('slider-'+gid);return sl?parseInt(sl.value)||1:1}
+// v9.10.4：卡片详情加成明细（基础价 × 各加成 = 实际结算价；加成独立于物价，结算时应用）
+function pctMult(mult){return `${mult<1?'-':'+'}${Math.round(Math.abs(1-mult)*100)}%`}
+function priceBreakdownHTML(r){
+  const b=r.breakdown;if(!b)return'';
+  if(r.type==='buy'){
+    if(b.buyPrice==null)return'';
+    const parts=[`基础 <b>${fmt(b.baseBuy)}</b>`];
+    // v9.10.4：特产本城买入折扣（原"产地折扣"，特产仅本城可购，无"非产地溢价"）
+    if(b.localMult!==1)parts.push(`本城折扣${pctMult(b.localMult)}`);
+    if(b.eventBuyMult!==1)parts.push(`事件${pctMult(b.eventBuyMult)}`);
+    return `<div class="ic-settle-row">${parts.join('×')} = <b class="buy">${fmt(b.buyPrice)}</b></div>`;
+  }
+  if(r.type==='sell'){
+    if(b.reject)return `<div class="ic-settle-row">🚫 本城无人收购</div>`;
+    if(b.sellPrice==null)return'';
+    const parts=[`基础 <b>${fmt(b.baseSell)}</b>`];
+    if(b.eventSellMult!==1)parts.push(`事件${pctMult(b.eventSellMult)}`);
+    if(b.repBonus!==1)parts.push(`声望+${Math.round((b.repBonus-1)*100)}%`);
+    if(b.demand==='hot')parts.push(`热门+${Math.round((b.demandMult-1)*100)}%`);
+    else if(b.demand==='cool')parts.push(`冷淡×${b.demandMult}`);
+    return `<div class="ic-settle-row">${parts.join('×')} = <b class="sell">${fmt(b.sellPrice)}</b></div>`;
+  }
+  return'';
+}
 function qtySliderHTML(gid,maxVal,initVal){
   const base=sliderVals[gid]!==undefined?sliderVals[gid]:(initVal||1);
   const v=Math.max(1,Math.min(base,maxVal));
@@ -487,8 +504,9 @@ function drawChart(){
   const trend=getTrend(GS.location,_chartItem, isBuyView ? 'buy' : 'sell');
   const cls=trend.cls==='up'?'color:var(--buy)':(trend.cls==='down'?'color:var(--red)':'color:var(--text2)');
   const tDay=Math.max(1,GS.day+1);
-  const estBuy=getDayPrice(GS.location,_chartItem,tDay);
-  const estSell=getSellPriceBase(GS.location,_chartItem,tDay);   // v9.6：预计明日卖出走纯物价（走势预测，不含需求档位）
+  // v9.10.4：预计明日走纯中枢价（加成独立于物价）
+  const estBuy=getBaseBuyPrice(GS.location,_chartItem,tDay);
+  const estSell=getBaseSellPrice(GS.location,_chartItem,tDay);
   if(isBuyView){
     // 购入页：同时展示买入价与卖出价变化
     ctx.font='10px sans-serif';

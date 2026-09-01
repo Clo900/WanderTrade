@@ -126,7 +126,7 @@ State.init({
   timeScale: 1, gameStartTime: Date.now(),
   vehicle: {level:1,speed:5,durability:100,durabilityMax:100,passengers:0,core:{lv:0,speed:0,dura:0},wagons:[{cur:{id:'w0',type:'balanced',lv:1},owned:{balanced_1:true}}]},
   cargo: {}, buyPrice: {}, lots: {}, visitStamp: {},
-  // vNext：中转面板（交易单），buy/sell 分离；任何锚点变化将触发清空
+  // v9.10.x：中转面板（交易单），buy/sell 分离；任何锚点变化将触发清空
   tradeDraft: {buy:{cityId:null,day:null,hub:null,items:{}},sell:{cityId:null,day:null,hub:null,items:{}}},
   cityStocks: {}, lastStockRefill: Date.now(),
   warehouses: {}, reputation: {},
@@ -182,7 +182,7 @@ State.subscribe('traveling', function(traveling){
   }
 });
 
-// ===== vNext：中转面板锚点变化 → 提示并清空（buy/sell 两个 draft 同时清空） =====
+// ===== v9.10.x：中转面板锚点变化 → 提示并清空（buy/sell 两个 draft 同时清空） =====
 let __draftLastHub = (window.TradeGraph&&TradeGraph.hub)?TradeGraph.hub(State.get('day')):0;
 // v9.13.6：确认成交中标志（confirmDraft 推进游戏日期间置位）——成交是明确使用当前 draft 的意图，
 // 不应被"日/中枢变化清空中转面板"的拦截弹窗打断（在线模式日由服务器时间驱动，确认时恰逢翻日会破坏成交流程）
@@ -202,7 +202,7 @@ State.subscribe('location', function(){
   clearDraftOnAnchorChange('location');
 });
 State.subscribe('day', function(day){
-  const h=(window.TradeGraph&&TradeGraph.hub)?TradeGraph.hub(day):Math.floor((Math.max(1,day)-1)/12);
+  const h=(window.TradeGraph&&TradeGraph.hub)?TradeGraph.hub(day):Math.floor((Number(day)||0)/12); // v9.10.5：fallback 与权威口径一致
   if(h!==__draftLastHub){ __draftLastHub=h; clearDraftOnAnchorChange('hub'); }
   else clearDraftOnAnchorChange('day');
 });
@@ -339,9 +339,15 @@ function initCityStocks(){
 // v7.2：库存按玩家独立（不共享），随【服务器游戏日】同时刷新；留 stockMode 接口（默认 perPlayer，未来可切 shared）
 // 单机模式使用 localStorage；在线模式连接失败时不再静默写入本地档。
 const AUTH_KEY='_auth_user',USERS_KEY='_auth_users',GS_PREFIX='_gs_';
-let ONLINE=false;
+// v9.10.4：密码键独立前缀 _pwd_——修复 B3：原 _gs_<user>_pwd 会与账号 <user>_pwd 的存档键 _gs_<user>_pwd 互相覆盖
+const PWD_PREFIX='_pwd_';
+function getStoredPwd(u){return localStorage.getItem(PWD_PREFIX+u)||localStorage.getItem(GS_PREFIX+u+'_pwd')} // 兼容旧键迁移
+function setStoredPwd(u,p){localStorage.setItem(PWD_PREFIX+u,p);localStorage.removeItem(GS_PREFIX+u+'_pwd')}
+// v9.10.4：ONLINE/__netState 用 var 顶层声明（挂到 window），消除"裸引用 vs window.引用"访问分裂——
+//   B1 修复：mailbox.js 用 window.ONLINE 此前恒为 undefined 导致在线邮箱轮询永不触发
+var ONLINE=false;
 // v7.8：网络状态机（ok=正常 / down=断开重连中）；断线自动重连 + 恢复后全量同步
-let __netState='ok',__retryTimer=null;
+var __netState='ok',__retryTimer=null;
 function netDot(){ // 顶栏状态点：🟢 在线 / 🔴 重连中 / ⚪ 离线模式
   if(!ONLINE)return'⚪';
   return window.__netState==='down'?'🔴':'🟢';
@@ -380,10 +386,11 @@ async function fullSync(){
     if(w.world.timeScale&&w.world.timeScale!==GS.timeScale)GS.timeScale=w.world.timeScale;
   }
   await syncPlayer(user); // v8.19：统一合并（服务器档 vs 本机离线档，取新）
-  settleOverdueTasks(); // v9.4：上线结算离线期间严重超时的任务
   if(window.Starfall)await Starfall.sync(); // v9.9：拉取星陨城活动状态
   if(window.Mailbox)await Mailbox.sync(); // v9.9：拉取服务端投递的邮件
-  advanceDay();render();
+  advanceDay(); // v9.10.5：先 advanceDay——离线到达的任务在此按真实到达时刻暂停（H3），再结算超时
+  settleOverdueTasks(); // v9.4：上线结算离线期间严重超时（已暂停任务按到达快照判定，不会被误判失败）
+  render();
 }
 // v8.19：玩家存档"服务器↔本机"合并——本机离线档较新则恢复并上传（保留离线完成的教程/任务进度），否则恢复服务器档
 async function syncPlayer(user){
@@ -741,8 +748,9 @@ async function doRegister(){
     const users=getUsers();
     if(users.includes(u))return authErr('该用户名已被注册');
     users.push(u);saveUsers(users);
-    localStorage.setItem(GS_PREFIX+u+'_pwd',p);
+    setStoredPwd(u,p);
     resetGameState(); // v8.12（D）：新注册离线账号使用全新开局存档，避免残留上一账号数据
+    if(window.Starfall&&Starfall.reset)Starfall.reset(); // v9.10.5：清星陨城模块态，防上一账号 GM 周期/提交草稿泄漏（M3）
     State.set('nickname',nick); // v9.10.3：单机昵称随存档
     saveGS(u,GS);
     GS.__loaded=true; // v8.25：离线新账号建档
@@ -760,12 +768,14 @@ async function doLogin(){
   if(online){
     const r=await NET.post('/api/login',{user:u,pass:p});
     if(!r||!r.ok)return authErr(r&&r.err?r.err:'登录失败');
+    if(window.Starfall&&Starfall.reset)Starfall.reset(); // v9.10.5：登录前清星陨城模块态（随后的 Starfall.sync 拉取新账号数据）（M3）
     await syncPlayer(u); // v8.19：登录合并存档；v8.25：__loaded 仅由 syncPlayer 按服务器确认状态设置
     if(!GS.nickname)State.set('nickname',(r&&r.nickname)||u); // v9.10.3：登录响应带回昵称
   }else{
     const users=getUsers();
     if(!users.includes(u))return authErr('该用户名未注册，请先注册');
-    if(localStorage.getItem(GS_PREFIX+u+'_pwd')!==p)return authErr('密码错误');
+    if(getStoredPwd(u)!==p)return authErr('密码错误');
+    if(window.Starfall&&Starfall.reset)Starfall.reset(); // v9.10.5：登录前清星陨城模块态（离线登录按新账号存档重建）（M3）
     const saved=getStoredGS(u);
     if(saved)applySaved(saved);
     else {GS.__loaded=true;State.set('__saveSchema',SAVE_SCHEMA);} // v8.25：离线新玩家建档；v9.7.2 登记存档版本
@@ -780,6 +790,7 @@ function doLogout(){
   window.__gsReady=false; // v8.20：登出后禁止保存，防止状态写入已登出账号
   localStorage.removeItem(AUTH_KEY);
   resetGameState(); // v8.12（D）：登出重置内存状态，防止离线账号间串档
+  if(window.Starfall&&Starfall.reset)Starfall.reset(); // v9.10.5：清星陨城模块态（_net/_sel/周期），防跨账号泄漏（M3）
   document.getElementById('auth-overlay').style.display='flex';
   document.getElementById('auth-user').value='';document.getElementById('auth-nick').value='';document.getElementById('auth-pass').value='';
   document.getElementById('auth-err').textContent='';toggleAuth('register');
@@ -871,8 +882,8 @@ async function doChangePassword(){
     const r=await NET.post('/api/passwd',{user,old,new:nw});
     if(!r||!r.ok)return userMsg('up-pass-msg',(r&&r.err)||'修改失败',true);
   }else{
-    if(localStorage.getItem(GS_PREFIX+user+'_pwd')!==old)return userMsg('up-pass-msg','当前密码错误',true);
-    localStorage.setItem(GS_PREFIX+user+'_pwd',nw);
+    if(getStoredPwd(user)!==old)return userMsg('up-pass-msg','当前密码错误',true);
+    setStoredPwd(user,nw);
   }
   if(o)o.value='';if(n)n.value='';
   userMsg('up-pass-msg','✅ 密码已更新',false);
@@ -950,10 +961,13 @@ function resetGameState(){
     State.set('mailbox', []); // v9.9：邮箱
     State.set('tasks', {board:[],active:[]});
     State.set('taskBadLog', {abandonAt:[],failAt:[]});
+    // v9.10.4：补齐重置清单——避免切换账号残留上一账号的中转面板/星陨城活动进度
+    State.remove('tradeDraft');
+    State.remove('sfActivity');
     State.set('traveling', null);
     State.set('pendingEvent', null);
     State.set('repairDisc', null);
-    State.set('intel', {unlocked:{},log:[]});
+    State.set('intel', {unlocked:{},log:[],drawn:{}}); // v9.10.4：与 State.init/applySaved 默认一致（含 drawn）
     State.set('knownEvents', {});
     State.set('eventSeen', {}); // v9.10.2：事件见闻录重置
     State.set('justArrived', false);
@@ -998,9 +1012,9 @@ function achieveVal(a){
     case'gold':return GS.gold;
     case'maxRepLevel':return Math.max(...CITIES.map(c=>getRepLevel(c.id)));
     case'coreLevel':return GS.vehicle.core?(GS.vehicle.core.lv||0):0;
-    case'wagonCount':return (GS.vehicle.wagons||[]).length;
+    case'wagonCount':return getWagons().length; // v9.10.4：按槽位裁剪的有效车厢口径（与 UI 一致）
     case'eventSeenCount':return Object.keys(GS.eventSeen||{}).length;
-    case'cargoUsed':return getUsedCargo();
+    case'cargoUsed':return getUsedCargo()+getTaskCargoUsed(); // v9.10.4：含任务货物（与 UI 货舱占用口径一致）
     case'repLevel3Cities':return CITIES.filter(c=>getRepLevel(c.id)>=3).length;
     case'debtPaid':return GS.stats.debtPaid||0;
     case'matKinds':return Object.keys(GS.materials||{}).filter(k=>(GS.materials[k]||0)>0).length;
@@ -1569,7 +1583,7 @@ function initChatFab(){
 // ===== 游戏状态（v9.0：由 state.js 的 State.init() 统一管理） =====
 // 注意：不要再在此处定义 const GS = {...} —— 会遮蔽 state.js 创建的响应式 Proxy
 // 正式：1 游戏日 = 10 分钟（600000ms）；timeScale 为世界时间流速倍率（GM 指令可调）
-function getCurrentGameDay(){const e=(Date.now()-GS.gameStartTime)/(600000/(GS.timeScale||1));return Math.max(1,Math.floor(e)+1)}
+function getCurrentGameDay(){const e=(nowMs()-GS.gameStartTime)/(600000/(GS.timeScale||1));return Math.max(1,Math.floor(e)+1)} // v9.10.4：用校准时间（nowMs 含 __clockOffset），与任务/星陨城时间源统一，修复 C4
 // 库存刷新（v7.4 正式）：每【现实 30 分钟】补满——每个玩家库存独立，仅共享刷新节奏（在线以服务器为准）
 const STOCK_REFILL_MS=1800000;
 function refillStocks(){
@@ -1598,6 +1612,20 @@ function advanceDay(){
       var vs = State.get('visitStamp') || {};
       vs[travel.to] = (vs[travel.to]||0)+1;
       State.set('visitStamp', vs);
+      // v9.10.5：到达即暂停目标任务（H3）——按真实到达时刻 travel.arrivalTime 冻结，
+      //   而非上线/渲染时刻 nowMs()，保证"离线到达+稍后上线"不因晚开游戏被误判失败；
+      //   delivered 标记一并前移（renderCity justArrived 块不再重复处理）
+      var tasks = State.get('tasks') || {};
+      tasks.active = tasks.active || [];
+      for(const t2 of tasks.active){
+        if(t2.to===travel.to&&!t2.delivered)t2.delivered=true;
+        if(t2.to===travel.to&&t2.timerStarted&&t2.deadlineTimestamp&&!t2.paused){
+          t2.paused=true;
+          t2.pausedAt=travel.arrivalTime;
+          t2.remainingMs=Math.max(0,t2.deadlineTimestamp-travel.arrivalTime);
+        }
+      }
+      State.set('tasks', tasks);
     });
     r=true;
   }
@@ -1760,9 +1788,13 @@ function addLots(gid,city,qty,cost){
 function getSameVisitArbitrage(gid,qty){
   const arr=GS.lots[gid];
   if(!arr||!arr.length)return null;
+  // v9.10.5：顺价判定用纯中枢价（加成独立于物价，不参与套利判定，与 getMaxStock 同口径）；
+  //           buy/sPrice 保留实际结算价供弹窗展示与 60% 惩罚基准
+  const pBuy=getBaseBuyPrice(GS.location,gid,GS.day);
+  const pSell=getBaseSellPrice(GS.location,gid,GS.day);
+  if(!(pBuy!=null&&pSell!=null&&pBuy<pSell))return null; // 非"顺价可套利"（纯价买入≥卖出）时无惩罚判定
   const buy=getDayPrice(GS.location,gid,GS.day)||0;
   const sPrice=getSellPrice(GS.location,gid,GS.day)||0;
-  if(!(buy<sPrice))return null; // 非"顺价可套利"（买入价高于等于卖出价）时无惩罚判定
   const curStamp=GS.visitStamp[GS.location];
   let sameQty=0;
   for(const b of arr){if(b.city===GS.location&&b.stamp===curStamp)sameQty+=b.qty;}
@@ -1774,7 +1806,10 @@ function getSameVisitArbitrage(gid,qty){
 function consumeLots(gid,qty){
   const sPrice=getSellPrice(GS.location,gid,GS.day)||0;
   const buy=getDayPrice(GS.location,gid,GS.day)||0;
-  const arbitrage=buy<sPrice;
+  // v9.10.5：顺价判定用纯中枢价（与 getMaxStock/getSameVisitArbitrage 同口径）；buy 为实际结算价（60% 惩罚基准）
+  const pBuy=getBaseBuyPrice(GS.location,gid,GS.day);
+  const pSell=getBaseSellPrice(GS.location,gid,GS.day);
+  const arbitrage=pBuy!=null&&pSell!=null&&pBuy<pSell;
   const curStamp=GS.visitStamp[GS.location];
   let remaining=qty,revenue=0,sameQty=0;
   var lots = State.get('lots') || {};
@@ -1810,12 +1845,16 @@ function buyItem(itemId,qty,opts){
   const tax=(window.Tax&&Tax.calc)?Tax.calc(total,taxRate):0;
   const pay=total+tax;
   // C1：serverLedger 模式（在线服务端已结算）跳过资金/库存/容量校验与资金/货物/库存变更，仅做本地轻记账
+  // v9.10.4：skipGold 模式（本地批量，总额已由调用方一次扣款）跳过资金校验与扣款，但仍更新货物/库存
   if(!opts.serverLedger){
-    if(GS.gold<pay)return{ok:false,msg:'资金不足'};
+    if(!opts.skipGold && GS.gold<pay)return{ok:false,msg:'资金不足'};
     const stock=getCurStock(city,itemId);if(qty>stock)return{ok:false,msg:'库存不足'};
     if(getCargoFree()<qty)return{ok:false,msg:'载具容量不足'};
   }
-  const oldQty=GS.cargo[itemId]||0,oldCost=GS.buyPrice[itemId]||0;
+  // v9.10.5：serverLedger 模式 GS.cargo 已含本次买入（服务端回写），须取购买前数量做加权，
+  //           否则首次买入成本被摊薄为半价（oldQty=qty → newQty=2qty → newCost=单价/2）
+  const oldQty=opts.serverLedger?Math.max(0,(GS.cargo[itemId]||0)-qty):(GS.cargo[itemId]||0);
+  const oldCost=GS.buyPrice[itemId]||0;
   const newQty=oldQty+qty;
   const newCost=Math.round((oldCost*oldQty+total)/newQty);
   addLots(itemId,city,qty,price);
@@ -1829,11 +1868,12 @@ function buyItem(itemId,qty,opts){
       State.set('cargo', cargo);
       var cs = State.get('cityStocks') || {};
       if(!cs[city])cs[city]={};
-      cs[city][itemId] = getCurStock(city,itemId)-qty;
+      // v9.10.4：扣真实库存（显示口径 getCurStock 只影响展示与购买上限，不参与记账，避免收紧期库存账面丢失）
+      cs[city][itemId] = Math.max(0,(GS.cityStocks[city]?.[itemId]||0)-qty);
       State.set('cityStocks', cs);
     }
   });
-  if(!opts.serverLedger)State.set('gold', GS.gold-pay);
+  if(!opts.serverLedger && !opts.skipGold)State.set('gold', GS.gold-pay);
   EventBus.emit(EventBus.EVENTS.ITEM_BOUGHT, {itemId:itemId, qty:qty, price:price, total:total, taxRate:taxRate, tax:tax, pay:pay});
   const repGain=qty;
   addRep(city,repGain);
@@ -1863,7 +1903,8 @@ function sellItem(itemId,qty,opts){
     return{ok:false,msg:'价格异常'};
   }
   // C1：serverLedger 模式的批次结算结果（含惩罚）由调用方在服务端结算前真实计算并传入，此处复用避免二次扣 lots
-  const lr = opts.serverLedger ? (opts.lotsResult||{revenue:0,sameQty:0,arbitrage:false}) : consumeLots(itemId,qty);
+  // v9.10.4：skipGold 模式（本地批量，lots 已由调用方真实结算、gold 总额一次入账）同样复用 lotsResult 并跳过入账
+  const lr = (opts.serverLedger||opts.skipGold) ? (opts.lotsResult||{revenue:0,sameQty:0,arbitrage:false}) : consumeLots(itemId,qty);
   const{revenue,sameQty,arbitrage}=lr;
   const city=GS.location;
   const taxRate=(window.Tax&&Tax.getRate)?Tax.getRate(getRepLevel(city)):0;
@@ -1872,7 +1913,7 @@ function sellItem(itemId,qty,opts){
   const remaining=held-qty;
   State.batch(function(){
     var buyPrice = State.get('buyPrice') || {};
-    if(opts.serverLedger){
+    if(opts.serverLedger && !opts.skipGold){
       if(!(GS.cargo[itemId]>0))delete buyPrice[itemId];
     }else{
       var cargo = State.get('cargo') || {};
@@ -1886,7 +1927,7 @@ function sellItem(itemId,qty,opts){
     }
     State.set('buyPrice', buyPrice);
   });
-  if(!opts.serverLedger)State.set('gold', GS.gold+net);
+  if(!opts.serverLedger && !opts.skipGold)State.set('gold', GS.gold+net);
   EventBus.emit(EventBus.EVENTS.ITEM_SOLD, {itemId:itemId, qty:qty, revenue:revenue, taxRate:taxRate, tax:tax, net:net});
   const repGain=Math.floor(revenue/1000);
   addRep(GS.location,repGain);
@@ -1904,6 +1945,8 @@ function startTravel(destId){
   if(getDurability()<=0)return{ok:false,msg:'车辆耐久不足，请先维修'};
   const realSec=Math.round(sp.distance/getVehicleSpeed()*60);
   const durLoss=calcDurabilityLoss(sp.distance);
+  // v9.10.4：离开城市 → 恢复暂停中的任务计时（截止 = 现在 + 冻结剩余），防止挂机
+  resumePausedTaskTimers();
   // T1：离开接取城市时，为 from===当前城 且未启动的任务启动倒计时（按出发时实际时速快照计算）
   startTaskTimers(GS.location);
   const veh = GS.vehicle;
@@ -1999,7 +2042,6 @@ const REP_GOODS={
   frostfort:{2:['fur'],3:['ginseng']}
 };
 function getRepLevel(cityId){return GS.reputation[cityId]?GS.reputation[cityId].level:0}
-function getRepExp(cityId){return GS.reputation[cityId]?GS.reputation[cityId].exp:0}
 // 升级阈值：按城市等级差异，指数增长（v6.5 货币量级放大后同步 ×10）
 //   village: Lv1=3000 → Lv2=6000 → ...（新手村低门槛）
 //   town:    Lv1=8000 → Lv2=16000 → ... → Lv8=1024000（百万级）
@@ -2021,18 +2063,31 @@ function addRep(cityId,exp){
   State.set('reputation', rep);
   if(ups>0){statAdd('reps',ups);EventBus.emit(EventBus.EVENTS.REPUTATION_GAIN,{cityId:cityId,level:r.level});toast(`⭐ ${getCityName(cityId)}声望提升至 Lv${r.level}！`,'ok');}
 }
-// 本城可购物资 = 基础清单 + 声望逐步解锁的本城特产（REP_GOODS）
+// 本城货物明细：goods=全部可展示货物（含未解锁），locked={gid:所需声望等级}（声望不足者）
+// v9.10.3：从 getBuyableGoods 拆出，供市场面板展示"未解锁但可见"的锁定物资
+function getCityGoodsDetail(cityId){
+  const city=getCity(cityId);if(!city)return{goods:[],locked:{}};
+  const lv=getRepLevel(cityId),locked={};
+  const g=REP_GOODS[cityId];
+  for(const gid of city.goods){
+    let req=0;
+    if(g)for(const k of Object.keys(g)){if(g[k].includes(gid))req=Math.max(req,Number(k));}
+    if(req>lv)locked[gid]=req;
+  }
+  return{goods:[...city.goods],locked};
+}
+// 本城可购物资 = 基础清单 + 声望逐步解锁的本城特产（REP_GOODS）；未达等级者不可购
 function getBuyableGoods(cityId){
-  const city=getCity(cityId);if(!city)return[];
-  const lv=getRepLevel(cityId),set=new Set(city.goods);
-  const g=REP_GOODS[cityId];if(g)for(const k of Object.keys(g)){if(Number(k)>lv)g[k].forEach(id=>set.delete(id));}
-  return[...set];
+  const{goods,locked}=getCityGoodsDetail(cityId);
+  return goods.filter(gid=>!locked[gid]);
 }
 // 库存上限：基础 ×（1+0.15×声望等级）；本城买入价<卖出价（顺价可套利）时临时收紧库存
+// v9.10.4：顺价判定使用纯中枢价——产地折扣/事件/声望等加成独立于物价，不参与套利判定
 function getMaxStock(cityId,itemId){
   const base=PURCHASE_LIMITS[cityId]?.[itemId]||100;
   let cap=Math.round(base*(1+0.15*getRepLevel(cityId)));
-  const buy=getDayPrice(cityId,itemId,GS.day),sell=getSellPrice(cityId,itemId,GS.day);
+  const buy=(window.getBaseBuyPrice)?getBaseBuyPrice(cityId,itemId,GS.day):null;
+  const sell=(window.getBaseSellPrice)?getBaseSellPrice(cityId,itemId,GS.day):null;
   if(buy!=null&&sell!=null&&buy<sell){
     const gap=(sell-buy)/buy;
     cap=Math.round(cap*(gap>0.1?0.3:0.5)); // 顺价套利：库存上限临时收紧到五成/三成，抑制同城倒卖
@@ -2079,7 +2134,7 @@ function rarityWeights(){
 }
 function rollRarity(){
   const w=rarityWeights();
-  // 24h 不良记录：抑制史诗/传说刷新权重（付费刷新不提高概率，无法被绕开）
+  // 今日不良记录：抑制史诗/传说刷新权重（付费刷新不提高概率，无法被绕开）
   const debuff=TaskBadRecord.getDebuff(TaskBadRecord.getLog(), TaskConfig.TASK_BAD_RECORD_CONFIG);
   if(debuff){w[2]*=debuff.rareWeightMult;w[3]*=debuff.rareWeightMult;}
   const sum=w.reduce(function(a,b){return a+b;},0)||1;
@@ -2140,7 +2195,7 @@ function rollTask(cityId,seq){
   const base={
     id:id, rarity:R.id, quality:quality, urgency:urgency,
     from:cityId, to:to.id, dist:dist, rewardRep:rep, rewardMats:mats, delivered:false,
-    timerStarted:false, speedSnapshot:null, timeLimitSeconds:null, deadlineTimestamp:null, status:'active'
+    timerStarted:false, speedSnapshot:null, timeLimitSeconds:null, deadlineTimestamp:null
   };
   if(Math.random()<0.5){
     const goods=getCity(cityId).goods;
@@ -2175,7 +2230,6 @@ function normalizeTask(t){
   if(t.speedSnapshot==null)t.speedSnapshot=null;
   if(t.timeLimitSeconds==null)t.timeLimitSeconds=null;
   if(t.deadlineTimestamp==null)t.deadlineTimestamp=null;
-  if(t.status==null)t.status='active';
   return t;
 }
 function normalizeTasksState(){
@@ -2270,10 +2324,10 @@ function abandonTask(tid){
         tasks.active = (tasks.active||[]).filter(function(x){return x.id!==tid;});
         State.set('tasks', tasks);
       });
-      TaskBadRecord.record('abandon', Date.now(), TaskConfig.TASK_BAD_RECORD_CONFIG);
+      TaskBadRecord.record('abandon', nowMs(), TaskConfig.TASK_BAD_RECORD_CONFIG); // v9.10.5：与失败记录同用校准时钟，跨日边界口径一致
       const badCount=TaskBadRecord.count(TaskBadRecord.getLog());
       const debuff=TaskBadRecord.getDebuff(TaskBadRecord.getLog(), TaskConfig.TASK_BAD_RECORD_CONFIG);
-      let msg=`任务已放弃，扣除违约金 ${fmt(deducted)} 金币 · 24h 违约记录 ${badCount} 次`;
+      let msg=`任务已放弃，扣除违约金 ${fmt(deducted)} 金币 · 今日违约记录 ${badCount} 次`;
       if(debuff)msg+=` · 任务金币×${debuff.goldMult}，史诗/传说刷新×${debuff.rareWeightMult}`;
       toast(msg,'info');render();saveNow();
     });
@@ -2283,11 +2337,17 @@ function completeTask(tid){
   const t=(GS.tasks.active||[]).find(x=>x.id===tid);if(!t)return;
   if(!t.delivered)return toast('尚未抵达目的地，无法领取奖励','info');
   const now=nowMs();
-  const status=TaskTimer.resolveStatus(now, t.deadlineTimestamp, TaskConfig.TASK_TIME_CONFIG.LATE_GRACE_SECONDS);
+  // v9.10.4：已抵达目标城暂停的任务按暂停时刻快照判定（到达时未延误即准时交付）
+  const status=taskStatusView(t, now).status;
   const settle=TaskReward.settleTask(t.rewardGold||0, t.rewardGoldBase||t.rewardGold||0, t.rewardRep||0, t.rewardMats||[], status, TaskConfig);
+  // v9.10.4：今日不良记录金币减益真正生效（此前仅展示文案）——任务金币 × debuff.goldMult
+  const debuff=TaskBadRecord.getDebuff(TaskBadRecord.getLog(), TaskConfig.TASK_BAD_RECORD_CONFIG);
+  if(debuff && debuff.goldMult<1 && settle.gold>0){
+    settle.gold=Math.max(0, Math.round(settle.gold*debuff.goldMult));
+  }
   const goldBefore=GS.gold;
   if(settle.failed){
-    // 严重超时：失败 + 罚金 + 计入 24h 不良记录（不扣声望）
+    // 严重超时：失败 + 罚金 + 计入今日不良记录（不扣声望）
     // v9.8：欠债系统——罚金全额扣除，可扣成负数
     const deducted=settle.penalty;
     State.batch(function(){
@@ -2299,7 +2359,7 @@ function completeTask(tid){
     TaskBadRecord.record('fail', now, TaskConfig.TASK_BAD_RECORD_CONFIG);
     const badCount=TaskBadRecord.count(TaskBadRecord.getLog());
     const debuff=TaskBadRecord.getDebuff(TaskBadRecord.getLog(), TaskConfig.TASK_BAD_RECORD_CONFIG);
-    let fmsg=`❌ 任务超时失败！扣除违约金 ${fmt(deducted)} 金币 · 24h 违约记录 ${badCount} 次`;
+    let fmsg=`❌ 任务超时失败！扣除违约金 ${fmt(deducted)} 金币 · 今日违约记录 ${badCount} 次`;
     if(debuff)fmsg+=` · 任务金币×${debuff.goldMult}，史诗/传说刷新×${debuff.rareWeightMult}`;
     toast(fmsg,'err');
     render();saveNow();
@@ -2335,10 +2395,11 @@ function nowMs(){return Date.now() + (GS.__clockOffset || 0)}
 // 遍历已启动计时的任务：now > deadline + 宽限 → 执行失败结算（扣罚金、计不良记录、移除任务、汇总提示）
 function settleOverdueTasks(){
   const now = nowMs();
-  const grace = TaskConfig.TASK_TIME_CONFIG.LATE_GRACE_SECONDS * 1000;
   var tasks = State.get('tasks') || {};
   var act = tasks.active || [];
-  const overdue = act.filter(function(t){ return t.timerStarted && t.deadlineTimestamp && now > t.deadlineTimestamp + grace; });
+  // v9.10.5：已暂停（抵达目标城）任务按到达时刻快照（pausedAt）判定——宽限内到达冻结为 ontime/late，
+  //           不会被结算；途中即严重超时（到达时刻已过宽限）仍正常结算失败。仅对失败任务执行结算
+  const overdue = act.filter(function(t){ return t.timerStarted && t.deadlineTimestamp && taskStatusView(t, now).status==='failed'; });
   if(!overdue.length) return;
   const cfg = TaskConfig.TASK_PENALTY_CONFIG;
   let totalPenalty = 0;
@@ -2357,12 +2418,25 @@ function settleOverdueTasks(){
   });
   const badCount = TaskBadRecord.count(TaskBadRecord.getLog());
   const debuff = TaskBadRecord.getDebuff(TaskBadRecord.getLog(), TaskConfig.TASK_BAD_RECORD_CONFIG);
-  let msg = `❌ ${overdue.length} 个任务严重超时失败！共扣除违约金 ${fmt(totalPenalty)} 金币 · 24h 违约记录 ${badCount} 次`;
+  let msg = `❌ ${overdue.length} 个任务严重超时失败！共扣除违约金 ${fmt(totalPenalty)} 金币 · 今日违约记录 ${badCount} 次`;
   if(debuff) msg += ` · 任务金币×${debuff.goldMult}，史诗/传说刷新×${debuff.rareWeightMult}`;
   toast(msg, 'err');
   saveNow();
 }
 // T1：离开接取城市时启动相关任务倒计时（按出发时实际时速快照计算，之后换车厢不回改时限）
+// v9.10.4：已暂停（抵达目标城）的任务不重复启动，由 resumePausedTaskTimers 恢复
+function resumePausedTaskTimers(){
+  const now=nowMs();var tasks=State.get('tasks')||{};var act=tasks.active||[];
+  let changed=false;
+  for(const t of act){
+    if(t.paused&&typeof t.remainingMs==='number'){
+      t.deadlineTimestamp=now+t.remainingMs; // 冻结剩余并入新截止
+      t.paused=false;t.pausedAt=undefined;t.remainingMs=undefined;
+      changed=true;
+    }
+  }
+  if(changed)State.set('tasks',tasks);
+}
 function startTaskTimers(fromCityId){
   var tasks = State.get('tasks') || {};
   var changed = false;
@@ -2377,7 +2451,6 @@ function startTaskTimers(fromCityId){
     t.speedSnapshot = speed;
     t.timeLimitSeconds = timeLimit;
     t.deadlineTimestamp = TaskTimer.computeDeadline(nowMs(), timeLimit);
-    t.status = 'active';
     changed = true;
   }
   if(changed) State.set('tasks', tasks);
@@ -2388,15 +2461,41 @@ function fmtClock(s){
   const m = Math.floor(s/60), sec = s%60;
   return m>0 ? `${m}分${sec}秒` : `${sec}秒`;
 }
+// v9.10.4：任务状态统一读取——已暂停（抵达目标城）的任务固定用暂停时刻快照，剩余时间冻结不再流逝
+function taskStatusView(t, now){
+  const grace=TaskConfig.TASK_TIME_CONFIG.LATE_GRACE_SECONDS;
+  if(t.paused && typeof t.remainingMs==='number' && t.pausedAt){
+    return {
+      status: TaskTimer.resolveStatus(t.pausedAt, t.deadlineTimestamp, grace),
+      remain: Math.ceil(t.remainingMs/1000), // v9.10.5：向上取整，与未暂停路径 remainingSeconds 一致
+      paused: true
+    };
+  }
+  return {
+    status: TaskTimer.resolveStatus(now, t.deadlineTimestamp, grace),
+    remain: TaskTimer.remainingSeconds(now, t.deadlineTimestamp),
+    paused: false
+  };
+}
 // 计算单个任务的倒计时展示状态（初始渲染与每秒刷新共用，避免口径漂移）
 function taskCdState(t, now){
   if(!t.timerStarted || !t.deadlineTimestamp){
     return {text:`时限：${taskTimeLimitMinutes(t)} 分钟（未出发，不计时）`, cls:'', pct:null};
   }
-  const status = TaskTimer.resolveStatus(now, t.deadlineTimestamp, TaskConfig.TASK_TIME_CONFIG.LATE_GRACE_SECONDS);
-  const remain = TaskTimer.remainingSeconds(now, t.deadlineTimestamp);
+  const view=taskStatusView(t, now);
+  const status=view.status, remain=view.remain;
   const total = t.timeLimitSeconds || 1;
   const pct = Math.max(0, Math.min(1, remain/total));
+  // v9.10.4：已抵达目标城 → 计时暂停展示
+  // v9.10.5：延误时长按冻结时刻（pausedAt）计算，与"计时已暂停"语义一致；补 late/failed 分支（1-2/8-5）
+  if(view.paused){
+    const over=Math.max(0, Math.ceil((t.pausedAt-t.deadlineTimestamp)/1000));
+    let text;
+    if(status==='ontime')text=`⏸ 已抵达 · 计时暂停 · 剩余 ${fmtClock(remain)}`;
+    else if(status==='late')text=`⏸ 已抵达 · 已延误 ${over} 秒 · 仅30%金币`;
+    else text='❌ 已抵达但途中严重超时（已失效）';
+    return {text:text, cls:status==='ontime'?'cd-ok':(status==='late'?'cd-danger':'cd-dead'), pct:status==='ontime'?pct:0};
+  }
   let text, cls;
   if(status==='ontime'){
     if(pct>0.6){text=`⏱️ ${fmtClock(remain)} · 🟢 时间充裕`;cls='cd-ok';}
@@ -2432,6 +2531,12 @@ function taskTimeLimitMinutes(t){
   const sec = TaskTimer.computeTimeLimit(dist, getVehicleSpeed(), TaskConfig.TASK_TIME_CONFIG, urgMult);
   return Math.max(1, Math.round(sec/60));
 }
+// v9.10.4：任务卡奖励预览——active 任务按今日不良记录金币减益显示（open 显示全额，与结算口径一致）
+function taskCardShownGold(t, mode){
+  if(mode!=='active')return t.rewardGold||0;
+  const d=TaskBadRecord.getDebuff(TaskBadRecord.getLog(), TaskConfig.TASK_BAD_RECORD_CONFIG);
+  return (d&&d.goldMult<1)?Math.round((t.rewardGold||0)*d.goldMult):(t.rewardGold||0);
+}
 function taskCardHtml(t,mode,slotId){
   const R=getRarity(t.rarity);
   const Q=t.quality||'C';
@@ -2463,23 +2568,23 @@ function taskCardHtml(t,mode,slotId){
     <div class="task-desc">${t.desc}</div>
     ${timeLine}
     <div class="task-meta">📍${getCityName(t.from)} → 🏁${getCityName(t.to)} · ${capTxt}${mode==='active'&&t.delivered?' · 已抵达':''}</div>
-    <div class="task-reward">💰${fmt(t.rewardGold)} · ⭐${t.rewardRep}声望${matTxt?' · '+matTxt:''}</div>
+    <div class="task-reward">💰${fmt(taskCardShownGold(t,mode))} · ⭐${t.rewardRep}声望${matTxt?' · '+matTxt:''}</div>
     ${cd}
     ${mainBtn}
   </div>`;
 }
 function renderTaskBoard(){
   const act=GS.tasks.active||[];
-  // 24h 违约记录提示（放弃 + 严重超时；达 10/20/30 触发临时减益）
+  // 今日违约记录提示（放弃 + 严重超时；达 10/20/30 触发临时减益；全服 0 点统一刷新）
   const badLog=TaskBadRecord.getLog();
   const badCount=TaskBadRecord.count(badLog);
   const debuff=TaskBadRecord.getDebuff(badLog, TaskConfig.TASK_BAD_RECORD_CONFIG);
   let badWarn='';
   if(badCount>0){
     if(debuff){
-      badWarn=`<div class="task-bad-warn">⚠️ 24h 违约记录 ${badCount} 次：任务金币 ×${debuff.goldMult} · 史诗/传说刷新权重 ×${debuff.rareWeightMult}</div>`;
+      badWarn=`<div class="task-bad-warn">⚠️ 今日违约记录 ${badCount} 次：任务金币 ×${debuff.goldMult} · 史诗/传说刷新权重 ×${debuff.rareWeightMult}</div>`;
     }else{
-      badWarn=`<div class="task-bad-info">📋 24h 违约记录 ${badCount} 次（放弃/超时；累计达 10/20/30 时任务收益下降、高级任务刷新率降低）</div>`;
+      badWarn=`<div class="task-bad-info">📋 今日违约记录 ${badCount} 次（放弃/超时；累计达 10/20/30 时任务收益下降、高级任务刷新率降低，次日 0 点刷新）</div>`;
     }
   }
   // 上层：已接任务（多任务，无任务也保留高度占位）
@@ -2716,6 +2821,8 @@ function syncTutorialGuide(step, attempt){
 }
 // v9.13.1：中转面板变化（加入/移除/清空）后同步引导目标（买卖分阶段引导）
 if(window.EventBus){EventBus.on(EventBus.EVENTS.DRAFT_CHANGED,function(){syncTutorialGuide(GS.tutorial&&GS.tutorial.step);});}
+// v9.10.4：邮箱同步完成 → 刷新顶栏红点（C6：mailbox 轮询与 EventBus 联动）
+if(window.EventBus){EventBus.on(EventBus.EVENTS.MAIL_UPDATE,function(){if(window.Mailbox)Mailbox.refreshDot();});}
 // 步骤推进：仅当当前步骤匹配时前进（顺序教学）
 function advanceTutorial(n){
   if(!GS.tutorial||GS.tutorial.step!==n)return;
@@ -2835,12 +2942,10 @@ function renderContent(){
       intel.log = [{cls:'sys',text:`已抵达${getCityName(GS.location)}。本城酒馆的消息自成一路，离开这座城市后打听记录即会清空。`}];
       intel.drawn = {}; // v9.11.9：离开城市后，本城已抽事件去重集合清空（回城后可重新抽到）
       State.set('intel', intel);
-      var tasks = State.get('tasks') || {};
-      tasks.active = tasks.active || [];
-      for(const t2 of tasks.active){if(t2.to===GS.location&&!t2.delivered)t2.delivered=true;}
-      State.set('tasks', tasks);
+      // v9.10.5：任务"到达即暂停/交付标记"已前移至 advanceDay 到达分支（按真实到达时刻冻结），此处不再重复处理
     });
-    genTasks(GS.location);
+    // v9.10.4：星陨城无任务板 UI，不再生成不可见任务（C6）
+    if(GS.location!=='starfall')genTasks(GS.location);
     showArrivalOverlay();setTimeout(()=>{document.querySelector('nav button[data-tab="city"]')?.click();setTimeout(showPrivateEvent,500);},600);
   }
 }
@@ -3206,11 +3311,12 @@ function genPriceIntel(nearby){
   const cityIds=nearby.filter(id=>{const c=getCity(id);return c&&c.goods.length>0});
   const cid=cityIds[Math.floor(Math.random()*cityIds.length)];
   const city=getCity(cid);
-  const goods=city.goods.filter(g=>getDayPrice(cid,g,GS.day)!=null);
+  const goods=city.goods.filter(g=>getBaseBuyPrice(cid,g,GS.day)!=null);
   const gid=goods[Math.floor(Math.random()*goods.length)];
   const it=getItem(gid);
-  const price=getDayPrice(cid,gid,GS.day);
-  const sell=getSellPrice(cid,gid,GS.day);
+  // v9.10.4：行情情报展示纯中枢价（折扣/加成独立，在结算时体现）
+  const price=getBaseBuyPrice(cid,gid,GS.day);
+  const sell=getBaseSellPrice(cid,gid,GS.day);
   let trend='平稳';
   const hist=getPriceHistory(cid,gid,30);
   if(hist.length>1){

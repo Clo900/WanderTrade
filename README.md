@@ -187,7 +187,7 @@ State.batch(function () {
 });
 ```
 
-跨模块的瞬时业务通知使用 `EventBus`；需要持久化的游戏数据则放入 `State`。当前 `GS` Proxy 仅能自动感知顶层赋值，修改嵌套字段时应使用明确的 `State.set()`，或在修改后调用 `State.notify()`。
+跨模块的瞬时业务通知使用 `EventBus`；需要持久化的游戏数据则放入 `State`。当前 `GS` Proxy 仅能自动感知顶层赋值，修改嵌套字段时应使用明确的 `State.set()`（自动触发订阅，`State.batch` 可合并多次变更）。
 
 进一步资料：
 

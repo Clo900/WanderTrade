@@ -44,7 +44,10 @@
   function simulateConsumeLots(lots, cityId, day, visitStamp, gid, qty){
     const sPrice = getSellPrice(cityId, gid, day) || 0;
     const buy = getDayPrice(cityId, gid, day) || 0;
-    const arbitrage = buy < sPrice;
+    // v9.10.5：顺价判定用纯中枢价（与结算侧 consumeLots 同口径，保证预览=结算）；buy 为实际结算价（60% 惩罚基准）
+    const pBuy = getBaseBuyPrice(cityId, gid, day);
+    const pSell = getBaseSellPrice(cityId, gid, day);
+    const arbitrage = pBuy != null && pSell != null && pBuy < pSell;
     const curStamp = visitStamp[cityId];
     let remaining = qty, revenue = 0, sameQty = 0;
     const arr = (lots[gid] || []).map(b=>({city:b.city, qty:b.qty, cost:b.cost, stamp:b.stamp}));

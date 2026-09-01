@@ -63,7 +63,10 @@ function evRnd(s){return s-Math.floor(s)}
 function eventStartHub(ev,hub){return evRnd(evSeed(ev.id,hub))<ev.freq}
 // —— 当前中枢编号：与事件状态同源（gameStartTime + getHubMs 时间轴）——
 // v8.17：不再依赖 GS.day，杜绝玩家间（存档/离线/指令造成的）天数分叉导致事件与价格不一致
-function getEventHubNow(){return Math.floor((Date.now()-GS.gameStartTime)/getHubMs())}
+// v9.10.4：应用 __clockOffset 校准（与服务端时钟对齐），修复 C4 时间源分裂
+// v9.10.5：状态/预告/倒计时统一走 evNow()——此前仅 getEventHubNow 校准，其余用裸 Date.now() 造成判定分裂（H2）
+function evNow(){return Date.now()+(GS.__clockOffset||0)}
+function getEventHubNow(){return Math.floor((evNow()-GS.gameStartTime)/getHubMs())}
 // —— 当前生效的公共事件（确定性，按中枢周期回溯）——
 function getActiveEvents(){
   const hub=getEventHubNow(),out=[];
@@ -90,7 +93,8 @@ function getUpcomingEvents(){
     for(let h=hub+1;h<=hub+1+EVENT_MAX_HUBS;h++){
       if(eventStartHub(ev,h)){
         const startMs=GS.gameStartTime+h*getHubMs();
-        if(startMs>Date.now()&&startMs-Date.now()<=UPCOMING_WINDOW)out.push({...ev,startHub:h});
+        const n=evNow(); // v9.10.5：校准时钟（H2）
+        if(startMs>n&&startMs-n<=UPCOMING_WINDOW)out.push({...ev,startHub:h});
         break;
       }
     }
@@ -101,7 +105,7 @@ function getUpcomingEvents(){
 function getEventStatus(ev){
   const startMs=GS.gameStartTime+ev.startHub*getHubMs();
   const endMs=startMs+ev.hubs*getHubMs();
-  const now=Date.now();
+  const now=evNow(); // v9.10.5：校准时钟（H2）
   if(now<startMs){
     if(startMs-now<=UPCOMING_WINDOW)return{label:'将要进行',cls:'st-upcoming',remain:null};
     return null;
@@ -174,12 +178,6 @@ function getPublicDesc(ev){
   if(!d&&ev.repairMul)d=`维修费用 ×${ev.repairMul}`;
   if(!d&&ev.spread)d=`买卖价差 +${(ev.spread*100).toFixed(0)}%`;
   return d;
-}
-// —— 事件剩余现实时间（秒，精确到秒，基于 Date.now 连续计算）——
-function getEventCountdown(ev){
-  const startMs=GS.gameStartTime+ev.startHub*getHubMs();
-  const endMs=startMs+ev.hubs*getHubMs();
-  return Math.max(0,Math.round((endMs-Date.now())/1000));
 }
 // —— 事件见闻录（v9.10.2）：玩家"见证"过的事件永久记入 GS.eventSeen（成就面板分支解锁用）——
 // 与 knownEvents 不同：knownEvents 是当前可见性（事件过期自然失效），eventSeen 是永久收集。

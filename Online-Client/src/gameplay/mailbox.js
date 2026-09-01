@@ -98,6 +98,9 @@
       if(r && r.ok && Array.isArray(r.mailbox)){
         GS.mailbox = r.mailbox;
         refreshDot();
+        // v9.10.4：轮询同步后若邮箱面板已打开则重绘（修复 C6），并广播事件供外部联动
+        if(document.getElementById('mailbox-overlay')) renderList();
+        if(global.EventBus && global.EventBus.EVENTS && global.EventBus.EVENTS.MAIL_UPDATE) global.EventBus.emit(global.EventBus.EVENTS.MAIL_UPDATE, {});
       }
     });
   }
@@ -362,8 +365,9 @@
 
   // v9.11.x：定期同步服务端邮箱（GM 发邮件 / 星陨城结算后玩家无需刷新即可看到；
   //   单机模式 ONLINE=false 时 sync 内部直接返回，无副作用）
+  // v9.10.4：改用裸 ONLINE（var 声明已挂 window；此前 window.ONLINE 恒 undefined 导致轮询永不触发——B1）
   setInterval(function(){
-    if(window.ONLINE && localStorage.getItem(AUTH_KEY)) sync();
+    if(ONLINE && localStorage.getItem(AUTH_KEY)) sync();
   }, 60000);
 
 })(window);

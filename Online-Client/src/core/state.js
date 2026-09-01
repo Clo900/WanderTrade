@@ -200,28 +200,6 @@
     },
 
     /**
-     * 取消订阅
-     */
-    unsubscribe: function(path, callback){
-      var set = _listeners.get(path);
-      if(!set) return;
-      if(!callback){
-        _listeners.delete(path);
-        return;
-      }
-      set.delete(callback);
-      if(set.size===0) _listeners.delete(path);
-    },
-
-    /**
-     * 手动触发路径通知（用于非 State.set 的直接赋值场景）
-     * @param {string} path - 变更路径
-     */
-    notify: function(path){
-      if(path) _notify(path);
-    },
-
-    /**
      * 重置到默认状态（静默，不触发订阅）
      */
     reset: function(){
@@ -237,18 +215,6 @@
         _silent = false;
       }
       _dispatch('*');
-    },
-
-    /**
-     * 合并补丁到状态（批量）
-     * @param {Object} patch - {path: value, ...}
-     */
-    patch: function(patch){
-      State.batch(function(){
-        Object.keys(patch).forEach(function(p){
-          State.set(p, patch[p]);
-        });
-      });
     },
 
     /**

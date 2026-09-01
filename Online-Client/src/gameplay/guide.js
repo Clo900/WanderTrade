@@ -14,7 +14,6 @@
  *     mask: false,               // 无高光模式（仅气泡，如旅行等待提示）
  *     container, onChange        // 观察内容容器 DOM 变化→实时刷新 + 通知编排层
  *   })
- *   Guide.updateText({title,desc,hintHtml}) // 轻量更新文案不重建
  *   Guide.snapshot()            // 返回当前气泡文案快照（供编排层判断是否需要重建）
  *   Guide.hide();  Guide.refresh();  Guide.isActive()
  * ============================================================ */
@@ -190,16 +189,6 @@
     return state;
   }
 
-  /** 轻量更新气泡文案（不重建、不重定位，避免等待提示闪烁） */
-  function updateText(o) {
-    if (!root || !state) return;
-    var p = o || {};
-    if (p.title != null) root.querySelector('#tut-bubble-head').textContent = p.title;
-    if (p.desc != null) root.querySelector('#tut-bubble-desc').textContent = p.desc;
-    if (p.hintHtml != null) root.querySelector('#tut-bubble-hint').innerHTML = p.hintHtml;
-    positionBubble();
-  }
-
   /** 返回当前气泡文案快照（供编排层判断阶段文案是否变化、是否需要重建） */
   function snapshot() {
     if (!root || !state) return null;
@@ -224,7 +213,6 @@
     show: show,
     hide: hide,
     refresh: refresh,
-    updateText: updateText,
     snapshot: snapshot,
     isActive: function () { return !!state; }
   };

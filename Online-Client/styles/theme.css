@@ -18,7 +18,7 @@
   --map-city-label:#24485c; --map-city-label-shadow:rgba(255,255,255,0.88);
   --map-control-border:rgba(71,120,140,0.42); --map-control-bg:rgba(247,245,242,0.86); --map-control-hover:rgba(71,120,140,0.18); --map-control-hover-text:#173342;
   --map-info-bg:rgba(255,255,255,0.78); --map-core-light:#5d919d; --map-shield-light:#ffffff; --map-mist-center:#ffffff; --map-mist-edge:#b9d4d8; --map-cloud:#ffffff; --map-travel-dot:var(--travel); --map-travel-dot-border:#ffffff;
-  --line:#333; --bg2:#14161b;
+  --line:#333;
   --radius:10px; --radius-sm:6px; --shadow:0 2px 12px rgba(26,26,26,0.10);
   color-scheme: light;
 }
@@ -38,7 +38,7 @@
   --map-city-label:#eef7ff; --map-city-label-shadow:rgba(0,0,0,0.95);
   --map-control-border:rgba(90,169,240,0.35); --map-control-bg:rgba(10,20,32,0.75); --map-control-hover:rgba(90,169,240,0.25); --map-control-hover-text:#ffffff;
   --map-info-bg:rgba(0,0,0,0.45); --map-core-light:#3b6a7c; --map-shield-light:#dceeff; --map-mist-center:#d9ecf7; --map-mist-edge:#9fc3d8; --map-cloud:#eef8ff; --map-travel-dot:var(--travel); --map-travel-dot-border:#ffffff;
-  --line:#333; --bg2:#14161b;
+  --line:#333;
   --radius:10px; --radius-sm:6px; --shadow:0 2px 12px rgba(0,0,0,0.3);
   color-scheme: dark;
 }

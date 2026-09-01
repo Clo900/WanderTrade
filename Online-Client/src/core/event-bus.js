@@ -13,7 +13,6 @@
  *   EventBus.on(event, callback)  订阅事件
  *   EventBus.off(event, callback) 取消订阅
  *   EventBus.emit(event, data)    发布事件
- *   EventBus.once(event, callback) 一次性订阅
  * ================================================ */
 (function(global){
   'use strict';
@@ -42,14 +41,6 @@
     });
   }
 
-  function once(event, callback){
-    function wrapper(data){
-      off(event, wrapper);
-      callback(data);
-    }
-    on(event, wrapper);
-  }
-
   // ===== 预定义事件常量 =====
   const EVENTS = {
     GOLD_CHANGED:     'gold-changed',
@@ -66,10 +57,10 @@
     TASK_COMPLETE:    'task-complete',
     DAMAGE_TAKEN:     'damage-taken',
     DRAFT_CHANGED:    'draft-changed', // v9.13.1：中转面板变更（加入/移除/清空）——引导分阶段同步用
-    NOTIFICATION:     'notification'
+    MAIL_UPDATE:      'mail-update'    // v9.10.4：邮箱同步完成（C6：轮询联动）
   };
 
-  const EventBus = { on, off, emit, once, EVENTS };
+  const EventBus = { on, off, emit, EVENTS };
   global.EventBus = EventBus;
 
 })(window);

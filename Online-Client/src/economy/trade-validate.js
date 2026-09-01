@@ -18,6 +18,8 @@
     let needGold = 0;
     let needCargo = 0;
     for(const it of list){
+      // v9.10.4：防御层补可购性校验（与 buyItem 口径一致，防止脚本/旧档注入未解锁物资）
+      if(!getBuyableGoods(city).includes(it.gid)) return {ok:false, msg:`${getItem(it.gid).name} 不可购买（声望不足或非本城货物）`};
       const price = getDayPrice(city, it.gid, GS.day);
       if(!price) return {ok:false, msg:'价格数据异常'};
       const stock = getCurStock(city, it.gid);
@@ -39,6 +41,12 @@
     for(const it of list){
       const held = GS.cargo[it.gid]||0;
       if(it.qty > held) return {ok:false, msg:`${getItem(it.gid).name} 持有不足（${held}）`};
+      // v9.10.4：防御层补拒收校验（与 draftFromSlider/sellItem 口径一致）
+      if(window.DemandEngine && DemandEngine.getDemandState){
+        const hubNow = Math.floor(GS.day / (window.CENTRAL_PERIOD||12));
+        if(DemandEngine.getDemandState(city, it.gid, hubNow) === 'reject')
+          return {ok:false, msg:`${getItem(it.gid).name} 本城无人收购`};
+      }
     }
     return {ok:true, list};
   }

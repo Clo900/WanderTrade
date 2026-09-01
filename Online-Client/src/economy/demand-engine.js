@@ -100,8 +100,7 @@
     }
   }
 
-  // 确定性种子（与价格引擎同风格，保证全服一致）
-  function seededRnd(seed){ const x = Math.sin(seed) * 43758.5453; return x - Math.floor(x); }
+  // v9.10.4：删除局部 seededRnd 副本（与 price-engine.js:52 全局实现完全相同，改复用全局，B5 去重）
   function mkSeed(itemId, cityId, hub){ return itemId.charCodeAt(0)*1e4 + cityId.charCodeAt(0)*1e2 + hub*31 + 13; }
 
   // 候选需求城 = 特产价格表显式列出的城市（不含 rest 兜底）

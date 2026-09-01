@@ -112,141 +112,181 @@
       "sourceCities": [
         "oaktown"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "mushroom": {
       "sourceCities": [
         "oaktown"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "honey": {
       "sourceCities": [
         "oaktown"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "iron_ingot": {
       "sourceCities": [
         "ironfort"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "steel_blade": {
       "sourceCities": [
         "ironfort"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "fish": {
       "sourceCities": [
         "saltbay"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "pearl": {
       "sourceCities": [
         "saltbay"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "sailcloth": {
       "sourceCities": [
         "saltbay"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "beer": {
       "sourceCities": [
         "purplefield"
       ],
-      "srcMult": 0.85,
-      "otherMult": 1.05
+      "srcMult": 0.85
     },
     "wool": {
       "sourceCities": [
         "purplefield"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "cheese": {
       "sourceCities": [
         "purplefield"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "spice": {
       "sourceCities": [
         "windoasis"
       ],
-      "srcMult": 0.88,
-      "otherMult": 1.06
+      "srcMult": 0.88
     },
     "leather": {
       "sourceCities": [
         "windoasis"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "carpet": {
       "sourceCities": [
         "windoasis"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "herb": {
       "sourceCities": [
         "moonvalley"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "moon_crystal": {
       "sourceCities": [
         "moonvalley"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "oil": {
       "sourceCities": [
         "moonvalley"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "fur": {
       "sourceCities": [
         "frostfort"
       ],
-      "srcMult": 0.86,
-      "otherMult": 1.08
+      "srcMult": 0.86
     },
     "ginseng": {
       "sourceCities": [
         "frostfort"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
     },
     "ivory": {
       "sourceCities": [
         "frostfort"
       ],
-      "srcMult": 0.9,
-      "otherMult": 1.06
+      "srcMult": 0.9
+    },
+    "tea": {
+      "sourceCities": [
+        "moonvalley"
+      ],
+      "srcMult": 0.9
+    },
+    "silk": {
+      "sourceCities": [
+        "windoasis"
+      ],
+      "srcMult": 0.88
+    },
+    "amber": {
+      "sourceCities": [
+        "frostfort"
+      ],
+      "srcMult": 0.9
+    },
+    "coral": {
+      "sourceCities": [
+        "saltbay"
+      ],
+      "srcMult": 0.9
+    },
+    "dye": {
+      "sourceCities": [
+        "purplefield"
+      ],
+      "srcMult": 0.88
+    },
+    "wine": {
+      "sourceCities": [
+        "purplefield"
+      ],
+      "srcMult": 0.85
+    },
+    "jade": {
+      "sourceCities": [
+        "moonvalley"
+      ],
+      "srcMult": 0.9
+    },
+    "stariron": {
+      "sourceCities": [
+        "starfall"
+      ],
+      "srcMult": 0.9
+    },
+    "celadon": {
+      "sourceCities": [
+        "dawncapital"
+      ],
+      "srcMult": 0.9
+    },
+    "tapestry": {
+      "sourceCities": [
+        "dawncapital"
+      ],
+      "srcMult": 0.9
     }
   },
   "sellExceptions": {

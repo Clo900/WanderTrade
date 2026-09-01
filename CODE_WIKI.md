@@ -500,7 +500,6 @@ getActiveEvents() → getItemMult(city, item, mode) → priceFor() → 市场价
 | `EventBus.on(event, cb)` | 订阅事件，返回取消订阅函数 |
 | `EventBus.off(event, cb)` | 取消订阅 |
 | `EventBus.emit(event, data)` | 发布事件 |
-| `EventBus.once(event, cb)` | 一次性订阅 |
 
 #### 设计要点
 
@@ -541,7 +540,7 @@ getActiveEvents() → getItemMult(city, item, mode) → priceFor() → 市场价
 
 - `price-engine.js` 提取全局 `SPECIAL_PRICE_TABLE`（特产分城价格表，距离即价格），并导出 `window.SPECIAL_PRICE_TABLE`。
 - `getSellPrice`（**成交价**）在 P3 封顶/封底**之前**查询 `DemandEngine.getDemandState(city, item, hub)`：拒收 → 返回 null；热门 → ×(1+`getHotBonus`，候选需求城 0.15 / 普通城 0.10)；冷淡 → ×COOL_MULT；正常 → 无修正。
-- `getSellPriceBase`（**纯物价**，不含需求档位）供 `getTrend` / `getPriceHistory` / "预计明日卖出" 使用——走势信息与需求热度解耦。
+- `getBaseSellPrice`（**纯中枢价**，不含需求档位/事件/声望）供 `getTrend` / `getPriceHistory` / "预计明日卖出" 使用——走势信息与需求热度解耦（v9.10.4 起纯价口径，原 `getSellPriceBase` 已移除）。
 - `getPriceDirection(city, item, hub)`（纯物价未来方向，±3% 阈值）被 `demand-engine.getTier` 消费：**涨价期冷淡概率归零**，从机制上避免"物价在涨却不受欢迎"。
 - `HOT_BONUS` / `COOL_MULT` / `PERIOD_HUBS` 以 getter 暴露，保证 setConfig 后实时生效。
 
@@ -781,7 +780,7 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 - 价格由中枢周期驱动，游戏日内 ±2.5% 抖动
 - 事件通过 `multiplier` 参数注入价格，引擎本身不感知事件
 - 基础物资价格窄幅波动（±25%），特产品宽幅波动（±45%~60%）
-- **v9.7 需求档位**：非产出城市特产按 16h 周期三档确定性轮换（候选需求城 [15/70/15]、普通城 [10/75/15]，正常主导），热门 ×(1+0.15/0.10)、冷淡 ×0.6、世界观个例拒收；产出城/基础物资任何城市正常收购。近途无暴利（rest≈产地×1.06、显式需求城溢价封顶 ×1.5）；趋势感知（涨价期不冷淡）；趋势标注/折线图走纯物价（`getSellPriceBase`），需求档位仅作成交修正层。`SPECIAL_PRICE_TABLE` 为全局特产分城价格表（距离即价格，v9.7 含王都青瓷/织锦）。
+- **v9.7 需求档位**：非产出城市特产按 16h 周期三档确定性轮换（候选需求城 [15/70/15]、普通城 [10/75/15]，正常主导），热门 ×(1+0.15/0.10)、冷淡 ×0.6、世界观个例拒收；产出城/基础物资任何城市正常收购。近途无暴利（rest≈产地×1.06、显式需求城溢价封顶 ×1.5）；趋势感知（涨价期不冷淡）；趋势标注/折线图走纯价（v9.10.4 起 `getBaseSellPrice`，原 `getSellPriceBase` 已移除），需求档位仅作成交修正层。`SPECIAL_PRICE_TABLE` 为全局特产分城价格表（距离即价格，v9.7 含王都青瓷/织锦）。
 
 ### 6.3 事件系统
 
@@ -904,7 +903,7 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 #### 放弃与 24h 不良记录
 
 - 放弃罚金 = `max(rewardGoldBase × 10%, 50)`；严重超时罚金 = `max(rewardGoldBase × 20%, 100)`。
-- 仅统计“放弃 + 严重超时”（迟到不计入），滚动 24 小时窗口。
+- 仅统计“放弃 + 严重超时”（迟到不计入）。**v9.10.4 起改为自然日统计、全服 0 点（UTC+8）统一刷新**（非各自滚动 24h）：按日键 `YYYY-M-D` 统计，跨 0 点昨日记录自动作废；日键固定 UTC+8 服务器日期（v9.10.5），记录时间戳统一 `nowMs()`（含服务器时钟校准）。
 - `badCount24h` 达到 10/20/30 时，任务金币倍率 ×0.95/0.85/0.70，史诗/传说刷新权重 ×0.9/0.7/0.4。
 - 反馈显示：放弃/超时失败 toast 显示 `24h 违约记录 N 次` 与已触发减益；任务板顶部常驻违约提示条（未达阈值灰色提示 / 已触发红色警示）。
 
@@ -937,9 +936,9 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 
 ### 6.8 成就与排行榜
 
-#### 16 项成就
+#### 17 项成就
 
-涵盖：首单任务、累计收入、卖出件数、旅行里程、拜访全城、金币里程碑、车厢/核心升级、声望等级等。
+涵盖：首单任务、累计收入、卖出件数、旅行里程、拜访全城、金币里程碑、车厢/核心升级、声望等级等。全量配置见 `Online-Client/src/data/achievements.js`（`window.ACHIEVEMENTS`）与设计文档「附录 A：成就配置表」。
 
 #### 排行榜（4 榜）
 

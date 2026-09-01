@@ -36,10 +36,10 @@
   var TITLES = {
     'novice':           { name: '新手司机',   icon: '🐣', rarity: 'common',   desc: '完成新手教程' },
     'gold_hoarder':     { name: '黄金收藏家', icon: '💰', rarity: 'rare',     desc: '成就「金币大户」系列奖励' },
-    'income_tycoon':    { name: '富甲一方',   icon: '🏦', rarity: 'epic',     desc: '成就「富甲一方」系列奖励' },
+    'income_tycoon':    { name: '富甲一方',   icon: '🏦', rarity: 'epic',     desc: '成就「第一桶金」系列奖励' },
     'road_traveler':    { name: '千里之行',   icon: '🛣️', rarity: 'rare',     desc: '成就「行万里路」系列奖励' },
     'world_explorer':   { name: '环球大使',   icon: '🌍', rarity: 'epic',     desc: '成就「环球旅者」系列奖励' },
-    'event_seer':       { name: '先知',       icon: '🔮', rarity: 'epic',     desc: '成就「百晓生」奖励' },
+    'event_seer':       { name: '先知',       icon: '🔮', rarity: 'epic',     desc: '成就「事件见闻录」奖励' },
     'mech_master':      { name: '机械大师',   icon: '⚙️', rarity: 'rare',     desc: '成就「机械大师」系列奖励' },
     'reputation_star':  { name: '声名远扬',   icon: '🌟', rarity: 'rare',     desc: '成就「声名远扬」系列奖励' },
     'sf_participant':   { name: '边境小工',   icon: '🔨', rarity: 'common',   desc: '参与星陨城建设' },

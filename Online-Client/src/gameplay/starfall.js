@@ -128,7 +128,10 @@
     arr.sort(function(a, b){ return b.score - a.score || a.ts - b.ts; });
     var ratio = Math.min(1, act.totalProgress / GOAL);
     // v9.13.6：目标未达成（建设度 < 目标）时不发素材与称号（仅金币按比例折算；与在线结算一致）
-    var goalMet = ratio >= 1;
+    // v9.10.4：单机模式放宽为"有贡献即发"——全服目标(20~50人量级)对单机不可达，
+    //   改为按进度折算发放合金/称号，避免载具/核心升级被星陨合金锁死（C2）
+    var single = !ONLINE;
+    var goalMet = single ? ratio > 0 : ratio >= 1;
     for(var i = 0; i < arr.length; i++){
       var t = tierOf(i + 1);
       var gold = Math.floor(t.gold * ratio), alloy = Math.floor(t.alloy * ratio);
@@ -158,6 +161,13 @@
 
   /* ===== 在线活动状态（服务端权威，_net 为缓存） ===== */
   var _net = null;
+  // v9.10.5：账号切换时清模块态（_net 在线缓存 / _sel 提交草稿 / 周期参数），
+  //   防止上一账号的 GM cycle 周期设置、活动缓存、提交草稿泄漏给下一账号（M3）
+  function reset(){
+    _net = null;
+    _sel = {};
+    applyCycle(24 * 3600 * 1000, 48 * 3600 * 1000); // 恢复默认：建设期 24h / 间隙期 48h
+  }
   function sync(){
     if(!ONLINE) return Promise.resolve();
     var user = localStorage.getItem(AUTH_KEY) || '';
@@ -185,7 +195,8 @@
   /* ===== 面板渲染 ===== */
   var _lineIdx = 0, _histIdx = 0;
 
-  function fmtCountdown(ms){
+  // v9.10.4：改名 fmtCountdownMs——与 events.js 全局 fmtCountdown(秒) 区分（B5 同名异义）
+  function fmtCountdownMs(ms){
     ms = Math.max(0, ms);
     var s = Math.floor(ms / 1000);
     var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
@@ -354,7 +365,7 @@
     // 左侧：采访气泡 + 进度条 + 本期物资 + 排行榜
     html += '<div class="sf-left">';
     html += '<div class="sf-head"><span class="sf-title">☄️ 星陨城 · 第 ' + a.period + ' 期建设</span>' +
-      '<span class="sf-phase running">建设期 · 剩余 <b id="sf-countdown">' + fmtCountdown(a.phaseEndsAt - nowMs()) + '</b></span></div>';
+      '<span class="sf-phase running">建设期 · 剩余 <b id="sf-countdown">' + fmtCountdownMs(a.phaseEndsAt - nowMs()) + '</b></span></div>';
     html += '<div class="sf-bubble-wrap"><span class="sf-bubble-tag">边境居民</span><span class="sf-bubble" id="sf-bubble">' + esc(linesFor('running')[_lineIdx % linesFor('running').length]) + '</span></div>';
     html += '<div class="sf-progress-wrap"><div class="sf-progress-label">建设度 ' + fmt(prog) + ' / ' + fmt(GOAL) +
       (a.totalProgress > GOAL ? '（已超额 ' + fmt(a.totalProgress) + '）' : '') + '</div>' +
@@ -454,7 +465,7 @@
   function renderIntermission(a){
     var html = '<div class="sf-layout"><div class="sf-left">';
     html += '<div class="sf-head"><span class="sf-title">☄️ 星陨城 · 间隙期</span>' +
-      '<span class="sf-phase inter">下一轮开始 <b id="sf-countdown">' + fmtCountdown(a.phaseEndsAt - nowMs()) + '</b></span></div>';
+      '<span class="sf-phase inter">下一轮开始 <b id="sf-countdown">' + fmtCountdownMs(a.phaseEndsAt - nowMs()) + '</b></span></div>';
     html += '<div class="sf-bubble-wrap"><span class="sf-bubble-tag">边境居民</span><span class="sf-bubble" id="sf-bubble">' + esc(linesFor('intermission')[_lineIdx % linesFor('intermission').length]) + '</span></div>';
     html += '<div class="sf-req"><div class="sf-req-group"><span class="sf-req-tag special">下期特产</span><span class="sf-req-none">未知（开始时公布）</span></div>' +
       '<div class="sf-req-group"><span class="sf-req-tag">下期普通物资</span><span class="sf-req-none">未知（开始时公布）</span></div></div>';
@@ -584,7 +595,7 @@
     var a = act();
     if(!a) return;
     var cd = document.getElementById('sf-countdown');
-    if(cd) cd.textContent = fmtCountdown(a.phaseEndsAt - now);
+    if(cd) cd.textContent = fmtCountdownMs(a.phaseEndsAt - now);
     if(now - _lastLineSwap > 8000){
       _lastLineSwap = now;
       var ls = linesFor(a.phase); // v9.10.1：文案池按当前阶段取用（建设期/间隙期）
@@ -613,14 +624,14 @@
       arr.sort(function(x, y){ return y.score - x.score; });
       var first = arr.length ? arr[0].user : (a.history && a.history.length ? a.history[0].first : null);
       out('☄️ 星陨城第 ' + a.period + ' 期 · ' + (a.phase === 'running' ? '建设期' : '间隙期') +
-        '\n  剩余 ' + fmtCountdown(a.phaseEndsAt - now) +
+        '\n  剩余 ' + fmtCountdownMs(a.phaseEndsAt - now) +
         '\n  建设度 ' + fmt(a.totalProgress) + ' / ' + fmt(GOAL) +
         '\n  本期特产 ' + (a.required ? a.required.special : '?') + ' · 普通 ' + (a.required ? a.required.normal.join('、') : '?') +
         '\n  参与 ' + arr.length + ' 人 · 当前第一 ' + (first || '（暂无）'));
       return;
     }
     if(action === 'start'){
-      if(a.phase === 'running') return out('ℹ 已在建设期（第 ' + a.period + ' 期，剩余 ' + fmtCountdown(a.phaseEndsAt - now) + '）');
+      if(a.phase === 'running') return out('ℹ 已在建设期（第 ' + a.period + ' 期，剩余 ' + fmtCountdownMs(a.phaseEndsAt - now) + '）');
       startNext();
       out('✅ 星陨城第 ' + a.period + ' 期建设已开始（' + Math.round(RUN_MS / 3600000) + 'h），所需物资已重新抽选');
     }else if(action === 'end'){
@@ -666,6 +677,7 @@
     updateSum: updateSum,
     tick: tick,
     sync: sync,
+    reset: reset, // v9.10.5：账号切换时清模块态
     phase: phase, // v9.10.1：地图活动标识取阶段
     histShift: histShift,
     histSelect: histSelect,

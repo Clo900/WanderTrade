@@ -9,8 +9,8 @@
 (function(global){
   'use strict';
 
-  // v9.11.11：称号配置（名称/图标/稀有度/说明）抽取至 src/data/titles.js（策划统一修改入口）；
-  // v9.12.0：配置迁移至 src/data/title-defs.js 共享模块（浏览器/服务端双端复用，消灭双维护），
+  // v9.11.11：称号配置（名称/图标/稀有度/说明）抽取至 src/data/title-defs.js（策划统一修改入口）；
+  // v9.12.0：配置迁移为 src/data/title-defs.js 共享模块（浏览器/服务端双端复用，消灭双维护），
   //          浏览器端挂 window.TITLES/RARITY/ORDER，服务端据此校验 GM 邮件称号 id。
   //          本模块仅保留获得/装备/渲染/可见性逻辑。
   var TITLES = global.TITLES || {};

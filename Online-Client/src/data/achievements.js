@@ -17,7 +17,7 @@
  *   reward   奖励对象：
  *            gold  金币（如 500）
  *            mats  材料（如 {repair_kit:2, engine:1}，材料 id 见材料定义）
- *            title 称号（如 'road_traveler'，称号 id 见 src/gameplay/titles.js）
+ *            title 称号（如 'road_traveler'，称号 id 见 src/data/title-defs.js）
  *
  * ── metric 可选值清单 ─────────────────────────────
  *   tutorial        新手引导完成（0/1）         visitedCount   拜访城市数量

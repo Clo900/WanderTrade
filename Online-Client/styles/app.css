@@ -37,7 +37,6 @@ body{font-family:'Segoe UI',-apple-system,sans-serif;background:var(--bg);color:
 #topbar .t-logout:hover{background:rgba(240,120,120,.22);color:#fff}
 @keyframes pulse{50%{opacity:0.5}}
 @keyframes fadeIn{from{opacity:0}}@keyframes scaleIn{from{transform:scale(0.8);opacity:0}to{transform:scale(1);opacity:1}}
-#topbar .sep{width:1px;height:20px;background:var(--text3);opacity:0.3}
 
 /* ===== 导航 ===== */
 nav{display:flex;background:var(--panel);border-radius:var(--radius) var(--radius) 0 0;overflow:hidden}
@@ -66,8 +65,6 @@ nav button:hover{color:var(--text);background:rgba(255,255,255,0.03)}
 @keyframes isoBreathe{0%,100%{stroke:var(--map-contour-rest);filter:drop-shadow(0 0 0 transparent)}50%{stroke:var(--map-contour-active);filter:drop-shadow(0 0 5px var(--map-contour-glow))}}
 .city-node{cursor:pointer;transition:all 0.2s;stroke:var(--map-node-border);stroke-width:1.35;paint-order:stroke fill}
 .city-node:hover{filter:brightness(1.35)}
-.city-node.closed{opacity:0.45;cursor:not-allowed}
-.city-node.closed:hover{filter:none}
 .city-node.tier-village{fill:var(--village)}
 .city-node.tier-town{fill:var(--town)}
 .city-node.tier-capital{fill:var(--capital)}
@@ -288,9 +285,9 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 .trade-summary-panel{min-height:0}
 .trade-summary-panel .td-confirm{margin-top:auto}
 .trade-cart-panel.empty,.trade-summary-panel.empty{color:var(--text3);font-size:12px;line-height:1.6}
-.trade-draft-panel .td-head,.trade-cart-panel .td-head{display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700;color:var(--text)}
-.trade-draft-panel .td-clear,.trade-cart-panel .td-clear{background:none;border:1px solid var(--text3);color:var(--text2);padding:3px 8px;border-radius:6px;cursor:pointer;font-size:11px}
-.trade-draft-panel .td-clear:hover,.trade-cart-panel .td-clear:hover{border-color:var(--gold);color:var(--text)}
+.trade-cart-panel .td-head{display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700;color:var(--text)}
+.trade-cart-panel .td-clear{background:none;border:1px solid var(--text3);color:var(--text2);padding:3px 8px;border-radius:6px;cursor:pointer;font-size:11px}
+.trade-cart-panel .td-clear:hover{border-color:var(--gold);color:var(--text)}
 .trade-cart-panel .td-row{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:6px 8px}
 .trade-cart-panel .td-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
 .trade-cart-panel .td-qty{width:70px;padding:4px 6px;background:var(--bg);border:1px solid var(--text3);border-radius:6px;color:var(--text);font-size:12px;text-align:center}
@@ -310,14 +307,6 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 .trade-cart-panel .td-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.22);border-radius:10px;border:2px solid rgba(0,0,0,0.12)}
 .goods-pane .market-cards::-webkit-scrollbar-thumb:hover,
 .trade-cart-panel .td-list::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.32)}
-.trade-draft-panel .td-row{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:6px 8px}
-.trade-draft-panel .td-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
-.trade-draft-panel .td-qty{width:70px;padding:4px 6px;background:var(--bg);border:1px solid var(--text3);border-radius:6px;color:var(--text);font-size:12px;text-align:center}
-.trade-draft-panel .td-del{background:var(--bg);border:1px solid var(--text3);color:var(--text2);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px}
-.trade-draft-panel .td-del:hover{border-color:var(--red);color:var(--red)}
-.trade-draft-panel .td-sum{font-size:12px;color:var(--text2);line-height:1.5}
-.trade-draft-panel .td-sum b{color:var(--gold)}
-.trade-draft-panel .td-confirm{width:100%}
 .market-cards{padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;overflow-y:auto;min-height:0}
 .item-card{background:var(--bg);border-radius:var(--radius-sm);padding:10px;cursor:pointer;transition:all 0.2s;border:1px solid transparent;position:relative;overflow:hidden}
 .goods-pane .item-card{
@@ -336,7 +325,6 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 .goods-pane .item-card .ic-change{line-height:1.2}
 .goods-pane .item-card .ic-limit{line-height:1.2}
 .goods-pane .item-card .ic-cargo-info{line-height:1.2}
-.goods-pane .item-card .ic-price2{margin:2px 0}
 .item-card:hover{border-color:var(--text3);background:var(--cardHover)}
 .item-card:active{border-color:var(--buy)}
 .item-card.expanded{border-color:var(--text3);background:var(--cardHover)}
@@ -346,9 +334,6 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 .item-card .ic-price{font-size:16px;font-weight:700;margin:4px 0}
 .item-card .ic-price.buy{color:var(--buy)}
 .item-card .ic-price.sell{color:var(--sell)}
-.item-card .ic-price2{font-size:12px;margin:4px 0;line-height:1.5}
-.item-card .ic-price2 .ic-cost{color:var(--text3);font-weight:600}
-.item-card .ic-price2 .ic-sell{color:var(--sell);font-weight:700;font-size:13px}
 .item-card .ic-change{font-size:11px}
 .item-card .ic-change.up{color:var(--buy)}
 .item-card .ic-change.down{color:var(--red)}
@@ -361,6 +346,17 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 .item-card .ic-detail .btn-buy{background:var(--buy)}
 .item-card .ic-detail .btn-sell{background:var(--sell)}
 .item-card .ic-cargo-info{font-size:10px;color:var(--text3);margin-top:4px}
+/* v9.10.3 声望未解锁：置灰锁定卡片 */
+.item-card.ic-lock{opacity:.62}
+.item-card.ic-lock:hover{border-color:var(--text3);background:var(--cardHover)}
+.item-card.ic-lock .ic-icon{filter:grayscale(1);opacity:.75}
+.item-card.ic-lock .ic-name{color:var(--text3)}
+.item-card.ic-lock .ic-lock-tip{font-size:11px;font-weight:700;color:var(--gold);margin:4px 0;display:flex;align-items:center;gap:4px}
+/* v9.10.4 卡片详情：价格构成明细（基础价 × 各加成 = 结算价） */
+.item-card .ic-settle-row{font-size:10px;color:var(--text3);margin:4px 0 6px;line-height:1.5}
+.item-card .ic-settle-row b{font-weight:700}
+.item-card .ic-settle-row b.buy{color:var(--buy)}
+.item-card .ic-settle-row b.sell{color:var(--sell)}
 /* v9.5 需求档位：拒收标红 + 热门/冷淡标签 */
 .item-card.ic-reject{border-color:var(--red)}
 .item-card.ic-reject .ic-icon{filter:grayscale(0.6);opacity:0.85}
@@ -370,7 +366,6 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 .item-card .ic-ds.ds-cool{color:#6ea8ff;background:rgba(110,168,255,0.10);border:1px solid #6ea8ff}
 .item-card .ic-ds.ds-reject{color:var(--red);background:rgba(255,60,60,0.10);border:1px solid var(--red)}
 .item-card .ic-detail .btn-sell.disabled{background:var(--text3);cursor:not-allowed}
-.wh-badge{display:inline-block;background:var(--sell);color:#fff;font-size:9px;padding:1px 6px;border-radius:8px;margin-left:4px}
 
 /* ===== 数量滑块 ===== */
 .qty-slider{display:flex;align-items:center;gap:4px;margin:6px 0}
@@ -399,7 +394,6 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.65);z-index:200000;display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s;pointer-events:auto}
 .modal-box{background:var(--panel);border-radius:var(--radius);padding:24px;max-width:380px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,0.6);text-align:center}
 .modal-box h3{font-size:17px;margin-bottom:6px}
-.modal-box p{color:var(--text2);font-size:13px;margin:8px 0 16px;white-space:pre-line}
 .modal-box .modal-btns{display:flex;gap:10px;justify-content:center}
 .modal-box .modal-btns button{padding:8px 28px;border:none;border-radius:var(--radius-sm);font-size:14px;font-weight:600;cursor:pointer}
 .modal-box .btn-ok{background:var(--accent);color:#fff}
@@ -438,9 +432,7 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 .event-chip.st-ending{border-color:var(--sell);color:var(--sell)}
 .event-chip.st-upcoming{border-color:var(--travel);color:var(--travel)}
 .event-chip.st-active:hover,.event-chip.st-ending:hover,.event-chip.st-upcoming:hover{color:#fff}
-.ev-row{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.06);line-height:1.6;cursor:pointer;border-radius:var(--radius-sm)}
-.ev-row:hover{background:var(--cardHover)}
-.modal-box p{max-height:60vh;overflow-y:auto;margin:0}
+.modal-box p{color:var(--text2);font-size:13px;margin:0;white-space:pre-line;max-height:60vh;overflow-y:auto}
 
 /* ===== 情报所·聊天 ===== */
 .intel-chat{display:flex;flex-direction:column;gap:6px;margin:10px 0;max-height:340px;overflow-y:auto}
