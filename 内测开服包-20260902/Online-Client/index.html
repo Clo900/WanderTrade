@@ -347,7 +347,7 @@ function getToken(){try{return localStorage.getItem(TOKEN_KEY)||''}catch(e){retu
 function setToken(t){try{if(t)localStorage.setItem(TOKEN_KEY,t);else localStorage.removeItem(TOKEN_KEY);}catch(e){}}
 // v9.14.1：客户端发布版本标记——版本变化时强制重登一次，
 // 消除"用户是否已在新版"的歧义（旧会话/旧页面在下一轮刷新必然弹回登录）
-const APP_VERSION='v9.14.1';
+const APP_VERSION='v9.14.2';
 const VER_KEY='_ver_seen';
 function verSeen(){try{return localStorage.getItem(VER_KEY)||''}catch(e){return ''}}
 function markVerSeen(){try{localStorage.setItem(VER_KEY,APP_VERSION)}catch(e){}}

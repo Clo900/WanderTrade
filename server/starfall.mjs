@@ -48,10 +48,14 @@ export function createStarfall(ctx, world, players, mailbox) {
     if (sfCats) return sfCats;
     const d = await readJson(path.join(root, 'default-world.json'));
     if (d && d.itemCategories) {
-      sfCats = {
+      const pools = {
         special: (d.itemCategories.special || []).slice().sort(),
         basic: (d.itemCategories.basic || []).slice().sort()
       };
+      // v9.14.2：空物资池会导致抽选出空 required（线上出现过"本期物资未知"），直接拒绝空池
+      if (!pools.special.length) throw new Error('default-world.json itemCategories.special 为空，无法抽选星陨城特产');
+      if (!pools.basic.length) throw new Error('default-world.json itemCategories.basic 为空，无法抽选星陨城普通物资');
+      sfCats = pools;
       return sfCats;
     }
     throw new Error('itemCategories missing in default-world.json');
@@ -69,8 +73,58 @@ export function createStarfall(ctx, world, players, mailbox) {
     if (!act) {
       act = Core.newActivity(Date.now(), { runMs: cfg().runMs, interMs: cfg().interMs, goal: GOAL, ep: Core.epoch(), cats: await itemCategories() });
       await saveNow();
+    } else {
+      await healActivity();
     }
     return act;
+  }
+
+  /* ---- 启动自愈（v9.14.2） ----
+   * 修复两类线上遗留：
+   *   1) EPOCH 偏移产物：期次边界落在 v9.14.2 前错误锚点（北京 00:00）而非规范
+   *      锚点（北京 08:00）。仅当本期 0 贡献时整体重排到规范排期并重抽物资。
+   *   2) 空物资期：running 且缺 special（曾因空物资池抽选产生）→ 补抽当期物资；
+   *      已有贡献时只补抽、不改动排期与进度。
+   * GM 手工 start/end 产生的非规范排期不属于遗留，不回溯。 */
+  async function healActivity() {
+    try {
+      const cats = await itemCategories();
+      const c = cfg();
+      const now = Date.now();
+      const cycleMs = c.runMs + c.interMs;
+      const epOld = Core.epoch() - 8 * 3600 * 1000; // v9.14.2 前错误锚点（探测用）
+      const dirty = ((act.scores && Object.keys(act.scores).length) > 0) || (act.totalProgress || 0) > 0;
+      const broken = act.phase === 'running' && !(act.required && act.required.special);
+      const mod = x => ((x % cycleMs) + cycleMs) % cycleMs;
+      const ref = act.phaseStartedAt - (act.phase === 'intermission' ? c.runMs : 0);
+      const onOldEpoch = mod(ref - epOld) === 0;
+      if (!act.history) act.history = [];
+      if (!broken && !onOldEpoch) return;                    // 规范排期或手工活动：不动
+      if (!dirty && onOldEpoch) {
+        adoptCanonical(cats, c, now);                        // EPOCH 遗留且无贡献：整体重排
+      } else if (broken) {
+        act.required = Core.pickGoods(act.period, cats);     // 只补抽物资（保留排期/进度）
+        log('[Heal] 第 ' + act.period + ' 期 running 缺物资，已补抽当期所需（special=' + act.required.special + ' normal=' + ((act.required.normal || []).length) + '）');
+      } else {
+        return;
+      }
+      await saveNow();
+    } catch (e) {
+      log('[Heal] 自愈跳过：' + (e && e.message));
+    }
+  }
+
+  function adoptCanonical(cats, c, now) {
+    const canon = Core.newActivity(now, { runMs: c.runMs, interMs: c.interMs, goal: GOAL, ep: c.ep, cats });
+    act.period = canon.period;
+    act.phase = canon.phase;
+    act.phaseStartedAt = canon.phaseStartedAt;
+    act.phaseEndsAt = canon.phaseEndsAt;
+    act.required = canon.required;
+    act.totalProgress = 0;
+    act.scores = {}; act.firstOrder = {};
+    act.settled = false;
+    log('[Heal] EPOCH 排期修复：重排至第 ' + canon.period + ' 期 ' + canon.phase + '（边界对齐自然日 08:00）');
   }
 
   function save() {

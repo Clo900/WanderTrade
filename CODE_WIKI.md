@@ -1057,7 +1057,7 @@ runtime.js (运行模式判定，最先加载，无依赖)
 | `events.js` | `data.js`, `GS`(全局) | `price-engine.js`, 主脚本 |
 | `pathing-core.js` | `data.js` | 主脚本 |
 | `starfall.js` (v9.9) | `data.js`, `state.js`, `ui-primitives.js`, `starfall-core.js`(确定性核心), `mailbox.js`(单机结算投递), `GS/State` | 主脚本（`renderCity` 星陨城分支）、`server/starfall.mjs`（在线活动接口） |
-| `starfall-core.js` | 无（纯函数，UMD） | `starfall.js`、`server/starfall.mjs`（双端共用） |
+| `starfall-core.js` | 无（纯函数，UMD） | `starfall.js`、`server/starfall.mjs`（双端共用；epoch 锚点 UTC+8 08:00，v9.14.2 修正） |
 | `mailbox.js` (v9.9) | `data.js`, `ui-primitives.js`, `GS/State` | 主脚本（顶栏按钮）、`starfall.js`（奖励投递） |
 | `server/` (Node) | `default-world.json`, `starfall_activity.json`, `starfall-core.js`, `world.json`, `players/`, `chat.json` | 无（独立运行，`node server\index.mjs`） |
 
