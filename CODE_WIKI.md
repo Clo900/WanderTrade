@@ -708,12 +708,12 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 
 ### 5.3 API 路由
 
-> **v9.14.1 鉴权**：玩家级接口需携带会话凭证——`Authorization: Bearer <token>`（GET）或 POST 请求体 `token` 字段；Token 所属用户必须等于目标 `user`，否则返回 `need login` / `unauthorized`。凭证由注册/登录接口签发（7 天滑动有效，内存存储，服务器重启后重新登录）。
+> **v9.14.1 鉴权**：玩家级接口需携带会话凭证——`Authorization: Bearer <token>`（GET）或 POST 请求体 `token` 字段；Token 所属用户必须等于目标 `user`，否则返回 `need login` / `unauthorized`。凭证由注册/登录接口签发（7 天滑动有效，内存存储，服务器重启后重新登录）。GM 口令只存服务端 `world.json`，运营者经聊天框 `/gm <密码>` 提供；`/api/world` 等公开响应不再下发 `adminPass`（v9.14.1 补强）。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/world` | 获取世界快照（公开） |
-| POST | `/api/world` | 客户端回退创建世界（公开） |
+| GET | `/api/world` | 获取世界快照（公开，不含管理口令 `adminPass` 与内部密钥） |
+| POST | `/api/world` | 客户端回退创建世界（公开；响应同样不包含 `adminPass`） |
 | GET | `/api/stocks?user=` | 获取本人库存（需登录） |
 | POST | `/api/trade` | 交易（买入/卖出），body: `{user, city, item, qty, dir}`（需登录） |
 | POST | `/api/tradeBatch` | 批量交易**全量结算**（原子）：资金/持仓/库存权威，body: `{user, city, dir, items:[{item, qty}], total?, net?}`（buy 传 `total` 应付含税 / sell 传 `net` 税后到手），返回 `{gold, cargo, stocks, serverAt, sv}`（需登录） |
@@ -729,7 +729,7 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 | POST | `/api/starfall/contribute` | 提交物资，body: `{user, items:[{item, qty}]}`（需登录），服务端权威扣货记账，返回 `{cargo, totalProgress, myScore, myRank, top10, gained, serverAt, sv}` |
 | GET | `/api/mail?user=` | 拉取本人邮箱（需登录） |
 | POST | `/api/mail/{read\|readAll\|delete\|deleteRead\|claim}` | 邮箱操作（需登录）；claim 领取附件返回 `{gold, materials, title, sv}` |
-| POST | `/api/admin` | GM 指令，body: `{key, cmd, ...}`；`cmd`：timescale/setday/givegold/giveitem/broadcast/starfall(start\|end\|next\|status\|cycle)/mail(可带 title/body)（走 adminPass，公开入口） |
+| POST | `/api/admin` | GM 指令，body: `{key, cmd, ...}`；`cmd`：timescale/setday/givegold/giveitem/broadcast/starfall(start\|end\|next\|status\|cycle)/mail(可带 title/body)（key 由运营者持有，不再经公开响应下发；公开入口） |
 
 #### 并发保护机制（v9.14.1）
 

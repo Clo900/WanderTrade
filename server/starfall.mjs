@@ -182,16 +182,21 @@ export function createStarfall(ctx, world, players, mailbox) {
     return { rows: top10, myRank, myScore };
   }
 
-  /* ---- 昵称映射：排行榜行补 nickname（无账号/无昵称时回退 user id） ---- */
+  /* ---- 昵称/称号映射：排行榜行补 nickname 与装备称号（无则回退） ---- */
   async function withNicks(rows) {
     const out = [];
     for (const r of rows || []) {
-      let nick = '';
+      let nick = '', title = null;
       try {
         const rec = await players.loadRec(r.user);
-        nick = (rec && rec.nickname) || r.user;
+        if (rec) {
+          nick = rec.nickname || r.user;
+          title = (rec.gs && rec.gs.titles && rec.gs.titles.equipped) || null;
+        } else {
+          nick = r.user;
+        }
       } catch (e) { nick = r.user; }
-      out.push({ user: r.user, nickname: nick, score: r.score });
+      out.push({ user: r.user, nickname: nick, title, score: r.score });
     }
     return out;
   }

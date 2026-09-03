@@ -1228,7 +1228,8 @@ function loadRankings(){
       const vTxt=rankType==='gold'?'💰'+fmt(r.gold):rankType==='distance'?fmt(r.distance)+'里':rankType==='tasks'?r.tasks+'单':'Lv'+r.rep;
       const mine=r.user===localStorage.getItem(AUTH_KEY);
       const nm=chatEsc(r.nickname||r.user);
-      return `<div class="rank-row ${i<3?'top':''}"><span class="rank-no">${medals[i]||(i+1)}</span><span class="rank-user">${nm}${mine?' <span style="color:var(--accent)">(我)</span>':''}</span><span class="rank-val">${vTxt}</span></div>`;
+      const badge=(window.Titles&&r.title&&Titles.TITLES[r.title])?Titles.badgeHTML(r.title)+' ':'';
+      return `<div class="rank-row ${i<3?'top':''}"><span class="rank-no">${medals[i]||(i+1)}</span><span class="rank-user">${badge}${nm}${mine?' <span style="color:var(--accent)">(我)</span>':''}</span><span class="rank-val">${vTxt}</span></div>`;
     }).join('');
   };
   if(ONLINE){
@@ -1239,7 +1240,7 @@ function loadRankings(){
       const saved=getStoredGS(u);if(!saved)continue;
       const st=saved.stats||{};let rep=0;
       for(const c in (saved.reputation||{}))rep+=(saved.reputation[c].level||0);
-      rows.push({user:u,nickname:saved.nickname||u,gold:saved.gold||0,distance:st.distance||0,tasks:st.tasks||0,rep:rep});
+      rows.push({user:u,nickname:saved.nickname||u,title:(saved.titles&&saved.titles.equipped)||null,gold:saved.gold||0,distance:st.distance||0,tasks:st.tasks||0,rep:rep});
     }
     rows.sort((a,b)=>b[rankType]-a[rankType]);
     draw(rows.slice(0,20));

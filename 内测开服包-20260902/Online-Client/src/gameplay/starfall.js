@@ -209,10 +209,17 @@
     return '<span class="sf-item-chip">' + it.icon + ' ' + it.name + (qty != null ? ' ×' + qty : '') + '</span>';
   }
 
-  /* 排行榜 HTML：rows=[{user,nickname?,score}]，myRank（0=未上榜），myScore */
+  /* 排行榜 HTML：rows=[{user,nickname?,title?,score}]，myRank（0=未上榜），myScore */
   function rankHtml(rows, myRank, myScore){
     var me = localStorage.getItem(AUTH_KEY) || '';
     var myNick = (window.GS && GS.nickname) || me;
+    var myBadge = '';
+    if(window.GS && GS.titles && GS.titles.equipped && window.Titles && Titles.TITLES[GS.titles.equipped]){
+      myBadge = Titles.badgeHTML(GS.titles.equipped) + ' ';
+    }
+    function rowBadge(id){
+      return (window.Titles && id && Titles.TITLES[id]) ? Titles.badgeHTML(id) + ' ' : '';
+    }
     var html = '<div class="sf-rank">';
     if(!rows.length){
       html += '<div class="sf-rank-empty">暂无贡献记录，第一位建设者虚位以待</div>';
@@ -220,17 +227,17 @@
       for(var i = 0; i < rows.length; i++){
         var cls = 'sf-rank-row' + (i < 3 ? ' top' + (i + 1) : '');
         html += '<div class="' + cls + '"><span class="sf-rank-no">' + (i + 1) + '</span>' +
-          '<span class="sf-rank-user">' + esc(rows[i].nickname || rows[i].user) + '</span>' +
+          '<span class="sf-rank-user">' + rowBadge(rows[i].title) + esc(rows[i].nickname || rows[i].user) + '</span>' +
           '<span class="sf-rank-score">' + fmt(rows[i].score) + '</span></div>';
       }
     }
     if(myRank > 0){
       html += '<div class="sf-rank-row sf-rank-me"><span class="sf-rank-no">' + myRank + '</span>' +
-        '<span class="sf-rank-user">' + esc(myNick) + '（我）</span>' +
+        '<span class="sf-rank-user">' + myBadge + esc(myNick) + '（我）</span>' +
         '<span class="sf-rank-score">' + fmt(myScore) + '</span></div>';
     }else if(myScore > 0){
       html += '<div class="sf-rank-row sf-rank-me"><span class="sf-rank-no">-</span>' +
-        '<span class="sf-rank-user">' + esc(myNick) + '（我）</span>' +
+        '<span class="sf-rank-user">' + myBadge + esc(myNick) + '（我）</span>' +
         '<span class="sf-rank-score">' + fmt(myScore) + '</span></div>';
     }
     html += '</div>';

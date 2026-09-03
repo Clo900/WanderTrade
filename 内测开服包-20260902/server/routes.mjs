@@ -106,14 +106,14 @@ export function createRoutes(ctx, services) {
       if (method === 'GET') {
         const w = world.get();
         if (!w) return sendJson(res, { ok: false, err: 'world not ready' });
-        return sendJson(res, { ok: true, world: w, serverNow: Date.now() });
+        return sendJson(res, { ok: true, world: world.public(), serverNow: Date.now() });
       }
       const b = await readBody(req);
       const w = world.get();
-      if (w) return sendJson(res, { ok: true, world: w, serverNow: Date.now() });
+      if (w) return sendJson(res, { ok: true, world: world.public(), serverNow: Date.now() });
       if (b && b.basePrices) {
         const created = await world.createFromPayload(b);
-        if (created) return sendJson(res, { ok: true, world: created, serverNow: Date.now() });
+        if (created) return sendJson(res, { ok: true, world: world.public(), serverNow: Date.now() });
       }
       return sendJson(res, { ok: false, err: 'bad world payload' });
     }

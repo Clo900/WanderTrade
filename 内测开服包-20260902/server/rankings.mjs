@@ -24,8 +24,9 @@ export function createRankings(ctx, players) {
           }
         }
         const nick = rec.nickname || rec.user;
+        const eqTitle = (rec.gs.titles && rec.gs.titles.equipped) || null;
         rows.push({
-          user: rec.user, nickname: nick,
+          user: rec.user, nickname: nick, title: eqTitle,
           gold: Math.floor(rec.gs.gold || 0),
           day: Math.floor(rec.gs.day || 0),
           distance, tasks, visits, rep

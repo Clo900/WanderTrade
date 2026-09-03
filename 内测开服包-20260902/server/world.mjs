@@ -208,8 +208,17 @@ export function createWorld(ctx) {
     return world;
   }
 
+  /** 公开世界快照：剔除 adminPass 等口令字段后再下发给客户端（v9.14.1 补强——/api/world 不再暴露管理口令） */
+  function publicWorld() {
+    if (!world) return null;
+    const out = { ...world };
+    delete out.adminPass;
+    return out;
+  }
+
   return {
     loadWorld, saveWorld, get: () => world, getWorldDay,
-    maybeRefill, refillAllPlayers, publishBroadcast, sfConfig, createFromPayload
+    maybeRefill, refillAllPlayers, publishBroadcast, sfConfig, createFromPayload,
+    public: publicWorld
   };
 }
