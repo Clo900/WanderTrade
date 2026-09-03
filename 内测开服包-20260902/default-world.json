@@ -1,0 +1,1336 @@
+﻿{
+ "__schema": 971,
+ "tradeRoads": [
+  [
+   "greentown",
+   "rivertown",
+   2
+  ],
+  [
+   "greentown",
+   "milltown",
+   2
+  ],
+  [
+   "rivertown",
+   "pasturetown",
+   2
+  ],
+  [
+   "milltown",
+   "pasturetown",
+   2
+  ],
+  [
+   "greentown",
+   "oaktown",
+   10
+  ],
+  [
+   "milltown",
+   "purplefield",
+   12
+  ],
+  [
+   "pasturetown",
+   "saltbay",
+   14
+  ],
+  [
+   "oaktown",
+   "ironfort",
+   15
+  ],
+  [
+   "oaktown",
+   "dawncapital",
+   20
+  ],
+  [
+   "purplefield",
+   "dawncapital",
+   16
+  ],
+  [
+   "purplefield",
+   "saltbay",
+   14
+  ],
+  [
+   "saltbay",
+   "dawncapital",
+   18
+  ],
+  [
+   "saltbay",
+   "windoasis",
+   22
+  ],
+  [
+   "dawncapital",
+   "moonvalley",
+   25
+  ],
+  [
+   "ironfort",
+   "moonvalley",
+   20
+  ],
+  [
+   "ironfort",
+   "frostfort",
+   40
+  ],
+  [
+   "moonvalley",
+   "frostfort",
+   35
+  ],
+  [
+   "dawncapital",
+   "frostfort",
+   60
+  ],
+  [
+   "windoasis",
+   "oaktown",
+   25
+  ],
+  [
+   "saltbay",
+   "starfall",
+   50
+  ],
+  [
+   "frostfort",
+   "starfall",
+   45
+  ]
+ ],
+ "sourceConfig": {
+  "oak": {
+   "sourceCities": [
+    "oaktown"
+   ],
+   "srcMult": 0.9
+  },
+  "mushroom": {
+   "sourceCities": [
+    "oaktown"
+   ],
+   "srcMult": 0.9
+  },
+  "honey": {
+   "sourceCities": [
+    "oaktown"
+   ],
+   "srcMult": 0.9
+  },
+  "iron_ingot": {
+   "sourceCities": [
+    "ironfort"
+   ],
+   "srcMult": 0.9
+  },
+  "steel_blade": {
+   "sourceCities": [
+    "ironfort"
+   ],
+   "srcMult": 0.9
+  },
+  "fish": {
+   "sourceCities": [
+    "saltbay"
+   ],
+   "srcMult": 0.9
+  },
+  "pearl": {
+   "sourceCities": [
+    "saltbay"
+   ],
+   "srcMult": 0.9
+  },
+  "sailcloth": {
+   "sourceCities": [
+    "saltbay"
+   ],
+   "srcMult": 0.9
+  },
+  "beer": {
+   "sourceCities": [
+    "purplefield"
+   ],
+   "srcMult": 0.85
+  },
+  "wool": {
+   "sourceCities": [
+    "purplefield"
+   ],
+   "srcMult": 0.9
+  },
+  "cheese": {
+   "sourceCities": [
+    "purplefield"
+   ],
+   "srcMult": 0.9
+  },
+  "spice": {
+   "sourceCities": [
+    "windoasis"
+   ],
+   "srcMult": 0.88
+  },
+  "leather": {
+   "sourceCities": [
+    "windoasis"
+   ],
+   "srcMult": 0.9
+  },
+  "carpet": {
+   "sourceCities": [
+    "windoasis"
+   ],
+   "srcMult": 0.9
+  },
+  "herb": {
+   "sourceCities": [
+    "moonvalley"
+   ],
+   "srcMult": 0.9
+  },
+  "moon_crystal": {
+   "sourceCities": [
+    "moonvalley"
+   ],
+   "srcMult": 0.9
+  },
+  "oil": {
+   "sourceCities": [
+    "moonvalley"
+   ],
+   "srcMult": 0.9
+  },
+  "fur": {
+   "sourceCities": [
+    "frostfort"
+   ],
+   "srcMult": 0.86
+  },
+  "ginseng": {
+   "sourceCities": [
+    "frostfort"
+   ],
+   "srcMult": 0.9
+  },
+  "ivory": {
+   "sourceCities": [
+    "frostfort"
+   ],
+   "srcMult": 0.9
+  },
+  "tea": {
+   "sourceCities": [
+    "moonvalley"
+   ],
+   "srcMult": 0.9
+  },
+  "silk": {
+   "sourceCities": [
+    "windoasis"
+   ],
+   "srcMult": 0.88
+  },
+  "amber": {
+   "sourceCities": [
+    "frostfort"
+   ],
+   "srcMult": 0.9
+  },
+  "coral": {
+   "sourceCities": [
+    "saltbay"
+   ],
+   "srcMult": 0.9
+  },
+  "dye": {
+   "sourceCities": [
+    "purplefield"
+   ],
+   "srcMult": 0.88
+  },
+  "wine": {
+   "sourceCities": [
+    "purplefield"
+   ],
+   "srcMult": 0.85
+  },
+  "jade": {
+   "sourceCities": [
+    "moonvalley"
+   ],
+   "srcMult": 0.9
+  },
+  "stariron": {
+   "sourceCities": [
+    "starfall"
+   ],
+   "srcMult": 0.9
+  },
+  "celadon": {
+   "sourceCities": [
+    "dawncapital"
+   ],
+   "srcMult": 0.9
+  },
+  "tapestry": {
+   "sourceCities": [
+    "dawncapital"
+   ],
+   "srcMult": 0.9
+  }
+ },
+ "sellExceptions": {
+  "moonvalley": {
+   "herb": {
+    "sellFloor": 2200
+   }
+  },
+  "frostfort": {
+   "beer": {
+    "sellCap": 1500
+   }
+  },
+  "dawncapital": {
+   "spice": {
+    "sellFloor": 3500
+   }
+  }
+ },
+ "demandProfile": {
+  "HOT_BONUS": 0.15,
+  "COOL_MULT": 0.6,
+  "PERIOD_HUBS": 8,
+  "rejects": {
+   "frostfort": {
+    "fish": {
+     "reason": "极寒内陆，无人问津海产"
+    },
+    "pearl": {
+     "reason": "极寒内陆，无人问津海产"
+    },
+    "sailcloth": {
+     "reason": "极寒内陆，无人需要帆具"
+    },
+    "wine": {
+     "reason": "极寒要塞，酒饮滞销"
+    }
+   },
+   "moonvalley": {
+    "beer": {
+     "reason": "秘谷清修之地，禁绝酒饮"
+    },
+    "wine": {
+     "reason": "秘谷清修之地，禁绝酒饮"
+    }
+   },
+   "greentown": {
+    "pearl": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "ivory": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "ginseng": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "moon_crystal": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "jade": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "amber": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "silk": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "coral": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    }
+   },
+   "rivertown": {
+    "pearl": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "ivory": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "ginseng": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "moon_crystal": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "jade": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "amber": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "silk": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "coral": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    }
+   },
+   "milltown": {
+    "pearl": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "ivory": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "ginseng": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "moon_crystal": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "jade": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "amber": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "silk": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "coral": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    }
+   },
+   "pasturetown": {
+    "pearl": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "ivory": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "ginseng": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "moon_crystal": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "jade": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "amber": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "silk": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    },
+    "coral": {
+     "reason": "农耕聚落，无人消受这等奢侈品"
+    }
+   }
+  },
+  "TIER_WEIGHTS": {
+   "demand": [
+    0.15,
+    0.7,
+    0.15
+   ],
+   "other": [
+    0.1,
+    0.75,
+    0.15
+   ]
+  },
+  "TREND_ADJUST": {
+   "up": {
+    "demand": [
+     0.25,
+     0.75,
+     0
+    ],
+    "other": [
+     0.2,
+     0.8,
+     0
+    ]
+   },
+   "down": {
+    "demand": [
+     0.05,
+     0.5,
+     0.45
+    ],
+    "other": [
+     0.03,
+     0.35,
+     0.62
+    ]
+   }
+  },
+  "HOT_BONUS_OTHER": 0.1
+ },
+ "basePrices": {
+  "greentown": {
+   "grain": 134,
+   "flour": 156,
+   "cloth": 135,
+   "ironware": 194,
+   "pottery": 125,
+   "cup": 76,
+   "tissue": 68,
+   "soap": 84,
+   "candle": 87,
+   "salt": 112,
+   "hemp": 74,
+   "millet": 120,
+   "roots": 89,
+   "lumber": 99,
+   "clay": 67,
+   "glass": 167,
+   "ink": 148,
+   "fishnet": 128,
+   "stone": 116,
+   "tar": 98,
+   "linen": 132,
+   "oak": 3400,
+   "mushroom": 1900,
+   "honey": 1700,
+   "iron_ingot": 3800,
+   "steel_blade": 8500,
+   "fish": 2100,
+   "pearl": 12700,
+   "sailcloth": 3000,
+   "beer": 1600,
+   "wool": 1800,
+   "cheese": 1500,
+   "spice": 3400,
+   "leather": 2800,
+   "carpet": 6400,
+   "herb": 2100,
+   "moon_crystal": 19000,
+   "oil": 9500,
+   "fur": 3800,
+   "ginseng": 21200,
+   "ivory": 27500,
+   "tea": 2350,
+   "silk": 9600,
+   "amber": 6400,
+   "coral": 8500,
+   "dye": 1600,
+   "wine": 3000,
+   "jade": 15900,
+   "stariron": 31800,
+   "celadon": 4300,
+   "tapestry": 9600
+  },
+  "rivertown": {
+   "grain": 139,
+   "flour": 156,
+   "cloth": 153,
+   "ironware": 187,
+   "pottery": 128,
+   "cup": 79,
+   "tissue": 83,
+   "soap": 95,
+   "candle": 82,
+   "salt": 117,
+   "hemp": 73,
+   "millet": 110,
+   "roots": 87,
+   "lumber": 97,
+   "clay": 56,
+   "glass": 148,
+   "ink": 124,
+   "fishnet": 121,
+   "stone": 131,
+   "tar": 121,
+   "linen": 125,
+   "oak": 3400,
+   "mushroom": 1900,
+   "honey": 1700,
+   "iron_ingot": 3800,
+   "steel_blade": 8500,
+   "fish": 2100,
+   "pearl": 12700,
+   "sailcloth": 3000,
+   "beer": 1600,
+   "wool": 1800,
+   "cheese": 1500,
+   "spice": 3400,
+   "leather": 2800,
+   "carpet": 6400,
+   "herb": 2100,
+   "moon_crystal": 19000,
+   "oil": 9500,
+   "fur": 3800,
+   "ginseng": 21200,
+   "ivory": 27500,
+   "tea": 2350,
+   "silk": 9600,
+   "amber": 6400,
+   "coral": 8500,
+   "dye": 1600,
+   "wine": 3000,
+   "jade": 15900,
+   "stariron": 31800,
+   "celadon": 4300,
+   "tapestry": 9600
+  },
+  "milltown": {
+   "grain": 131,
+   "flour": 140,
+   "cloth": 144,
+   "ironware": 195,
+   "pottery": 114,
+   "cup": 72,
+   "tissue": 76,
+   "soap": 76,
+   "candle": 100,
+   "salt": 127,
+   "hemp": 68,
+   "millet": 100,
+   "roots": 84,
+   "lumber": 110,
+   "clay": 62,
+   "glass": 151,
+   "ink": 142,
+   "fishnet": 110,
+   "stone": 122,
+   "tar": 117,
+   "linen": 120,
+   "oak": 3400,
+   "mushroom": 1900,
+   "honey": 1700,
+   "iron_ingot": 3800,
+   "steel_blade": 8500,
+   "fish": 2100,
+   "pearl": 12700,
+   "sailcloth": 3000,
+   "beer": 1800,
+   "wool": 1900,
+   "cheese": 1500,
+   "spice": 3400,
+   "leather": 2800,
+   "carpet": 6400,
+   "herb": 2100,
+   "moon_crystal": 19000,
+   "oil": 9500,
+   "fur": 3800,
+   "ginseng": 21200,
+   "ivory": 27500,
+   "tea": 2350,
+   "silk": 9600,
+   "amber": 6400,
+   "coral": 8500,
+   "dye": 1600,
+   "wine": 3000,
+   "jade": 15900,
+   "stariron": 31800,
+   "celadon": 4300,
+   "tapestry": 9600
+  },
+  "pasturetown": {
+   "grain": 142,
+   "flour": 166,
+   "cloth": 131,
+   "ironware": 199,
+   "pottery": 114,
+   "cup": 89,
+   "tissue": 73,
+   "soap": 89,
+   "candle": 96,
+   "salt": 108,
+   "hemp": 71,
+   "millet": 103,
+   "roots": 92,
+   "lumber": 88,
+   "clay": 65,
+   "glass": 171,
+   "ink": 148,
+   "fishnet": 124,
+   "stone": 112,
+   "tar": 103,
+   "linen": 135,
+   "oak": 3400,
+   "mushroom": 1900,
+   "honey": 1700,
+   "iron_ingot": 3800,
+   "steel_blade": 8500,
+   "fish": 2350,
+   "pearl": 12700,
+   "sailcloth": 3000,
+   "beer": 1600,
+   "wool": 1800,
+   "cheese": 1500,
+   "spice": 3400,
+   "leather": 2800,
+   "carpet": 6400,
+   "herb": 2100,
+   "moon_crystal": 19000,
+   "oil": 9500,
+   "fur": 3800,
+   "ginseng": 21200,
+   "ivory": 27500,
+   "tea": 2350,
+   "silk": 9600,
+   "amber": 6400,
+   "coral": 8500,
+   "dye": 1600,
+   "wine": 3000,
+   "jade": 15900,
+   "stariron": 31800,
+   "celadon": 4300,
+   "tapestry": 9600
+  },
+  "oaktown": {
+   "grain": 135,
+   "flour": 147,
+   "cloth": 169,
+   "ironware": 201,
+   "pottery": 156,
+   "cup": 98,
+   "tissue": 92,
+   "soap": 106,
+   "candle": 97,
+   "salt": 139,
+   "hemp": 80,
+   "millet": 129,
+   "roots": 97,
+   "lumber": 113,
+   "clay": 62,
+   "glass": 197,
+   "ink": 144,
+   "fishnet": 142,
+   "stone": 139,
+   "tar": 115,
+   "linen": 138,
+   "oak": 3200,
+   "mushroom": 1800,
+   "honey": 1600,
+   "iron_ingot": 4100,
+   "steel_blade": 9000,
+   "fish": 2100,
+   "pearl": 12700,
+   "sailcloth": 3000,
+   "beer": 1600,
+   "wool": 1800,
+   "cheese": 1500,
+   "spice": 4200,
+   "leather": 3400,
+   "carpet": 6400,
+   "herb": 2100,
+   "moon_crystal": 19000,
+   "oil": 9500,
+   "fur": 3800,
+   "ginseng": 21200,
+   "ivory": 27500,
+   "tea": 2350,
+   "silk": 11500,
+   "amber": 6400,
+   "coral": 8500,
+   "dye": 1950,
+   "wine": 3000,
+   "jade": 15900,
+   "stariron": 31800,
+   "celadon": 5000,
+   "tapestry": 11500
+  },
+  "ironfort": {
+   "grain": 134,
+   "flour": 156,
+   "cloth": 160,
+   "ironware": 198,
+   "pottery": 155,
+   "cup": 99,
+   "tissue": 80,
+   "soap": 94,
+   "candle": 94,
+   "salt": 116,
+   "hemp": 86,
+   "millet": 125,
+   "roots": 105,
+   "lumber": 117,
+   "clay": 78,
+   "glass": 179,
+   "ink": 143,
+   "fishnet": 123,
+   "stone": 139,
+   "tar": 106,
+   "linen": 137,
+   "oak": 3700,
+   "mushroom": 2100,
+   "honey": 1850,
+   "iron_ingot": 3600,
+   "steel_blade": 8000,
+   "fish": 2100,
+   "pearl": 12700,
+   "sailcloth": 3000,
+   "beer": 1600,
+   "wool": 1800,
+   "cheese": 1500,
+   "spice": 3400,
+   "leather": 2800,
+   "carpet": 6400,
+   "herb": 2400,
+   "moon_crystal": 22000,
+   "oil": 10500,
+   "fur": 5200,
+   "ginseng": 21200,
+   "ivory": 27500,
+   "tea": 2350,
+   "silk": 9600,
+   "amber": 6400,
+   "coral": 8500,
+   "dye": 1600,
+   "wine": 3000,
+   "jade": 19000,
+   "stariron": 31800,
+   "celadon": 4300,
+   "tapestry": 9600
+  },
+  "saltbay": {
+   "grain": 139,
+   "flour": 178,
+   "cloth": 141,
+   "ironware": 180,
+   "pottery": 140,
+   "cup": 81,
+   "tissue": 78,
+   "soap": 96,
+   "candle": 108,
+   "salt": 143,
+   "hemp": 88,
+   "millet": 130,
+   "roots": 104,
+   "lumber": 122,
+   "clay": 72,
+   "glass": 198,
+   "ink": 161,
+   "fishnet": 130,
+   "stone": 143,
+   "tar": 128,
+   "linen": 147,
+   "oak": 3400,
+   "mushroom": 1900,
+   "honey": 1700,
+   "iron_ingot": 3800,
+   "steel_blade": 8500,
+   "fish": 2000,
+   "pearl": 12000,
+   "sailcloth": 2800,
+   "beer": 1900,
+   "wool": 2100,
+   "cheese": 1650,
+   "spice": 3900,
+   "leather": 3200,
+   "carpet": 7400,
+   "herb": 2100,
+   "moon_crystal": 19000,
+   "oil": 9500,
+   "fur": 3800,
+   "ginseng": 21200,
+   "ivory": 27500,
+   "tea": 3100,
+   "silk": 9600,
+   "amber": 6400,
+   "coral": 8000,
+   "dye": 1900,
+   "wine": 3600,
+   "jade": 15900,
+   "stariron": 31800,
+   "celadon": 5300,
+   "tapestry": 11000
+  },
+  "purplefield": {
+   "grain": 150,
+   "flour": 154,
+   "cloth": 161,
+   "ironware": 221,
+   "pottery": 129,
+   "cup": 99,
+   "tissue": 78,
+   "soap": 93,
+   "candle": 91,
+   "salt": 145,
+   "hemp": 74,
+   "millet": 133,
+   "roots": 92,
+   "lumber": 107,
+   "clay": 78,
+   "glass": 195,
+   "ink": 161,
+   "fishnet": 119,
+   "stone": 138,
+   "tar": 130,
+   "linen": 129,
+   "oak": 3400,
+   "mushroom": 1900,
+   "honey": 1700,
+   "iron_ingot": 3800,
+   "steel_blade": 8500,
+   "fish": 2300,
+   "pearl": 12700,
+   "sailcloth": 3300,
+   "beer": 1500,
+   "wool": 1700,
+   "cheese": 1400,
+   "spice": 3400,
+   "leather": 2800,
+   "carpet": 6400,
+   "herb": 2100,
+   "moon_crystal": 19000,
+   "oil": 9500,
+   "fur": 3800,
+   "ginseng": 21200,
+   "ivory": 27500,
+   "tea": 2900,
+   "silk": 9600,
+   "amber": 6400,
+   "coral": 8500,
+   "dye": 1500,
+   "wine": 2800,
+   "jade": 15900,
+   "stariron": 31800,
+   "celadon": 4300,
+   "tapestry": 9600
+  },
+  "windoasis": {
+   "grain": 166,
+   "flour": 153,
+   "cloth": 144,
+   "ironware": 213,
+   "pottery": 137,
+   "cup": 91,
+   "tissue": 83,
+   "soap": 89,
+   "candle": 100,
+   "salt": 121,
+   "hemp": 85,
+   "millet": 124,
+   "roots": 99,
+   "lumber": 121,
+   "clay": 69,
+   "glass": 177,
+   "ink": 146,
+   "fishnet": 140,
+   "stone": 141,
+   "tar": 107,
+   "linen": 156,
+   "oak": 3400,
+   "mushroom": 1900,
+   "honey": 1700,
+   "iron_ingot": 3800,
+   "steel_blade": 8500,
+   "fish": 2800,
+   "pearl": 15500,
+   "sailcloth": 3000,
+   "beer": 1600,
+   "wool": 1800,
+   "cheese": 1500,
+   "spice": 3200,
+   "leather": 2600,
+   "carpet": 6000,
+   "herb": 2100,
+   "moon_crystal": 19000,
+   "oil": 9500,
+   "fur": 3800,
+   "ginseng": 21200,
+   "ivory": 27500,
+   "tea": 2350,
+   "silk": 9000,
+   "amber": 6400,
+   "coral": 10800,
+   "dye": 2100,
+   "wine": 3000,
+   "jade": 15900,
+   "stariron": 31800,
+   "celadon": 4300,
+   "tapestry": 9600
+  },
+  "moonvalley": {
+   "grain": 148,
+   "flour": 161,
+   "cloth": 179,
+   "ironware": 217,
+   "pottery": 143,
+   "cup": 83,
+   "tissue": 87,
+   "soap": 88,
+   "candle": 88,
+   "salt": 137,
+   "hemp": 89,
+   "millet": 116,
+   "roots": 91,
+   "lumber": 118,
+   "clay": 73,
+   "glass": 184,
+   "ink": 135,
+   "fishnet": 138,
+   "stone": 152,
+   "tar": 123,
+   "linen": 130,
+   "oak": 4400,
+   "mushroom": 1900,
+   "honey": 1700,
+   "iron_ingot": 4700,
+   "steel_blade": 10000,
+   "fish": 2100,
+   "pearl": 12700,
+   "sailcloth": 3000,
+   "beer": 1600,
+   "wool": 1800,
+   "cheese": 1500,
+   "spice": 3400,
+   "leather": 2800,
+   "carpet": 6400,
+   "herb": 2000,
+   "moon_crystal": 18000,
+   "oil": 9000,
+   "fur": 5000,
+   "ginseng": 28000,
+   "ivory": 34000,
+   "tea": 2200,
+   "silk": 12500,
+   "amber": 8200,
+   "coral": 8500,
+   "dye": 1600,
+   "wine": 3000,
+   "jade": 15000,
+   "stariron": 31800,
+   "celadon": 5800,
+   "tapestry": 13000
+  },
+  "dawncapital": {
+   "grain": 176,
+   "flour": 182,
+   "cloth": 173,
+   "ironware": 221,
+   "pottery": 142,
+   "cup": 99,
+   "tissue": 83,
+   "soap": 96,
+   "candle": 104,
+   "salt": 130,
+   "hemp": 78,
+   "millet": 129,
+   "roots": 95,
+   "lumber": 109,
+   "clay": 78,
+   "glass": 205,
+   "ink": 175,
+   "fishnet": 139,
+   "stone": 138,
+   "tar": 117,
+   "linen": 131,
+   "oak": 4600,
+   "mushroom": 2500,
+   "honey": 2250,
+   "iron_ingot": 5200,
+   "steel_blade": 11500,
+   "fish": 2700,
+   "pearl": 18000,
+   "sailcloth": 3800,
+   "beer": 2100,
+   "wool": 2300,
+   "cheese": 1900,
+   "spice": 4600,
+   "leather": 3700,
+   "carpet": 8800,
+   "herb": 2900,
+   "moon_crystal": 27000,
+   "oil": 13000,
+   "fur": 5400,
+   "ginseng": 30000,
+   "ivory": 39000,
+   "tea": 3300,
+   "silk": 13500,
+   "amber": 9000,
+   "coral": 12000,
+   "dye": 2200,
+   "wine": 4200,
+   "jade": 22500,
+   "stariron": 45000,
+   "celadon": 4000,
+   "tapestry": 9000
+  },
+  "frostfort": {
+   "grain": 149,
+   "flour": 163,
+   "cloth": 194,
+   "ironware": 201,
+   "pottery": 159,
+   "cup": 92,
+   "tissue": 87,
+   "soap": 100,
+   "candle": 99,
+   "salt": 135,
+   "hemp": 98,
+   "millet": 134,
+   "roots": 95,
+   "lumber": 109,
+   "clay": 82,
+   "glass": 178,
+   "ink": 183,
+   "fishnet": 156,
+   "stone": 153,
+   "tar": 127,
+   "linen": 153,
+   "oak": 3400,
+   "mushroom": 1900,
+   "honey": 1700,
+   "iron_ingot": 5000,
+   "steel_blade": 11000,
+   "fish": 2100,
+   "pearl": 18500,
+   "sailcloth": 3000,
+   "beer": 1600,
+   "wool": 1800,
+   "cheese": 1500,
+   "spice": 3400,
+   "leather": 2800,
+   "carpet": 6400,
+   "herb": 3000,
+   "moon_crystal": 27000,
+   "oil": 9500,
+   "fur": 3600,
+   "ginseng": 20000,
+   "ivory": 26000,
+   "tea": 2350,
+   "silk": 14000,
+   "amber": 6000,
+   "coral": 8500,
+   "dye": 1600,
+   "wine": 3000,
+   "jade": 22000,
+   "stariron": 31800,
+   "celadon": 6000,
+   "tapestry": 13500
+  },
+  "starfall": {
+   "grain": 156,
+   "flour": 175,
+   "cloth": 159,
+   "ironware": 185,
+   "pottery": 141,
+   "cup": 100,
+   "tissue": 92,
+   "soap": 99,
+   "candle": 89,
+   "salt": 131,
+   "hemp": 75,
+   "millet": 108,
+   "roots": 92,
+   "lumber": 102,
+   "clay": 67,
+   "glass": 191,
+   "ink": 139,
+   "fishnet": 142,
+   "stone": 138,
+   "tar": 115,
+   "linen": 139,
+   "oak": 3400,
+   "mushroom": 1900,
+   "honey": 1700,
+   "iron_ingot": 3800,
+   "steel_blade": 8500,
+   "fish": 2100,
+   "pearl": 12700,
+   "sailcloth": 3000,
+   "beer": 1600,
+   "wool": 1800,
+   "cheese": 1500,
+   "spice": 3400,
+   "leather": 2800,
+   "carpet": 6400,
+   "herb": 2100,
+   "moon_crystal": 19000,
+   "oil": 9500,
+   "fur": 3800,
+   "ginseng": 21200,
+   "ivory": 27500,
+   "tea": 2350,
+   "silk": 9600,
+   "amber": 6400,
+   "coral": 8500,
+   "dye": 1600,
+   "wine": 3000,
+   "jade": 15900,
+   "stariron": 30000,
+   "celadon": 4300,
+   "tapestry": 9600
+  }
+ },
+ "purchaseLimits": {
+  "greentown": {
+   "grain": 70,
+   "roots": 80,
+   "cup": 80,
+   "linen": 60
+  },
+  "rivertown": {
+   "roots": 60,
+   "lumber": 80,
+   "fishnet": 50,
+   "tissue": 50
+  },
+  "milltown": {
+   "millet": 60,
+   "clay": 60,
+   "flour": 80,
+   "pottery": 70
+  },
+  "pasturetown": {
+   "millet": 50,
+   "cloth": 70,
+   "linen": 80,
+   "candle": 50
+  },
+  "oaktown": {
+   "lumber": 160,
+   "tar": 200,
+   "cup": 150,
+   "tissue": 130,
+   "oak": 70,
+   "mushroom": 60,
+   "honey": 70
+  },
+  "ironfort": {
+   "ironware": 180,
+   "stone": 130,
+   "candle": 180,
+   "iron_ingot": 90,
+   "steel_blade": 80
+  },
+  "saltbay": {
+   "salt": 130,
+   "fishnet": 170,
+   "cloth": 150,
+   "fish": 70,
+   "pearl": 40,
+   "sailcloth": 80
+  },
+  "purplefield": {
+   "millet": 140,
+   "linen": 140,
+   "soap": 160,
+   "flour": 150,
+   "beer": 90,
+   "wool": 100,
+   "cheese": 120,
+   "dye": 100,
+   "wine": 120
+  },
+  "windoasis": {
+   "glass": 160,
+   "salt": 120,
+   "pottery": 140,
+   "tissue": 120,
+   "hemp": 160,
+   "spice": 120,
+   "leather": 70,
+   "carpet": 100,
+   "silk": 80
+  },
+  "moonvalley": {
+   "ink": 170,
+   "tissue": 160,
+   "pottery": 120,
+   "soap": 190,
+   "herb": 70,
+   "moon_crystal": 50,
+   "oil": 100,
+   "tea": 100,
+   "jade": 90
+  },
+  "dawncapital": {
+   "glass": 140,
+   "ink": 170,
+   "ironware": 140,
+   "grain": 180,
+   "cloth": 170,
+   "celadon": 200,
+   "tapestry": 130
+  },
+  "frostfort": {
+   "stone": 200,
+   "ironware": 140,
+   "candle": 120,
+   "tar": 180,
+   "fur": 70,
+   "ginseng": 40,
+   "ivory": 50,
+   "amber": 120
+  },
+  "starfall": {}
+ },
+ "itemCategories": {
+  "special": [
+   "amber",
+   "beer",
+   "carpet",
+   "celadon",
+   "cheese",
+   "coral",
+   "dye",
+   "fish",
+   "fur",
+   "ginseng",
+   "herb",
+   "honey",
+   "iron_ingot",
+   "ivory",
+   "jade",
+   "leather",
+   "moon_crystal",
+   "mushroom",
+   "oak",
+   "oil",
+   "pearl",
+   "sailcloth",
+   "silk",
+   "spice",
+   "stariron",
+   "steel_blade",
+   "tapestry",
+   "tea",
+   "wine",
+   "wool"
+  ],
+  "basic": [
+   "candle",
+   "clay",
+   "cloth",
+   "cup",
+   "fishnet",
+   "flour",
+   "glass",
+   "grain",
+   "hemp",
+   "ink",
+   "ironware",
+   "linen",
+   "lumber",
+   "millet",
+   "pottery",
+   "roots",
+   "salt",
+   "soap",
+   "stone",
+   "tar",
+   "tissue"
+  ]
+ },
+ "starfallConfig": {
+  "runHours": 24,
+  "interHours": 48
+ }
+}

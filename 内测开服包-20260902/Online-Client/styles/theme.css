@@ -1,0 +1,44 @@
+/* ================================================
+ * 主题颜色与视觉变量
+ * ================================================ */
+:root,
+[data-theme="light"]{
+  --bg:#EEECEA; --panel:#E4DFDA; --card:#F7F5F2; --cardHover:#EAE4DD;
+  --accent:#ff6b6b; --gold:#c8862c; --green:#2f9e6b; --red:#d9534f;
+  --text:#1A1A1A; --text2:#6B6058; --text3:#A59B94;
+  --buy:#2f9e6b; --sell:#c9772f; --travel:#4d7fa3;
+  --village:#5a8a5a; --town:#4a7a9a; --capital:#c09840; --frontier:#6a5070; --special:#8a5a8a;
+  --map-bg-radial-center:rgba(83,132,146,0.18); --map-bg-radial-mid:rgba(118,153,167,0.12); --map-bg-radial-edge:rgba(231,237,238,0);
+  --map-bg-start:#dbe8e8; --map-bg-mid:#c5dce0; --map-bg-end:#d8e5e5; --map-border:rgba(71,120,140,0.28);
+  --map-contour:rgba(61,125,100,0.35); --map-contour-texture:rgba(78,137,111,0.24);
+  --map-terrain:rgba(72,143,108,0.08); --map-terrain-1:rgba(72,143,108,0.05); --map-terrain-2:rgba(72,143,108,0.08); --map-terrain-3:rgba(72,143,108,0.12); --map-terrain-4:rgba(72,143,108,0.16);
+  --map-contour-rest:rgba(61,125,100,0.28); --map-contour-active:rgba(44,145,104,0.60); --map-contour-glow:rgba(44,145,104,0.24);
+  --map-node-border:rgba(255,255,255,0.85); --map-road: #537b9a; --map-road-flow:#2f6e9b;
+  --map-road-label:rgba(36,70,89,0.72); --map-road-label-shadow:rgba(255,255,255,0.75);
+  --map-city-label:#24485c; --map-city-label-shadow:rgba(255,255,255,0.88);
+  --map-control-border:rgba(71,120,140,0.42); --map-control-bg:rgba(247,245,242,0.86); --map-control-hover:rgba(71,120,140,0.18); --map-control-hover-text:#173342;
+  --map-info-bg:rgba(255,255,255,0.78); --map-core-light:#5d919d; --map-shield-light:#ffffff; --map-mist-center:#ffffff; --map-mist-edge:#b9d4d8; --map-cloud:#ffffff; --map-travel-dot:var(--travel); --map-travel-dot-border:#ffffff;
+  --line:#333;
+  --radius:10px; --radius-sm:6px; --shadow:0 2px 12px rgba(26,26,26,0.10);
+  color-scheme: light;
+}
+[data-theme="dark"]{
+  --bg:#0f1724; --panel:#192437; --card:#1e3048; --cardHover:#25405e;
+  --accent:#ff6b6b; --gold:#f0c040; --green:#26d98b; --red:#ff5e5e;
+  --text:#e2e6ed; --text2:#8b95a5; --text3:#566270;
+  --buy:#26d98b; --sell:#ff9f43; --travel:#5b9bd5;
+  --village:#5a8a5a; --town:#4a7a9a; --capital:#c09840; --frontier:#6a5070; --special:#8a5a8a;
+  --map-bg-radial-center:rgba(59,106,124,0.20); --map-bg-radial-mid:rgba(36,73,94,0.10); --map-bg-radial-edge:rgba(13,31,47,0);
+  --map-bg-start:#0d1f2f; --map-bg-mid:#143246; --map-bg-end:#0c1c2a; --map-border:rgba(90,169,240,0.10);
+  --map-contour:rgba(110,188,154,0.22); --map-contour-texture:rgba(144,205,178,0.10);
+  --map-terrain:rgba(86,165,128,0.05); --map-terrain-1:rgba(86,165,128,0.04); --map-terrain-2:rgba(86,165,128,0.07); --map-terrain-3:rgba(86,165,128,0.10); --map-terrain-4:rgba(86,165,128,0.13);
+  --map-contour-rest:rgba(110,188,154,0.18); --map-contour-active:rgba(158,236,201,0.45); --map-contour-glow:rgba(120,220,180,0.28);
+  --map-node-border:rgba(7,16,24,0.72); --map-road:#5f83ab; --map-road-flow:#b8ddff;
+  --map-road-label:rgba(215,232,246,0.55); --map-road-label-shadow:rgba(0,0,0,0.70);
+  --map-city-label:#eef7ff; --map-city-label-shadow:rgba(0,0,0,0.95);
+  --map-control-border:rgba(90,169,240,0.35); --map-control-bg:rgba(10,20,32,0.75); --map-control-hover:rgba(90,169,240,0.25); --map-control-hover-text:#ffffff;
+  --map-info-bg:rgba(0,0,0,0.45); --map-core-light:#3b6a7c; --map-shield-light:#dceeff; --map-mist-center:#d9ecf7; --map-mist-edge:#9fc3d8; --map-cloud:#eef8ff; --map-travel-dot:var(--travel); --map-travel-dot-border:#ffffff;
+  --line:#333;
+  --radius:10px; --radius-sm:6px; --shadow:0 2px 12px rgba(0,0,0,0.3);
+  color-scheme: dark;
+}

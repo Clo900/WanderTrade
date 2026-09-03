@@ -25,6 +25,13 @@ const CLEANUP = arg('--cleanup', '1') !== '0';
 const j = async (u, o) => { const r = await fetch(BASE + u, o); return r.json(); };
 const post = (u, b) => j(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
 
+// v9.14：压测脚本适配会话凭证——先注册，已存在则登录，返回 token（null 表示失败）
+async function auth(user) {
+  let r = await post('/api/register', { user, nickname: '压测' + user, pass: 'load1234' });
+  if (!r || !r.ok) r = await post('/api/login', { user, pass: 'load1234' });
+  return r && r.ok && r.token ? r.token : null;
+}
+
 const byType = {};   // type -> latencies[]
 let errors = 0;
 const startMs = performance.now();
@@ -44,32 +51,58 @@ function pct(arr, p) {
 
 async function player(user, idx) {
   let since = 0;
-  // 每个玩家初始落档一次（带城市库存，模拟真实存档）
-  try {
-    await post('/api/save', {
-      user, gs: { gold: 10000, cargo: {}, cityStocks: { greentown: { grain: 50 } }, day: 1, location: 'greentown', __savedAt: Date.now() },
-      lastServerAt: 0, clientSaveTime: Date.now()
-    });
-  } catch (e) { errors++; }
+  const token = await auth(user);
+  if (!token) { errors++; return; }
+  const withToken = (u, b) => post(u, Object.assign({ token }, b || {})); // v9.14：携带会话凭证
+
+  // v9.14：本地镜像权威账本（gold/cargo/stocks），保存/交易后与服务器保持一致
+  const gs = { gold: 10000, location: 'greentown', cargo: {}, cityStocks: { greentown: { grain: 50 } } };
+  let sv = 0;
+
+  // 首次落档（若残留旧账号导致 sv 已前进 → 拉取服务器权威档对齐）
+  let r0 = await withToken('/api/save', { user, gs: JSON.parse(JSON.stringify(gs)), baseSv: sv });
+  if (r0 && r0.ok && typeof r0.sv === 'number') { sv = r0.sv; }
+  else if (r0 && r0.conflict) {
+    const pl = await j('/api/player/' + encodeURIComponent(user), { headers: { 'Authorization': 'Bearer ' + token } });
+    if (pl && pl.ok) {
+      sv = typeof pl.sv === 'number' ? pl.sv : 0;
+      if (pl.gs) {
+        gs.gold = Math.floor(pl.gs.gold || 0);
+        gs.cargo = (pl.gs.cargo && typeof pl.gs.cargo === 'object') ? pl.gs.cargo : {};
+        gs.cityStocks = (pl.gs.cityStocks && typeof pl.gs.cityStocks === 'object') ? pl.gs.cityStocks : {};
+      }
+    } else { errors++; return; }
+  } else { errors++; return; }
+
   await new Promise(r => setTimeout(r, Math.random() * 1500)); // 错峰启动
 
   while (performance.now() - startMs < DUR * 1000) {
-    const r = Math.random();
-    if (r < 0.34) {
+    const rr = Math.random();
+    if (rr < 0.34) {
       await timed('chat', () => j('/api/chat?since=' + since));
-    } else if (r < 0.48) {
+    } else if (rr < 0.48) {
       await timed('world', () => j('/api/world'));
-    } else if (r < 0.60) {
+    } else if (rr < 0.60) {
       await timed('starfall', () => j('/api/starfall/activity?user=' + user));
-    } else if (r < 0.82) {
-      await timed('save', () => post('/api/save', {
-        user, gs: { gold: 10000, cargo: {}, cityStocks: { greentown: { grain: 50 } }, day: 1, location: 'greentown', __savedAt: Date.now() },
-        lastServerAt: 0, clientSaveTime: Date.now()
-      }));
+    } else if (rr < 0.82) {
+      await timed('save', async () => {
+        const r = await withToken('/api/save', { user, gs: JSON.parse(JSON.stringify(gs)), baseSv: sv });
+        if (r && r.ok && typeof r.sv === 'number') sv = r.sv;
+        else if (r && r.conflict) throw new Error('save conflict sv=' + (r && r.sv));
+        else if (!r || !r.ok) throw new Error((r && r.err) || 'save failed');
+      });
     } else {
-      await timed('tradeBatch', () => post('/api/tradeBatch', {
-        user, city: 'greentown', dir: 'buy', items: [{ item: 'grain', qty: 1 }], total: 140, net: 0
-      }));
+      await timed('tradeBatch', async () => {
+        if (gs.gold <= 300) return; // 资金不足跳过，避免污染错误统计
+        const r = await withToken('/api/tradeBatch', {
+          user, city: 'greentown', dir: 'buy', items: [{ item: 'grain', qty: 1 }], total: 140, net: 0
+        });
+        if (!r || !r.ok) throw new Error((r && r.err) || 'trade failed');
+        gs.gold = Math.floor(gs.gold - 140);
+        gs.cargo.grain = (gs.cargo.grain || 0) + 1;
+        gs.cityStocks.greentown.grain = Math.floor((gs.cityStocks.greentown.grain || 0) - 1);
+        if (typeof r.sv === 'number') sv = r.sv;
+      });
     }
     await new Promise(r2 => setTimeout(r2, 700 + Math.random() * 1300)); // 平均 ~1.65s/请求/人
   }

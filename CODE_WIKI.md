@@ -606,12 +606,14 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 | 模块 | 职责 |
 |------|------|
 | `index.mjs` | 入口：参数解析、服务装配、优雅退出（先全量落盘再关闭） |
-| `routes.mjs` | 路由：静态资源分发 + 全部 API 端点 + SSE（`/api/chat/stream`） |
+| `sessions.mjs` | 内存会话 Token：签发 / 校验（7 天滑动续期） / 吊销（v9.14.1） |
+| `gs-validate.mjs` | gs 白名单清洗 + 快照差分审计（`CAPS` 常量区可调；纯函数）（v9.14.1） |
+| `routes.mjs` | 路由：静态资源分发 + 全部 API 端点 + SSE（`/api/chat/stream`）+ v9.14.1 鉴权门（guard）与 /api/save 四道防线管线 |
 | `store.mjs` | 原子 JSON 读写（tmp+rename）+ 防抖落盘器（Debouncer） |
 | `world.mjs` | 世界加载/迁移/重建（`__schema` 兼容旧版）、`GetWorldDay`、30 分钟补货、公告 |
-| `players.mjs` | 玩家存档内存缓存（Map + 并发加载去重）、防抖落盘、昵称/聊天档案 |
-| `auth.mjs` | 注册/登录/改昵称/改密码（SHA256+salt，昵称全服唯一） |
-| `trade.mjs` | `trade` / `tradeBatch` 权威结算（守恒校验 + 价格范围 [0.3,3] + `__savedAt` 防覆盖） |
+| `players.mjs` | 玩家存档内存缓存（Map + 并发加载去重）、防抖落盘、昵称/聊天档案、单调版本号 `sv`（getSv/bumpSv，v9.14.1） |
+| `auth.mjs` | 注册/登录/改昵称/改密码（SHA256+salt，昵称全服唯一；v9.14.1 签发会话 Token） |
+| `trade.mjs` | `trade` / `tradeBatch` 权威结算（守恒校验 + 价格范围 [0.3,3] + `__savedAt`/`sv` 防覆盖，v9.14.1 回传 `sv`） |
 | `chat.mjs` | 聊天内存环形缓冲（200 条）+ 落盘 + **SSE 订阅/广播** |
 | `starfall.mjs` | 星陨城状态机——**复用客户端 `starfall-core.js`**（确定性抽选/轮转）+ 服务端权威结算投递/日志 |
 | `mailbox.mjs` | 投递 / 已读 / 删除 / 领取，满 50 自动清理最旧 |
@@ -622,8 +624,8 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 
 1. **静态文件分发**：将 `Online-Client/` 目录映射为 HTTP 静态资源
 2. **世界状态管理**：加载/保存世界数据，30 分钟自动补货（内存操作 + 防抖落盘）
-3. **用户认证**：注册、登录、密码哈希
-4. **玩家存档**：内存缓存 + 防抖原子落盘，并发版本保护（`__savedAt`）
+3. **用户认证**：注册、登录、密码哈希、会话 Token 签发/校验/吊销（v9.14.1）
+4. **玩家存档**：内存缓存 + 防抖原子落盘；单调版本号 `sv` 防回滚 + gs 白名单清洗 + 快照差分审计（v9.14.1 四道防线）
 5. **交易结算**：买入/卖出全量结算——库存扣减/回补 + 资金/持仓权威记账（per-player 模式；`/api/tradeBatch` 为经济权威接口）
 6. **聊天室**：内存环形缓冲（200 条）+ **SSE 实时推流**（`/api/chat/stream`），轮询接口 `/api/chat?since=` 保留为回退
 7. **排行榜**：全服 Top 20 统计
@@ -668,8 +670,10 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
   "user": "玩家名",
   "salt": "随机盐值",
   "passHash": "SHA256(salt:password)",
+  "nickname": "展示昵称",          // v9.11 昵称（排行榜/聊天权威展示字段，与 gs.nickname 副本并存）
+  "sv": 12,                        // v9.14.1 服务端单调版本号（防回滚/防并发覆盖；旧档缺省 0）
   "gs": {
-    "gold": 50000,            // 可为负数（v9.8 欠债系统：任务惩罚/劫匪赎买可扣成负债，负债时无法买入）
+    "gold": 50000,            // 可为负数（v9.8 欠债系统：任务惩罚/劫匪赎买可扣成负债，负债时无法买入）；服务端清洗绝对值域 [-1e7, 1e13]（v9.14.1）
     "day": 1,
     "location": "greentown",
     "gameStartTime": 1786480418213,
@@ -704,31 +708,36 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 
 ### 5.3 API 路由
 
+> **v9.14.1 鉴权**：玩家级接口需携带会话凭证——`Authorization: Bearer <token>`（GET）或 POST 请求体 `token` 字段；Token 所属用户必须等于目标 `user`，否则返回 `need login` / `unauthorized`。凭证由注册/登录接口签发（7 天滑动有效，内存存储，服务器重启后重新登录）。
+
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/world` | 获取世界快照 |
-| POST | `/api/world` | 客户端回退创建世界 |
-| GET | `/api/stocks?user=` | 获取玩家库存 |
-| POST | `/api/trade` | 交易（买入/卖出），body: `{user, city, item, qty, dir}` |
-| POST | `/api/tradeBatch` | 批量交易**全量结算**（原子）：资金/持仓/库存权威，body: `{user, city, dir, items:[{item, qty}], total?, net?}`（buy 传 `total` 应付含税 / sell 传 `net` 税后到手），返回 `{gold, cargo, stocks, serverAt}` |
-| POST | `/api/register` | 注册，body: `{user, pass}` |
-| POST | `/api/login` | 登录，body: `{user, pass}` |
-| GET | `/api/player/{user}` | 获取玩家存档 |
-| POST | `/api/save` | 保存存档，body: `{user, gs, lastServerAt, clientSaveTime}` |
-| POST | `/api/chat` | 发送聊天，body: `{user, loc, msg}` |
-| GET | `/api/chat?since=` | 增量获取聊天消息 |
-| GET | `/api/rankings?type=` | 排行榜（gold/distance/tasks/rep） |
-| GET | `/api/starfall/activity?user=` | 星陨城活动快照（阶段/所需物资/进度/排行榜/历史冠军） |
-| POST | `/api/starfall/contribute` | 提交物资，body: `{user, items:[{item, qty}]}`，服务端权威扣货记账，返回 `{cargo, totalProgress, myScore, myRank, top10, gained}` |
-| GET | `/api/mail?user=` | 拉取玩家邮箱（含未读数） |
-| POST | `/api/mail/{read\|readAll\|delete\|deleteRead\|claim}` | 邮箱操作：已读/一键已读/删除/删除已读/领取附件 |
-| POST | `/api/admin` | GM 指令，body: `{key, cmd, ...}`；`cmd`：timescale/setday/givegold/giveitem/broadcast/starfall(start\|end\|next\|status)/mail(可带 title/body) |
+| GET | `/api/world` | 获取世界快照（公开） |
+| POST | `/api/world` | 客户端回退创建世界（公开） |
+| GET | `/api/stocks?user=` | 获取本人库存（需登录） |
+| POST | `/api/trade` | 交易（买入/卖出），body: `{user, city, item, qty, dir}`（需登录） |
+| POST | `/api/tradeBatch` | 批量交易**全量结算**（原子）：资金/持仓/库存权威，body: `{user, city, dir, items:[{item, qty}], total?, net?}`（buy 传 `total` 应付含税 / sell 传 `net` 税后到手），返回 `{gold, cargo, stocks, serverAt, sv}`（需登录） |
+| POST | `/api/register` | 注册即登录，body: `{user, nickname, pass}`，成功返回 `{ok, token}` |
+| POST | `/api/login` | 登录，body: `{user, pass}`，成功返回 `{ok, nickname, token}` |
+| GET | `/api/player/{user}` | 获取本人存档（需登录），返回 `{ok, nickname, gs, sv}` |
+| POST | `/api/save` | 保存存档，body: `{user, gs, baseSv}`（需登录）；服务端执行"sv 版本校验 + 白名单清洗 + 快照差分审计"，通过后接受并返回 `{ok, sv}`；失败返回 `{ok:false, conflict:true, reason?/anomaly?}` |
+| POST | `/api/logout` | 登出，吊销当前会话 Token（v9.14.1） |
+| POST | `/api/chat` | 发送聊天，body: `{user, loc, msg}`（需登录，防冒充） |
+| GET | `/api/chat?since=` | 增量获取聊天消息（公开） |
+| GET | `/api/rankings?type=` | 排行榜（gold/distance/tasks/rep，公开仅统计值） |
+| GET | `/api/starfall/activity?user=` | 星陨城活动快照（公开；阶段/所需物资/进度/排行榜/历史冠军） |
+| POST | `/api/starfall/contribute` | 提交物资，body: `{user, items:[{item, qty}]}`（需登录），服务端权威扣货记账，返回 `{cargo, totalProgress, myScore, myRank, top10, gained, serverAt, sv}` |
+| GET | `/api/mail?user=` | 拉取本人邮箱（需登录） |
+| POST | `/api/mail/{read\|readAll\|delete\|deleteRead\|claim}` | 邮箱操作（需登录）；claim 领取附件返回 `{gold, materials, title, sv}` |
+| POST | `/api/admin` | GM 指令，body: `{key, cmd, ...}`；`cmd`：timescale/setday/givegold/giveitem/broadcast/starfall(start\|end\|next\|status\|cycle)/mail(可带 title/body)（走 adminPass，公开入口） |
 
-#### 并发保护机制
+#### 并发保护机制（v9.14.1）
 
-- **版本号对比**：服务器比较 `clientSaveTime` 与存档 `__savedAt`
-- **冲突返回**：若客户端已知版本 < 服务器版本，返回 `{conflict: true}`
-- **客户端处理**：收到冲突后自动执行 `fullSync()` 拉取最新存档
+- **单调版本号**：服务器为每个玩家维护 `sv`（`players.mjs getSv/bumpSv`）；接受保存、权威结算（交易/星陨城提交/邮件领取/GM 发放）均递增。
+- **保存准入**：客户端提交必须携带 `baseSv`，且 `baseSv === 当前 sv` 才接受；否则返回 `{conflict:true, reason:'stale', sv}`。
+- **白名单清洗**：`gs-validate.mjs sanitizeGs()`——顶层未知字段丢弃、危险键剔除、数值严格类型与绝对值域封顶、结构归整。
+- **快照审计**：`auditDiff()` 以上一次接受的服务端副本为快照——cargo 逐键严格相等、gold/materials 有界增减、进度类只增不减；异常返回 `{conflict:true, anomaly:{code,...}}`。
+- **客户端处理**：收到冲突后**强制以服务器权威档为准**（`fullSync(true)`），服务器副本永不被异常/旧档写入污染。
 
 ---
 
@@ -936,9 +945,9 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 
 ### 6.8 成就与排行榜
 
-#### 17 项成就
+#### 25 项成就（17 基础 + 8 长尾趣味 · v9.14）
 
-涵盖：首单任务、累计收入、卖出件数、旅行里程、拜访全城、金币里程碑、车厢/核心升级、声望等级等。全量配置见 `Online-Client/src/data/achievements.js`（`window.ACHIEVEMENTS`）与设计文档「附录 A：成就配置表」。
+涵盖：首单任务、累计收入、卖出件数、旅行里程、拜访全城、金币里程碑、车厢/核心升级、声望等级等；v9.14 追加长尾趣味成就（血拼到底/改装鬼才/人气口碑/接单狂魔/丈量大陆/吃瓜前排/一路狂飙/财大气粗——其中前 3 条启用既有埋点维度 `bought`/`upgrades`/`reps` 并在 `achieveVal` 注册 case，后 5 条复用既有 metric；奖励金币与达成目标为策划终调值，见设计文档附录 A）并新增「购物车本车/大力出奇迹/万人迷/众包王/吃瓜选手/旅行青蛙/狂飙/钞能力」8 个梗/谐音称号（既有 `world_explorer` 更名「世界之王」）。全量配置见 `Online-Client/src/data/achievements.js`（`window.ACHIEVEMENTS`）与设计文档「附录 A：成就配置表」。
 
 #### 排行榜（4 榜）
 
@@ -1002,7 +1011,7 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 > **单机免密**：单机模式下 `starfall` / `mail` / `broadcast` 三个 GM 子指令可省略密码（`LOCAL_GM`），其余 GM 指令仅在线可用；指令错误统一返回「指令有误」。
 > **邮件正文换行**：正文中的 `\n`（两个字符）会被转成真实换行，渲染时按行显示（`esc(m.body).replace(/\n/g,'<br>')`），如 `"第一行\n第二行"`。
 > **专属称号（v9.12.0）**：`rarity: 'exclusive'` 的称号仅供策划通过 `/gm mail <玩家>` 单独发放给特定玩家，`mailall` 群发会被服务端拒绝；称号 id 由服务端对照共享配置表 `Online-Client/src/data/title-defs.js` 校验（未知 id 拒绝发放）；未获得的专属称号在用户面板自动隐藏（获得后才可见可装备），徽章样式为最高档金紫流光（`.t-exclusive`）。
-> **边界**：前端禁用能拦住正常玩家；防"懂技术玩家绕过前端直接调 `/api/save` 改档"需服务端存档字段权威校验（后续加固方向）。
+> **边界（v9.14.1 已加固）**：绕过前端直接调 `/api/save` 改档已由四道防线覆盖——会话 Token（防冒充/越权）、单调版本号 `sv`（防旧档回滚复制）、gs 白名单清洗（防结构/类型注入）、快照差分审计（防异常数值注入，详见 `Docs/反作弊与存档安全加固.md`）。残余风险：任务/成就/事件/旅行奖励等客户端结算玩法产生的小幅数值伪造无法完全杜绝，彻底方案为玩法服务端权威化（另行评估）。
 
 ---
 
