@@ -202,7 +202,8 @@ function renderEventBoard(){
     if(!st)return'';
     return `<span class="event-chip ${st.cls}" onclick="showEventDetail('${ev.id}')" title="查看详情">${ev.icon} ${ev.name} · ${st.label}</span>`;
   }).join('');
-  return chips; // v9.10.2：事件收集改为成就面板"事件见闻录"分支（renderEventCatalog），不再提供全部图鉴入口
+  const location=`<span class="event-location"><svg class="tb-icon loc"><use href="#icon-location"/></svg><span class="tb-loc-name">${getCityName(GS.location)}</span></span>`;
+  return location+chips; // 当前位置固定在最左侧；事件收集入口位于成就面板“事件见闻录”分支
 }
 
 window.EVENT_TABLE = EVENT_TABLE;

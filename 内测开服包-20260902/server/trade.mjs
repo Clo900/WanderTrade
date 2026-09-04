@@ -58,7 +58,14 @@ export async function tradeBatch(ctx, services, body) {
   const amount = dir === 'buy' ? total : net;
   if (!(amount > 0)) return { ok: false, err: 'bad amount' };
 
-  // 价格范围校验：amount 与 Σ(basePrices×qty) 比率须在 [0.3,3]
+  // 价格范围校验：amount 与 Σ(basePrices×qty) 的比率须落在 [PRICE_RATIO_LO, PRICE_RATIO_HI]
+  // v9.14.6.1：窗口由 [0.3, 3] 放宽为 [0.12, 6] —— 客户端真实结算价为"动态中枢价带
+  // （高价特产带宽 ±60%）+ 事件突破趋势（每中枢 +12~18%、可多中枢累积、shift ±25~60%）
+  // + 需求 hot +15% / cool ×0.6 + 产地折扣/交易税"的复合结果，大突破行情下诚实报价可
+  // 超出旧窗口而被误判 price mismatch（线上象牙行情实测）。新窗口覆盖全部合法极值，
+  // 仍保留"数量级篡改"拦截（amount 与基准价差 6 倍以上拒绝）。
+  // 同步点：若 Online-Client price-engine/demand-engine 的波动参数再次放大，需复核此窗口。
+  const PRICE_RATIO_LO = 0.12, PRICE_RATIO_HI = 6.0;
   let expected = 0;
   for (const it of items) {
     const iid = String(it.item || ''), q = Math.floor(it.qty || 0);
@@ -67,7 +74,7 @@ export async function tradeBatch(ctx, services, body) {
   }
   if (expected > 0) {
     const ratio = amount / expected;
-    if (ratio < 0.3 || ratio > 3.0) return { ok: false, err: 'price mismatch' };
+    if (ratio < PRICE_RATIO_LO || ratio > PRICE_RATIO_HI) return { ok: false, err: 'price mismatch' };
   }
 
   // 全量校验（buy=库存+资金；sell=持仓）

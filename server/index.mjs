@@ -18,6 +18,7 @@ import { createPlayers } from './players.mjs';
 import { createAuth } from './auth.mjs';
 import { createSessions } from './sessions.mjs';
 import * as tradeApi from './trade.mjs';
+import * as warehouseApi from './warehouse.mjs';
 import { createChat } from './chat.mjs';
 import { createMailbox } from './mailbox.mjs';
 import { createStarfall } from './starfall.mjs';
@@ -72,7 +73,7 @@ const auth = createAuth(ctx, players, sessions);
 const rankings = createRankings(ctx, players);
 const admin = createAdmin(ctx, { world, players, starfall, mailbox });
 const goldLedger = createGoldLedger(ctx);
-const services = { world, players, auth, sessions, tradeApi, chat, starfall, mailbox, rankings, admin, goldLedger, errorLog };
+const services = { world, players, auth, sessions, tradeApi, warehouseApi, chat, starfall, mailbox, rankings, admin, goldLedger, errorLog };
 
 const w0 = await world.loadWorld();
 if (w0) {

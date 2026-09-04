@@ -5,6 +5,7 @@
  *   GET  /api/world / POST /api/world（兜底建世界）
  *   GET  /api/stocks?user=
  *   POST /api/trade / /api/tradeBatch
+ *   POST /api/warehouse（v9.14.6：仓库解锁/扩建/存取 服务端权威结算）
  *   POST /api/register / login / profile / passwd
  *   GET  /api/player/{user}   POST /api/save
  *   GET  /api/rankings?type=
@@ -71,7 +72,7 @@ function decodeUser(seg) {
 
 export function createRoutes(ctx, services) {
   const { clientRoot } = ctx;
-  const { world, players, auth, sessions, tradeApi, chat, starfall, mailbox, rankings, admin, goldLedger, errorLog } = services;
+  const { world, players, auth, sessions, tradeApi, warehouseApi, chat, starfall, mailbox, rankings, admin, goldLedger, errorLog } = services;
 
   /* ---- /api/save 拒绝审计日志（v9.14.3） ----
    * 记录每次被版本防线(stale) / 快照防线(anomaly) 拒绝的保存：时间戳、user、
@@ -160,6 +161,13 @@ export function createRoutes(ctx, services) {
       const b = await readBody(req);
       if (!guard(b, String((b && b.user) || ''))) return; // v9.14：仅本人
       return sendJson(res, await tradeApi.tradeBatch(ctx, services, b || {}));
+    }
+
+    /* ---- warehouse（v9.14.6：仓库玩法服务端权威结算） ---- */
+    if (action === 'warehouse' && method === 'POST') {
+      const b = await readBody(req);
+      if (!guard(b, String((b && b.user) || ''))) return; // v9.14：仅本人
+      return sendJson(res, await warehouseApi.warehouse(ctx, services, b || {}));
     }
 
     /* ---- 账号 ---- */

@@ -395,7 +395,7 @@ function ackGoldConsumptions(user,ids){
 }
 // v9.14.1：客户端发布版本标记——版本变化时强制重登一次，
 // 消除"用户是否已在新版"的歧义（旧会话/旧页面在下一轮刷新必然弹回登录）
-const APP_VERSION='v9.14.5';
+const APP_VERSION='v9.14.6';
 const VER_KEY='_ver_seen';
 function verSeen(){try{return localStorage.getItem(VER_KEY)||''}catch(e){return ''}}
 function markVerSeen(){try{localStorage.setItem(VER_KEY,APP_VERSION)}catch(e){}}
@@ -811,6 +811,7 @@ async function pushSaveOnline(){
     return null;
   }
   __leaseWarned=false;
+  if(__whBusy)return null;                              // v9.14.6：仓库权威结算在途，等结果回写后由操作完成处推送，防旧快照误推触发 cargo_mismatch
   if(__pushRunning){__pushAgain=true;return null;}      // 已在途：登记追赶，本轮结束后携带最新档补推
   __pushRunning=true;
   try{
@@ -2253,8 +2254,48 @@ function getWhExpandCost(cityId){
   const cfg=getWhConfig(cityId);
   return Math.round(cfg.unlock*Math.pow(cfg.coef,w.buildCount||0));
 }
+/* ===== 仓库（v9.14.6：在线模式走服务端权威 /api/warehouse） =====
+ * 背景：仓库四操作原为纯客户端结算（直接改本地 cargo/warehouses/gold 再随保存
+ * 上传）。v9.14.1 快照差分审计（cargo 严格相等）上线后被误判 cargo_mismatch
+ * （toast"检测到异常数据"并回拉），玩家无法存/取仓库。v9.14.6 起在线仓库操作
+ * 迁移到服务端权威结算（校验→bumpSv→返回权威三字段）：本地以服务器返回覆盖
+ * cargo/warehouses/gold 并回写 __lastSv，随后立即 pushSaveOnline 一次（baseSv=
+ * 新 sv、cargo 与服务器一致），保证后续自动保存通过差分审计；结算在途时
+ * pushSaveOnline 直接跳过（__whBusy），防止旧快照误推。单机模式保留本地结算。 */
+let __whBusy=false;
+async function whRunOnline(action,item,qty,opts){
+  if(!ONLINE)return null;
+  if(!tabMayPush()){toast('本窗口已暂停操作（另一窗口活跃），请切回该窗口','info');return null;}
+  if(__whBusy){toast('仓库操作处理中，请稍候…','info');return null;}
+  const user=localStorage.getItem(AUTH_KEY);
+  if(!user)return null;
+  __whBusy=true;
+  let ok=false;
+  try{
+    const r=await NET.post('/api/warehouse',{user,action,item:item||'',qty:Math.floor(qty||0)});
+    if(!r||!r.ok){toast('仓库操作失败：'+(r&&r.err?r.err:'网络错误'),'err');return null;}
+    GS.__lastSv=r.sv;
+    State.batch(function(){
+      if(typeof r.gold==='number'){
+        const before=GS.gold;
+        if(opts&&opts.deductGold&&r.gold<before)recordGoldConsumption(r.gold,before); // 解锁/扩建扣金计入金币消费审计
+        State.set('gold',r.gold);
+      }
+      if(r.cargo&&typeof r.cargo==='object')State.set('cargo',r.cargo);
+      if(r.warehouses&&typeof r.warehouses==='object')State.set('warehouses',r.warehouses);
+    });
+    if(opts&&opts.toast)toast(opts.toast,'ok');
+    render();
+    ok=true;
+    return r;
+  }finally{
+    __whBusy=false;
+    if(ok)pushSaveOnline(); // 结算成功：busy 已清，立即以新 sv 推送一次（防下一轮自动保存带旧快照）
+  }
+}
 function doUnlockWarehouse(){
   if(GS.traveling)return toast('旅行中不可操作','info');
+  if(ONLINE)return whRunOnline('unlock',null,0,{deductGold:true,toast:'🏪 仓库已解锁！（'+getCityName(GS.location)+' · 100 格）'});
   if(GS.warehouses[GS.location])return toast('本城已有仓库','info');
   const cfg=getWhConfig(GS.location);
   if(GS.gold<cfg.unlock)return toast('资金不足，解锁需 '+fmt(cfg.unlock)+' 金币','err');
@@ -2266,6 +2307,7 @@ function doUnlockWarehouse(){
 }
 function doExpandWarehouse(){
   if(GS.traveling)return toast('旅行中不可操作','info');
+  if(ONLINE)return whRunOnline('expand',null,0,{deductGold:true,toast:'🏪 仓库扩建成功！容量 +50 格'});
   const w=GS.warehouses[GS.location];if(!w)return toast('本城无仓库，请先解锁','info');
   const cost=getWhExpandCost(GS.location);
   if(GS.gold<cost)return toast('资金不足，扩建需 '+fmt(cost)+' 金币','err');
@@ -2276,8 +2318,8 @@ function doExpandWarehouse(){
   State.set('gold', GS.gold-cost);
   toast(`🏪 仓库扩建成功！容量 ${w.capacity-50} → ${w.capacity} 格`,'ok');render();
 }
-function doWhIn(itemId,qty){if(GS.traveling)return toast('旅行中不可操作','info');const wh=GS.warehouses[GS.location];if(!wh)return toast('无仓库','err');const held=GS.cargo[itemId]||0;if(qty>held)return;const used=Object.values(wh.items).reduce((a,b)=>a+b,0);if(used+qty>wh.capacity)return toast('仓库满','err');State.batch(function(){var cargo=State.get('cargo')||{};var warehouses=State.get('warehouses')||{};var w=warehouses[GS.location];cargo[itemId]=held-qty;if(cargo[itemId]<=0)delete cargo[itemId];w.items[itemId]=(w.items[itemId]||0)+qty;State.set('cargo',cargo);State.set('warehouses',warehouses);});toast('已存入仓库','ok');render()}
-function doWhOut(itemId,qty){if(GS.traveling)return toast('旅行中不可操作','info');const wh=GS.warehouses[GS.location];if(!wh||!(wh.items[itemId])||wh.items[itemId]<qty)return toast('库存不足','err');if(getCargoFree()<qty)return toast('载具满','err');State.batch(function(){var cargo=State.get('cargo')||{};var warehouses=State.get('warehouses')||{};var w=warehouses[GS.location];w.items[itemId]-=qty;if(w.items[itemId]<=0)delete w.items[itemId];cargo[itemId]=(cargo[itemId]||0)+qty;State.set('cargo',cargo);State.set('warehouses',warehouses);});toast('已装入载具','ok');render()}
+function doWhIn(itemId,qty){if(GS.traveling)return toast('旅行中不可操作','info');if(ONLINE)return whRunOnline('in',itemId,qty,{toast:'已存入仓库'});const wh=GS.warehouses[GS.location];if(!wh)return toast('无仓库','err');const held=GS.cargo[itemId]||0;if(qty>held)return;const used=Object.values(wh.items).reduce((a,b)=>a+b,0);if(used+qty>wh.capacity)return toast('仓库满','err');State.batch(function(){var cargo=State.get('cargo')||{};var warehouses=State.get('warehouses')||{};var w=warehouses[GS.location];cargo[itemId]=held-qty;if(cargo[itemId]<=0)delete cargo[itemId];w.items[itemId]=(w.items[itemId]||0)+qty;State.set('cargo',cargo);State.set('warehouses',warehouses);});toast('已存入仓库','ok');render()}
+function doWhOut(itemId,qty){if(GS.traveling)return toast('旅行中不可操作','info');if(ONLINE)return whRunOnline('out',itemId,qty,{toast:'已装入载具'});const wh=GS.warehouses[GS.location];if(!wh||!(wh.items[itemId])||wh.items[itemId]<qty)return toast('库存不足','err');if(getCargoFree()<qty)return toast('载具满','err');State.batch(function(){var cargo=State.get('cargo')||{};var warehouses=State.get('warehouses')||{};var w=warehouses[GS.location];w.items[itemId]-=qty;if(w.items[itemId]<=0)delete w.items[itemId];cargo[itemId]=(cargo[itemId]||0)+qty;State.set('cargo',cargo);State.set('warehouses',warehouses);});toast('已装入载具','ok');render()}
 
 // ===== 升级素材道具（任务系统产出，用于载具升级） =====
 const MATERIALS={gear:{name:'精密齿轮',icon:'⚙️'},repair_kit:{name:'维修套件',icon:'🧰'},fuel_tank:{name:'燃油舱',icon:'🛢️'},engine:{name:'引擎核心',icon:'🔩'},staralloy:{name:'星陨合金',icon:'💫'}};

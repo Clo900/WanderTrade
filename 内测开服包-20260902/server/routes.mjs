@@ -5,6 +5,7 @@
  *   GET  /api/world / POST /api/world（兜底建世界）
  *   GET  /api/stocks?user=
  *   POST /api/trade / /api/tradeBatch
+ *   POST /api/warehouse（v9.14.6：仓库解锁/扩建/存取 服务端权威结算）
  *   POST /api/register / login / profile / passwd
  *   GET  /api/player/{user}   POST /api/save
  *   GET  /api/rankings?type=
@@ -71,7 +72,7 @@ function decodeUser(seg) {
 
 export function createRoutes(ctx, services) {
   const { clientRoot } = ctx;
-  const { world, players, auth, sessions, tradeApi, chat, starfall, mailbox, rankings, admin } = services;
+  const { world, players, auth, sessions, tradeApi, warehouseApi, chat, starfall, mailbox, rankings, admin, goldLedger, errorLog } = services;
 
   /* ---- /api/save 拒绝审计日志（v9.14.3） ----
    * 记录每次被版本防线(stale) / 快照防线(anomaly) 拒绝的保存：时间戳、user、
@@ -83,7 +84,9 @@ export function createRoutes(ctx, services) {
       const line = '[' + new Date().toISOString().replace('T', ' ').slice(0, 19) + '] save-reject user=' + user +
         ' reason=' + reason + ' sv=' + sv + (detail ? ' detail=' + String(detail).slice(0, 200) : '');
       console.log(line);
-      fs.appendFile(saveRejectLog, line + '\n', 'utf8').catch(() => {});
+      fs.appendFile(saveRejectLog, line + '\n', 'utf8').catch(e => {
+        errorLog.record('save-reject-log', e).catch(logError => console.error('[error-log] append error:', logError && logError.message));
+      });
     } catch (e) { /* 日志失败不影响主流程 */ }
   }
 
@@ -158,6 +161,13 @@ export function createRoutes(ctx, services) {
       const b = await readBody(req);
       if (!guard(b, String((b && b.user) || ''))) return; // v9.14：仅本人
       return sendJson(res, await tradeApi.tradeBatch(ctx, services, b || {}));
+    }
+
+    /* ---- warehouse（v9.14.6：仓库玩法服务端权威结算） ---- */
+    if (action === 'warehouse' && method === 'POST') {
+      const b = await readBody(req);
+      if (!guard(b, String((b && b.user) || ''))) return; // v9.14：仅本人
+      return sendJson(res, await warehouseApi.warehouse(ctx, services, b || {}));
     }
 
     /* ---- 账号 ---- */
@@ -236,7 +246,18 @@ export function createRoutes(ctx, services) {
       rec.gs.__savedAt = now;
       players.markDirty(user);
       const sv = players.bumpSv(user);
-      return sendJson(res, { ok: true, sv });
+      let goldConsumptionAck = [];
+      try {
+        goldConsumptionAck = await goldLedger.record(user, b.goldConsumptions, {
+          sv,
+          clientVersion: b.cliver
+        });
+      } catch (e) {
+        // 金币审计失败不阻断玩家保存；客户端未收到 ack 会在下次保存重传。
+        console.error('[gold-ledger] append error:', e && e.message);
+        await errorLog.record('gold-ledger', e, { user }).catch(() => {});
+      }
+      return sendJson(res, { ok: true, sv, goldConsumptionAck });
     }
 
     /* ---- rankings ---- */
@@ -350,6 +371,7 @@ export function createRoutes(ctx, services) {
       await serveStatic(req, res, pathname);
     } catch (e) {
       try { console.log('  ERROR: ' + (e && e.message)); } catch (e2) { /* ignore */ }
+      try { await errorLog.record('http.route', e, { method, pathname }); } catch (e2) { console.error('[error-log] append error:', e2 && e2.message); }
       try { if (!res.headersSent) sendText(res, 500, 'server error'); else res.end(); } catch (e2) { /* ignore */ }
     }
   };

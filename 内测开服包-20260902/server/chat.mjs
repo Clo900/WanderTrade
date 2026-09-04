@@ -10,7 +10,7 @@ import { readJson, writeJsonAtomic, Debouncer } from './store.mjs';
 export function createChat(ctx, players) {
   const { chatFile } = ctx;
   let store = null;            // { nextId, msgs:[{id,user,nickname,title,loc,msg,ts}] }
-  const flush = new Debouncer(1000);
+  const flush = new Debouncer(1000, (key, e) => ctx.errorLog.record('store.chat', e, { key }));
   const subscribers = new Set();   // SSE 响应对象集合
 
   async function load() {

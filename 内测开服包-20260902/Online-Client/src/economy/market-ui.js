@@ -14,7 +14,35 @@
 'use strict';
 
 // 市场视图状态（v9.10.2 迁移；内联脚本通过共享全局词法环境引用）
+const MARKET_CHART_COLLAPSE_KEY='wander-market-chart-collapsed';
+function isMarketChartViewportConstrained(){
+  return !!(window.matchMedia&&window.matchMedia('(max-width:700px), (max-height:720px)').matches);
+}
 let marketTab='buy',_chartDays=60,_chartItem=null,expandedCard=null,sliderVals={};
+let _chartCollapsed=(()=>{
+  // 浏览器高缩放会同时压缩 CSS 视口宽高；此时优先保证交易功能完整可见。
+  if(isMarketChartViewportConstrained())return true;
+  try{
+    const saved=localStorage.getItem(MARKET_CHART_COLLAPSE_KEY);
+    if(saved!==null)return saved==='1';
+  }catch(e){}
+  return window.matchMedia&&window.matchMedia('(max-width:900px)').matches;
+})();
+
+function toggleMarketChart(){
+  _chartCollapsed=!_chartCollapsed;
+  try{localStorage.setItem(MARKET_CHART_COLLAPSE_KEY,_chartCollapsed?'1':'0');}catch(e){}
+  const body=document.querySelector('.market-body');
+  const btn=document.querySelector('.chart-toggle');
+  if(body)body.classList.toggle('chart-collapsed',_chartCollapsed);
+  if(btn){
+    btn.innerHTML=_chartCollapsed?'📈 展开行情':'📉 收起行情';
+    btn.title=_chartCollapsed?'展开行情折线图':'折叠行情折线图，为交易区腾出空间';
+    btn.setAttribute('aria-expanded',_chartCollapsed?'false':'true');
+  }
+  syncMarketHeightToChart();
+  if(!_chartCollapsed&&_chartItem)requestAnimationFrame(()=>drawChart());
+}
 
 function getChartableItems(){
   const loc=GS.location,city=getCity(loc);
@@ -554,6 +582,16 @@ function syncMarketHeightToChart(){
 
   // 使用 requestAnimationFrame，等 canvas 与 stats 更新后再取高度
   requestAnimationFrame(()=>{
+    if(body.classList.contains('chart-collapsed')){
+      const available=window.innerHeight-body.getBoundingClientRect().top-16;
+      body.style.height=Math.max(360,Math.min(520,available))+'px';
+      return;
+    }
+    // 窄屏采用上下堆叠布局，不能继续锁定为单个图表的高度，否则交易区会覆盖画布。
+    if(window.matchMedia&&window.matchMedia('(max-width:640px)').matches){
+      body.style.height='auto';
+      return;
+    }
     const cs=getComputedStyle(body);
     const pad=(parseFloat(cs.paddingTop)||0)+(parseFloat(cs.paddingBottom)||0);
     const h=Math.ceil(chart.getBoundingClientRect().height + pad);

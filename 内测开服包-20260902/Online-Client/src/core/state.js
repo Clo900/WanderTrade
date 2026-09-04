@@ -22,7 +22,8 @@
   let _defaults = {};
   const _listeners = new Map();
   let _batchDepth = 0;
-  const _batchDirtyPaths = new Set();
+  // path -> 本批次第一次修改前的值；让订阅者能得到可靠的 oldValue。
+  const _batchDirtyPaths = new Map();
   let _silent = false;   // 初始化/重置期间静默，不触发订阅
 
   // ===== 路径工具 =====
@@ -51,12 +52,12 @@
   }
 
   // ===== 通知派发 =====
-  function _dispatch(path){
+  function _dispatch(path, oldValue){
     var value = getByPath(_state, path);
 
     // 精确路径
     var exact = _listeners.get(path);
-    if(exact) exact.forEach(function(cb){try{cb(value,path);}catch(e){console.error('[State] listener error:',e);}});
+    if(exact) exact.forEach(function(cb){try{cb(value,oldValue,path);}catch(e){console.error('[State] listener error:',e);}});
 
     // 父路径冒泡
     var parts = path.split('.');
@@ -65,26 +66,26 @@
       var pSet = _listeners.get(parent);
       if(pSet){
         var pVal = getByPath(_state, parent);
-        pSet.forEach(function(cb){try{cb(pVal,path);}catch(e){console.error('[State] listener error:',e);}});
+        pSet.forEach(function(cb){try{cb(pVal,undefined,path);}catch(e){console.error('[State] listener error:',e);}});
       }
     }
 
     // 通配符
     var star = _listeners.get('*');
-    if(star) star.forEach(function(cb){try{cb(value,path);}catch(e){console.error('[State] listener error:',e);}});
+    if(star) star.forEach(function(cb){try{cb(value,oldValue,path);}catch(e){console.error('[State] listener error:',e);}});
   }
 
-  function _notify(path){
+  function _notify(path, oldValue){
     if(_silent) return;
     if(_batchDepth>0){
-      _batchDirtyPaths.add(path);
+      if(!_batchDirtyPaths.has(path)) _batchDirtyPaths.set(path, oldValue);
       return;
     }
-    _dispatch(path);
+    _dispatch(path, oldValue);
   }
 
   function _flushBatch(){
-    _batchDirtyPaths.forEach(function(p){_dispatch(p);});
+    _batchDirtyPaths.forEach(function(oldValue,p){_dispatch(p,oldValue);});
     _batchDirtyPaths.clear();
   }
 
@@ -94,13 +95,15 @@
       return target[prop];
     },
     set: function(target, prop, value){
+      var oldValue = target[prop];
       target[prop] = value;
-      _notify(String(prop));
+      _notify(String(prop), oldValue);
       return true;
     },
     deleteProperty: function(target, prop){
+      var oldValue = target[prop];
       delete target[prop];
-      _notify(String(prop));
+      _notify(String(prop), oldValue);
       return true;
     }
   };
@@ -154,8 +157,9 @@
         console.error('[State.set] path is required');
         return;
       }
+      var oldValue = getByPath(_state, path);
       setByPath(_state, path, value);
-      _notify(path);
+      _notify(path, oldValue);
     },
 
     /**
@@ -163,8 +167,9 @@
      */
     remove: function(path){
       if(!path) return;
+      var oldValue = getByPath(_state, path);
       deleteByPath(_state, path);
-      _notify(path);
+      _notify(path, oldValue);
     },
 
     /**
@@ -183,7 +188,7 @@
     /**
      * 监听指定路径的变更
      * @param {string} path - 监听路径，'*' 表示全部
-     * @param {Function} callback - (newValue, changedPath) => void
+     * @param {Function} callback - (newValue, oldValue, changedPath) => void
      * @returns {Function} 取消订阅函数
      */
     subscribe: function(path, callback){

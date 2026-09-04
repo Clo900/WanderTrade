@@ -613,12 +613,16 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 | `world.mjs` | 世界加载/迁移/重建（`__schema` 兼容旧版）、`GetWorldDay`、30 分钟补货、公告 |
 | `players.mjs` | 玩家存档内存缓存（Map + 并发加载去重）、防抖落盘、昵称/聊天档案、单调版本号 `sv`（getSv/bumpSv，v9.14.1） |
 | `auth.mjs` | 注册/登录/改昵称/改密码（SHA256+salt，昵称全服唯一；v9.14.1 签发会话 Token） |
-| `trade.mjs` | `trade` / `tradeBatch` 权威结算（守恒校验 + 价格范围 [0.3,3] + `__savedAt`/`sv` 防覆盖，v9.14.1 回传 `sv`） |
+| `trade.mjs` | `trade` / `tradeBatch` 权威结算（守恒校验 + 价格比率窗口 [0.12,6]（v9.14.6.1 由 [0.3,3] 放宽，覆盖突破行情/需求加成合法报价）+ `__savedAt`/`sv` 防覆盖，v9.14.1 回传 `sv`） |
+| `warehouse.mjs` | 仓库权威结算（v9.14.6）：`unlock/expand/in/out` 四操作服务端校验并改写 `rec.gs`（cargo↔warehouses[loc].items / gold）→ `bumpSv`；内联与客户端 `cityStage()/getWhConfig()` 一致的城市阶段经济表（注释标注同步点） |
 | `chat.mjs` | 聊天内存环形缓冲（200 条）+ 落盘 + **SSE 订阅/广播** |
-| `starfall.mjs` | 星陨城状态机——**复用客户端 `starfall-core.js`**（确定性抽选/轮转）+ 服务端权威结算投递/日志 |
+| `starfall.mjs` | 星陨城状态机——**复用客户端 `starfall-core.js`**（确定性抽选/轮转）+ 服务端权威结算投递/日志（v9.14.2：启动自愈 `healActivity` + 空池拒绝） |
 | `mailbox.mjs` | 投递 / 已读 / 删除 / 领取，满 50 自动清理最旧 |
 | `rankings.mjs` | 排行榜（基于内存缓存，Top 20） |
 | `admin.mjs` | GM 指令（timescale/setday/givegold/giveitem/broadcast/starfall/mail） |
+| `gold-ledger.mjs` | 客户端上报的金币消费审计（v9.14.5）：写 `logs/gold-consumption-*.jsonl`，带去重；仅记录观察值、不参与结算，失败不阻断保存 |
+| `daily-log.mjs` | 按服务器本地日期切换的 JSONL 追加器（v9.14.5） |
+| `error-log.mjs` | 服务端错误日志（v9.14.5）：HTTP 层 500 与内部异常记入 `logs/error-*.jsonl` |
 
 #### 核心功能
 
@@ -717,10 +721,11 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 | GET | `/api/stocks?user=` | 获取本人库存（需登录） |
 | POST | `/api/trade` | 交易（买入/卖出），body: `{user, city, item, qty, dir}`（需登录） |
 | POST | `/api/tradeBatch` | 批量交易**全量结算**（原子）：资金/持仓/库存权威，body: `{user, city, dir, items:[{item, qty}], total?, net?}`（buy 传 `total` 应付含税 / sell 传 `net` 税后到手），返回 `{gold, cargo, stocks, serverAt, sv}`（需登录） |
+| POST | `/api/warehouse` | 仓库权威结算（v9.14.6），body: `{user, action: unlock\|expand\|in\|out, item?, qty?}`（需登录，仅本人）；服务端校验（旅行中/资金/持仓/仓库容量/键与数量）后改写 `rec.gs` 并 `bumpSv`，返回 `{ok, sv, gold, cargo, warehouses}`；修复 v9.14.1 差分审计误伤纯客户端仓库存取（`cargo_mismatch`→回拉）的问题 |
 | POST | `/api/register` | 注册即登录，body: `{user, nickname, pass}`，成功返回 `{ok, token}` |
 | POST | `/api/login` | 登录，body: `{user, pass}`，成功返回 `{ok, nickname, token}` |
 | GET | `/api/player/{user}` | 获取本人存档（需登录），返回 `{ok, nickname, gs, sv}` |
-| POST | `/api/save` | 保存存档，body: `{user, gs, baseSv, cliver}`（需登录）；服务端执行"sv 版本校验 + 白名单清洗 + 快照差分审计"，通过后接受并返回 `{ok, sv}`；失败返回 `{ok:false, conflict:true, reason?/anomaly?}`（v9.14.3：拒绝事件记入 `server_save_conflict.log`、客户端对 `stale` 冲突自愈重推而非直接回拉；v9.14.4：日志带 `cliver` 客户端版本） |
+| POST | `/api/save` | 保存存档，body: `{user, gs, baseSv, cliver, goldConsumptions}`（需登录）；服务端执行"sv 版本校验 + 白名单清洗 + 快照差分审计"，通过后接受并返回 `{ok, sv, goldConsumptionAck}`；失败返回 `{ok:false, conflict:true, reason?/anomaly?}`（v9.14.3：拒绝事件记入 `server_save_conflict.log`、客户端对 `stale` 冲突自愈重推而非直接回拉；v9.14.4：日志带 `cliver` 客户端版本；v9.14.5：成功后再记金币消费审计并回传 ack） |
 | POST | `/api/logout` | 登出，吊销当前会话 Token（v9.14.1） |
 | POST | `/api/chat` | 发送聊天，body: `{user, loc, msg}`（需登录，防冒充） |
 | GET | `/api/chat?since=` | 增量获取聊天消息（公开） |

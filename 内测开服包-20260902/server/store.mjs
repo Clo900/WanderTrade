@@ -48,7 +48,7 @@ export async function exists(p) {
  * 仅以最后一次 fn 为准，ms 后执行一次。
  */
 export class Debouncer {
-  constructor(ms) { this.ms = ms; this.pending = new Map(); }
+  constructor(ms, onError) { this.ms = ms; this.pending = new Map(); this.onError = onError; }
   schedule(key, fn) {
     const item = this.pending.get(key);
     if (item) { item.fn = fn; return; }
@@ -62,15 +62,21 @@ export class Debouncer {
     this.pending.delete(key);
     Promise.resolve()
       .then(() => item.fn())
-      .catch(e => console.error('[store] flush error:', e && e.message));
+      .catch(e => this._handleError(key, e));
+  }
+  async _handleError(key, e) {
+    console.error('[store] flush error:', e && e.message);
+    if (typeof this.onError === 'function') {
+      try { await this.onError(key, e); } catch (logError) { console.error('[error-log] append error:', logError && logError.message); }
+    }
   }
   /** 立即执行全部待落盘任务（退出前调用） */
   async flushAll() {
     const entries = [...this.pending.entries()];
     this.pending.clear();
     for (const [, item] of entries) clearTimeout(item.timer);
-    await Promise.all(entries.map(([, item]) =>
-      Promise.resolve().then(() => item.fn()).catch(e => console.error('[store] flush error:', e && e.message))
+    await Promise.all(entries.map(([key, item]) =>
+      Promise.resolve().then(() => item.fn()).catch(e => this._handleError(key, e))
     ));
   }
   get size() { return this.pending.size; }
