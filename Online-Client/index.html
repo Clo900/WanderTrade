@@ -12,9 +12,33 @@
 })();
 </script>
 <link rel="stylesheet" href="styles/theme.css?v=9135">
-<link rel="stylesheet" href="styles/app.css?v=9135">
+<link rel="stylesheet" href="styles/app.css?v=9139">
 </head>
 <body>
+<!-- 统一 SVG 图标精灵 -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none;">
+  <symbol id="icon-network" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2V7zm0 8h2v2h-2v-2z" fill="currentColor"/></symbol>
+  <symbol id="icon-location" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="currentColor"/></symbol>
+  <symbol id="icon-day" viewBox="0 0 24 24"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.79 1.42-1.41zM4 10.5H1v2h3v-2zm9-9.95h-2V3.5h2V.55zm7.45 3.91l-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79zm-3.21 13.7l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM20 10.5v2h3v-2h-3zm-8-5c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm-1 16.95h2V19.5h-2v2.95zm-7.45-3.91l1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8z" fill="currentColor"/></symbol>
+  <symbol id="icon-cargo" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 2h2v2h-2V5zm0 4h2v2h-2V9zm0 4h2v2h-2v-2zM7 17h10v2H7v-2zm-2-4h2v2H5v-2zm0-4h2v2H5V9zm0-4h2v2H5V5z" fill="currentColor"/></symbol>
+  <symbol id="icon-passenger" viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-8 1.17-8 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" fill="currentColor"/></symbol>
+  <symbol id="icon-reputation" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" fill="currentColor"/></symbol>
+  <symbol id="icon-gold" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.31-8.86c-1.77-.45-2.34-.94-2.34-1.67 0-.84.79-1.43 2.1-1.43 1.38 0 1.9.66 1.94 1.64h1.71c-.05-1.34-.87-2.57-2.49-2.97V5H10.9v1.69c-1.51.32-2.72 1.3-2.72 2.81 0 1.79 1.49 2.69 3.66 3.21 1.95.46 2.34 1.15 2.34 1.87 0 .53-.39 1.39-2.1 1.39-1.6 0-2.23-.72-2.32-1.64H8.04c.1 1.7 1.36 2.66 2.86 2.97V19h2.34v-1.67c1.52-.29 2.72-1.16 2.73-2.77-.01-2.2-1.9-2.96-3.66-3.42z" fill="currentColor"/></symbol>
+  <symbol id="icon-mode-standalone" viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z" fill="currentColor"/></symbol>
+  <symbol id="icon-mode-online" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" fill="currentColor"/></symbol>
+  <symbol id="icon-user" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" fill="currentColor"/></symbol>
+  <symbol id="icon-mail" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z" fill="currentColor"/></symbol>
+  <symbol id="icon-theme-dark" viewBox="0 0 24 24"><path d="M9 2c-1.05 0-2.05.16-3 .46 1.69 1.24 2.79 3.25 2.79 5.54 0 3.87-3.13 7-7 7-1.06 0-2.06-.25-2.96-.69C.52 18.06 4.89 22 10 22c5.52 0 10-4.48 10-10S15.52 2 10 2z" fill="currentColor"/></symbol>
+  <symbol id="icon-theme-light" viewBox="0 0 24 24"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.79 1.42-1.41zM4 10.5H1v2h3v-2zm9-9.95h-2V3.5h2V.55zm7.45 3.91l-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79zm-3.21 13.7l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM20 10.5v2h3v-2h-3zm-8-5c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm-1 16.95h2V19.5h-2v2.95zm-7.45-3.91l1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8z" fill="currentColor"/></symbol>
+  <symbol id="icon-logout" viewBox="0 0 24 24"><path d="M10.09 15.59L11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5c-1.11 0-2 .9-2 2v4h2V5h14v14H5v-4H3v4c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" fill="currentColor"/></symbol>
+  <symbol id="icon-export" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/></symbol>
+  <symbol id="icon-import" viewBox="0 0 24 24"><path d="M19 15h-4v6H9v-6H5l7-7 7 7zM5 8v-2h14v2H5z" fill="currentColor"/></symbol>
+  <symbol id="icon-travel" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z" fill="currentColor"/></symbol>
+  <symbol id="icon-map" viewBox="0 0 24 24"><path d="M20.5 3l-6 1.5-6-1.5-5.5 1.5v15l5.5-1.5 6 1.5 6-1.5V3zM15 18.1l-6-1.5V5.4l6 1.5v11.2z" fill="currentColor"/></symbol>
+  <symbol id="icon-city" viewBox="0 0 24 24"><path d="M15 11V5l-3-3-3 3v2H3v14h18V11h-6zm-8 8H5v-2h2v2zm0-4H5v-2h2v2zm0-4H5V9h2v2zm6 8h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V9h2v2zm0-4h-2V5h2v2zm6 12h-2v-2h2v2zm0-4h-2v-2h2v2z" fill="currentColor"/></symbol>
+  <symbol id="icon-vehicle" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z" fill="currentColor"/></symbol>
+  <symbol id="icon-achievement" viewBox="0 0 24 24"><path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z" fill="currentColor"/></symbol>
+</svg>
 <div id="auth-overlay" class="auth-overlay" style="display: none;">
 <div class="auth-box">
   <h2>🏰 艾尔希亚跑商</h2>
@@ -40,39 +64,35 @@
 <div id="app">
 <div id="toast-container"></div>
 <div id="topbar">
-    <div class="tb-row">
-      <div class="tb-cell" title="网络状态"><span class="tb-label">⚡</span><span class="tb-val">⚪</span></div>
-      <div class="tb-cell tb-loc"><span class="tb-loc-name"><span class="dot"></span>绿田村</span></div>
-      <div class="tb-cell"><span class="tb-label">Day</span><span class="tb-val">24</span></div>
-    </div>
-    <div class="tb-row">
-      <div class="tb-cell"><span class="tb-label">🚛 货舱</span><span class="tb-val">0/30</span></div>
-      <div class="tb-cell"><span class="tb-label">🧳 旅客</span><span class="tb-val">0/4</span></div>
-      <div class="tb-cell"><span class="tb-label">⭐ 本城声望</span><span class="tb-val" style="color:var(--gold)">Lv0</span></div>
-      <div class="tb-cell tb-ops"><span class="tb-gold">💰 931,999</span></div>
-    </div>
-    <div class="tb-row tb-row-user">
-      <div class="tb-user-meta">
-        <span class="tb-user-chip" title="当前运行模式">💾 单机</span>
-        <span class="tb-user-chip" title="当前账号">👤 <b>111</b></span>
-        
+    <div class="tb-row tb-row-topbar">
+      <div class="tb-cell tb-net" title="网络状态">
+        <svg class="tb-icon"><use href="#icon-network"/></svg>
+        <span class="tb-val net-dot" style="color:var(--text3)">●</span>
       </div>
-      <div class="tb-user-actions">
-        <button class="t-logout" onclick="exportLocalSave()" title="导出当前单机存档">导出</button><button class="t-logout" onclick="importLocalSave()" title="导入并覆盖当前单机存档">导入</button>
-        <button class="tb-theme" onclick="toggleTheme()" title="切换到深色">🌙 深色</button>
-        <button class="t-logout" onclick="doLogout()" title="退出当前账号">登出</button>
+      <div class="tb-cell"><span class="tb-label"><svg class="tb-icon inline"><use href="#icon-day"/></svg> Day</span><span class="tb-val">24</span></div>
+      <div class="tb-cell tb-ops"><span class="tb-gold"><svg class="tb-icon inline"><use href="#icon-gold"/></svg> 931,999</span></div>
+      <div class="tb-cell tb-stat-card"><span class="tb-label"><svg class="tb-icon inline"><use href="#icon-cargo"/></svg> 货舱</span><span class="tb-val">0/30</span></div>
+      <div class="tb-cell tb-stat-card"><span class="tb-label"><svg class="tb-icon inline"><use href="#icon-passenger"/></svg> 旅客</span><span class="tb-val">0/4</span></div>
+      <div class="tb-cell tb-stat-card"><span class="tb-label"><svg class="tb-icon inline"><use href="#icon-reputation"/></svg> 声望</span><span class="tb-val" style="color:var(--gold)">Lv0</span></div>
+      <div class="tb-cell tb-actions">
+        <span class="tb-user-chip" title="当前运行模式"><svg class="tb-icon inline"><use href="#icon-mode-standalone"/></svg> 单机</span>
+        <span class="tb-user-chip clickable" title="点击打开用户中心" onclick="openUserPanel()"><svg class="tb-icon inline"><use href="#icon-user"/></svg> <b>111</b></span>
+        <button class="tb-action" onclick="exportLocalSave()" title="导出当前单机存档"><svg class="tb-icon"><use href="#icon-export"/></svg></button>
+        <button class="tb-action" onclick="importLocalSave()" title="导入并覆盖当前单机存档"><svg class="tb-icon"><use href="#icon-import"/></svg></button>
+        <button class="tb-action tb-theme" onclick="toggleTheme()" title="切换到深色"><svg class="tb-icon"><use href="#icon-theme-dark"/></svg></button>
+        <button class="tb-action" onclick="doLogout()" title="退出当前账号"><svg class="tb-icon"><use href="#icon-logout"/></svg></button>
       </div>
     </div>
   </div>
 <nav>
-  <button data-tab="map" class="active">🗺 地图</button>
-  <button data-tab="city" class="">🏙 城市</button>
-  <button data-tab="vehicle" class="">🚛🏪 载具仓库</button>
-  <button data-tab="achrank">🏆📊 成就排行</button>
+  <button data-tab="map" class="active"><svg class="nav-icon"><use href="#icon-map"/></svg><span>地图</span></button>
+  <button data-tab="city" class=""><svg class="nav-icon"><use href="#icon-city"/></svg><span>城市</span></button>
+  <button data-tab="vehicle" class=""><svg class="nav-icon"><use href="#icon-vehicle"/></svg><span>载具仓库</span></button>
+  <button data-tab="achrank"><svg class="nav-icon"><use href="#icon-achievement"/></svg><span>成就排行</span></button>
 </nav>
 <div id="content">
   <div id="tutorial-board"></div>
-  <div id="event-board"></div>
+  <div id="event-board" class="event-board"><span class="event-location"><svg class="tb-icon loc"><use href="#icon-location"/></svg><span class="tb-loc-name">绿田村</span></span></div>
   <div id="view-map" class="active"></div>
   <div id="view-city" class=""></div>
   <div id="view-vehicle" class=""></div>
@@ -373,9 +393,10 @@ function setStoredPwd(u,p){localStorage.setItem(PWD_PREFIX+u,p);localStorage.rem
 var ONLINE=false;
 // v7.8：网络状态机（ok=正常 / down=断开重连中）；断线自动重连 + 恢复后全量同步
 var __netState='ok',__retryTimer=null;
-function netDot(){ // 顶栏状态点：🟢 在线 / 🔴 重连中 / ⚪ 离线模式
-  if(!ONLINE)return'⚪';
-  return window.__netState==='down'?'🔴':'🟢';
+function netDot(){ // 顶栏状态点：在线 / 重连中 / 离线模式
+  let color='var(--text3)';
+  if(ONLINE) color=window.__netState==='down'?'var(--red)':'var(--green)';
+  return `<span class="net-dot" style="color:${color}">●</span>`;
 }
 function netHit(){
   if(window.__netState==='down'){window.__netState='ok';renderTopbar();toast('✅ 网络已恢复','ok');}
@@ -1428,7 +1449,17 @@ function runCmd(line){
 }
 function toggleCmdPanel(){
   const el=document.getElementById('cmd-panel');
-  if(el)el.style.display=el.style.display==='none'?'flex':'none';
+  if(!el)return;
+  const opening=el.style.display==='none';
+  if(opening){
+    hideChatPanel();
+    el.style.display='flex';
+    positionToolPanel(el);
+    document.getElementById('cmd-fab')?.classList.add('active');
+  }else{
+    el.style.display='none';
+    document.getElementById('cmd-fab')?.classList.remove('active');
+  }
   // v9.11.x：在线模式首次打开指令台提示权限边界（仅一次，不刷屏）
   if(el&&el.style.display==='flex'&&ONLINE&&!window.__cmdModeHinted){
     window.__cmdModeHinted=true;
@@ -1532,13 +1563,13 @@ function renderChatHist(){
 function showChatPanel(){
   const fab=document.getElementById('chat-fab'),p=document.getElementById('chat-panel');
   if(!fab||!p)return;
+  const cmd=document.getElementById('cmd-panel');
+  if(cmd)cmd.style.display='none';
+  document.getElementById('cmd-fab')?.classList.remove('active');
   CHAT.panelOpen=true;
-  const r=fab.getBoundingClientRect();
-  fab.style.display='none';
-  p.style.left=r.left+'px';
-  p.style.top='auto';p.style.right='auto';
-  p.style.bottom=Math.max(0,window.innerHeight-r.bottom)+'px';
   p.style.display='flex';
+  positionToolPanel(p);
+  fab.classList.add('active');
   renderChatHist();
   clampChatPanel();
 }
@@ -1546,12 +1577,8 @@ function hideChatPanel(){
   const fab=document.getElementById('chat-fab'),p=document.getElementById('chat-panel');
   if(!fab||!p)return;
   CHAT.panelOpen=false;
-  const r=p.getBoundingClientRect();
   p.style.display='none';
-  fab.style.left=r.left+'px';
-  fab.style.top='auto';fab.style.right='auto';
-  fab.style.bottom=Math.max(0,window.innerHeight-r.bottom)+'px';
-  fab.style.display='flex';
+  fab.classList.remove('active');
 }
 function toggleChatHist(){
   CHAT.histOpen=!CHAT.histOpen;
@@ -1647,11 +1674,66 @@ function makeDraggable(el,handle,opts){
     drag=false;
   });
 }
+// 右下角组合工具：面板从工具组上方向视口内展开。
+function positionToolPanel(panel){
+  const tools=document.getElementById('floating-tools');if(!panel||!tools)return;
+  const a=tools.getBoundingClientRect(),gap=10,pad=8;
+  const left=Math.min(Math.max(pad,a.right-panel.offsetWidth),Math.max(pad,window.innerWidth-panel.offsetWidth-pad));
+  const bottom=Math.min(Math.max(pad,window.innerHeight-a.top+gap),Math.max(pad,window.innerHeight-panel.offsetHeight-pad));
+  panel.style.left=left+'px';panel.style.bottom=bottom+'px';
+  panel.style.top='auto';panel.style.right='auto';
+}
+function initFloatingTools(){
+  const tools=document.getElementById('floating-tools');if(!tools||tools.dataset.dragReady)return;
+  tools.dataset.dragReady='1';
+  const key='wander-floating-tools-pos';
+  try{
+    const pos=JSON.parse(localStorage.getItem(key)||'null');
+    if(pos&&Number.isFinite(pos.x)&&Number.isFinite(pos.y)){
+      tools.style.left=Math.min(Math.max(0,pos.x),window.innerWidth-tools.offsetWidth)+'px';
+      tools.style.top=Math.min(Math.max(0,pos.y),window.innerHeight-tools.offsetHeight)+'px';
+      tools.style.right='auto';tools.style.bottom='auto';
+    }
+  }catch(e){}
+  let dragging=false,moved=false,sx=0,sy=0,ox=0,oy=0;
+  tools.addEventListener('pointerdown',e=>{
+    if(e.button!==undefined&&e.button!==0)return;
+    const r=tools.getBoundingClientRect();
+    dragging=true;moved=false;sx=e.clientX;sy=e.clientY;ox=r.left;oy=r.top;
+    tools.classList.add('dragging');
+  });
+  tools.addEventListener('pointermove',e=>{
+    if(!dragging)return;
+    const dx=e.clientX-sx,dy=e.clientY-sy;
+    if(!moved&&Math.abs(dx)+Math.abs(dy)>5){moved=true;tools.setPointerCapture?.(e.pointerId);}
+    if(!moved)return;
+    tools.style.left=Math.min(Math.max(0,ox+dx),window.innerWidth-tools.offsetWidth)+'px';
+    tools.style.top=Math.min(Math.max(0,oy+dy),window.innerHeight-tools.offsetHeight)+'px';
+    tools.style.right='auto';tools.style.bottom='auto';
+  });
+  tools.addEventListener('pointerup',e=>{
+    if(!dragging)return;
+    dragging=false;tools.classList.remove('dragging');
+    if(tools.hasPointerCapture?.(e.pointerId))tools.releasePointerCapture(e.pointerId);
+    if(moved){
+      tools.dataset.suppressClick='1';
+      localStorage.setItem(key,JSON.stringify({x:tools.offsetLeft,y:tools.offsetTop}));
+      setTimeout(()=>delete tools.dataset.suppressClick,0);
+      const chat=document.getElementById('chat-panel'),cmd=document.getElementById('cmd-panel');
+      if(chat&&chat.style.display!=='none')positionToolPanel(chat);
+      if(cmd&&cmd.style.display!=='none')positionToolPanel(cmd);
+    }
+  });
+  tools.addEventListener('click',e=>{
+    if(tools.dataset.suppressClick){e.preventDefault();e.stopImmediatePropagation();}
+  },true);
+}
 function initChatFab(){
-  const fab=document.getElementById('chat-fab');if(!fab)return;
-  makeDraggable(fab,fab,{onClick:showChatPanel}); // 气泡：可拖动，点击=展开面板
+  initFloatingTools();
   const p=document.getElementById('chat-panel'),head=document.getElementById('chat-head');
   if(p&&head)makeDraggable(p,head,{bottomAnchored:true}); // v9.11.5：面板：拖动标题栏移动（保持底部锚定）
+  const cp=document.getElementById('cmd-panel'),ch=document.getElementById('cmd-head');
+  if(cp&&ch)makeDraggable(cp,ch,{bottomAnchored:true});
 }
 
 // ===== 游戏状态（v9.0：由 state.js 的 State.init() 统一管理） =====
@@ -2748,7 +2830,7 @@ const TUTORIAL_STEPS=[
      return '在市场购入一件基础物资（如谷物），装进你的载具';
    },
    hint:function(){
-     if(currentTab!=='city')return '点击下方导航栏的「🏙 城市」按钮';
+     if(currentTab!=='city')return '点击左侧导航栏的「🏙 城市」按钮';
      if(tutHasDraft('buy')&&!tutPhase.buyIntroDone)return '了解中转面板后，点击「下一步」继续完成购买';
      if(tutHasDraft('buy'))return '在右侧中转面板点击「确认购入」，完成本次购买';
      return '在购入页选中基础物资卡片，点击「加入中转面板」';
@@ -2780,7 +2862,7 @@ const TUTORIAL_STEPS=[
    desc:function(){return GS.traveling?('正在前往 '+getCityName(GS.traveling.to)+'，请稍候…'):'在地图点击任务目的地城市，出发旅行';},
    hint:function(){
      if(GS.traveling)return '旅行中请稍候，抵达后将继续引导';
-     if(currentTab!=='map')return '点击下方导航栏的「🗺 地图」按钮';
+     if(currentTab!=='map')return '点击左侧导航栏的「🗺 地图」按钮';
      return '在地图上点击任务目的地城市（金色脉冲处）';
    },
    sel:function(){
@@ -2956,34 +3038,34 @@ function setTheme(theme){
 }
 function toggleTheme(){setTheme(getTheme()==='dark'?'light':'dark');renderTopbar()}
 function renderTopbar(){
-  const loc=getCityName(GS.location),used=getUsedCargo(),cap=getVehicleCapacity();
-  const theme=getTheme(),themeBtn=theme==='dark'?'☀ 浅色':'🌙 深色',themeTitle=theme==='dark'?'切换到浅色':'切换到深色';
+  const used=getUsedCargo(),cap=getVehicleCapacity();
+  const theme=getTheme(),themeIcon=theme==='dark'?'#icon-theme-light':'#icon-theme-dark',themeTitle=theme==='dark'?'切换到浅色':'切换到深色';
   const user=localStorage.getItem(AUTH_KEY)||'';
   const nick=(GS.nickname||user||'未登录');
-  let trav='';if(GS.traveling)trav=`<span class="tb-user-chip tb-travel-chip">⏳ ${getCityName(GS.traveling.to)} ${Math.max(0,Math.ceil((GS.traveling.arrivalTime-Date.now())/1000))}s</span>`;
+  let trav='';if(GS.traveling)trav=`<span class="tb-user-chip tb-travel-chip"><svg class="tb-icon inline"><use href="#icon-travel"/></svg> ${getCityName(GS.traveling.to)} ${Math.max(0,Math.ceil((GS.traveling.arrivalTime-Date.now())/1000))}s</span>`;
+  const modeIcon=Runtime.isStandalone?'#icon-mode-standalone':'#icon-mode-online';
+  const modeText=Runtime.isStandalone?'单机':'在线';
+  const netColor=!ONLINE?'var(--text3)':(window.__netState==='down'?'var(--red)':'var(--green)');
+  const standaloneActions=Runtime.isStandalone?`<button class="tb-action" onclick="exportLocalSave()" title="导出当前单机存档"><svg class="tb-icon"><use href="#icon-export"/></svg></button><button class="tb-action" onclick="importLocalSave()" title="导入并覆盖当前单机存档"><svg class="tb-icon"><use href="#icon-import"/></svg></button>`:'';
   document.getElementById('topbar').innerHTML=`
-    <div class="tb-row">
-      <div class="tb-cell" title="网络状态"><span class="tb-label">⚡</span><span class="tb-val">${netDot()}</span></div>
-      <div class="tb-cell tb-loc"><span class="tb-loc-name"><span class="dot"></span>${loc}</span></div>
-      <div class="tb-cell"><span class="tb-label">Day</span><span class="tb-val">${GS.day}</span></div>
-    </div>
-    <div class="tb-row">
-      <div class="tb-cell"><span class="tb-label">🚛 货舱</span><span class="tb-val">${used+getTaskCargoUsed()}/${cap}</span></div>
-      <div class="tb-cell"><span class="tb-label">🧳 旅客</span><span class="tb-val">${getPassUsed()+getTaskPassUsed()}/${getPassCapacity()}</span></div>
-      <div class="tb-cell"><span class="tb-label">⭐ 本城声望</span><span class="tb-val" style="color:var(--gold)">Lv${getRepLevel(GS.location)}</span></div>
-      <div class="tb-cell tb-ops"><span class="tb-gold${GS.gold<0?' debt':''}">💰 ${fmt(GS.gold)}${GS.gold<0?'（欠债）':''}</span></div>
-    </div>
-    <div class="tb-row tb-row-user">
-      <div class="tb-user-meta">
-        <span class="tb-user-chip" title="当前运行模式">${Runtime.isStandalone?'💾 单机':'🌐 在线'}</span>
-        <span class="tb-user-chip clickable" title="点击打开用户中心（改昵称/改密码/称号）" onclick="openUserPanel()">👤 <b>${chatEsc(nick)}</b>${window.Titles&&Titles.equippedId()?Titles.badgeHTML(Titles.equippedId()):''}<span class="tb-chip-caret">▾</span></span>
-        ${trav}
+    <div class="tb-row tb-row-topbar">
+      <div class="tb-cell tb-net" title="网络状态">
+        <svg class="tb-icon"><use href="#icon-network"/></svg>
+        <span class="tb-val net-dot" style="color:${netColor}">●</span>
       </div>
-      <div class="tb-user-actions">
-        ${Runtime.isStandalone?'<button class="t-logout" onclick="exportLocalSave()" title="导出当前单机存档">导出</button><button class="t-logout" onclick="importLocalSave()" title="导入并覆盖当前单机存档">导入</button>':''}
-        <button class="t-mail" id="tb-mail-btn" onclick="Mailbox.open()" title="邮箱">📮 邮箱<span class="tb-mail-count" id="tb-mail-count"></span><span class="tb-mail-dot" id="tb-mail-dot" style="display:none"></span></button>
-        <button class="tb-theme" onclick="toggleTheme()" title="${themeTitle}">${themeBtn}</button>
-        <button class="t-logout" onclick="doLogout()" title="退出当前账号">登出</button>
+      <div class="tb-cell"><span class="tb-label"><svg class="tb-icon inline"><use href="#icon-day"/></svg> Day</span><span class="tb-val">${GS.day}</span></div>
+      <div class="tb-cell tb-ops"><span class="tb-gold${GS.gold<0?' debt':''}"><svg class="tb-icon inline"><use href="#icon-gold"/></svg> ${fmt(GS.gold)}${GS.gold<0?'（欠债）':''}</span></div>
+      <div class="tb-cell tb-stat-card"><span class="tb-label"><svg class="tb-icon inline"><use href="#icon-cargo"/></svg> 货舱</span><span class="tb-val">${used+getTaskCargoUsed()}/${cap}</span></div>
+      <div class="tb-cell tb-stat-card"><span class="tb-label"><svg class="tb-icon inline"><use href="#icon-passenger"/></svg> 旅客</span><span class="tb-val">${getPassUsed()+getTaskPassUsed()}/${getPassCapacity()}</span></div>
+      <div class="tb-cell tb-stat-card"><span class="tb-label"><svg class="tb-icon inline"><use href="#icon-reputation"/></svg> 声望</span><span class="tb-val" style="color:var(--gold)">Lv${getRepLevel(GS.location)}</span></div>
+      <div class="tb-cell tb-actions">
+        ${trav}
+        <span class="tb-user-chip" title="当前运行模式"><svg class="tb-icon inline"><use href="${modeIcon}"/></svg> ${modeText}</span>
+        <span class="tb-user-chip clickable" title="点击打开用户中心（改昵称/改密码/称号）" onclick="openUserPanel()"><svg class="tb-icon inline"><use href="#icon-user"/></svg> <b>${chatEsc(nick)}</b>${window.Titles&&Titles.equippedId()?Titles.badgeHTML(Titles.equippedId()):''}<span class="tb-chip-caret">▾</span></span>
+        ${standaloneActions}
+        <button class="tb-action t-mail" id="tb-mail-btn" onclick="Mailbox.open()" title="邮箱"><svg class="tb-icon"><use href="#icon-mail"/></svg><span class="tb-mail-count" id="tb-mail-count"></span><span class="tb-mail-dot" id="tb-mail-dot" style="display:none"></span></button>
+        <button class="tb-action tb-theme" onclick="toggleTheme()" title="${themeTitle}"><svg class="tb-icon"><use href="${themeIcon}"/></svg></button>
+        <button class="tb-action" onclick="doLogout()" title="退出当前账号"><svg class="tb-icon"><use href="#icon-logout"/></svg></button>
       </div>
     </div>
   `;
@@ -2993,7 +3075,7 @@ function renderContent(){
   const c=document.getElementById('content');
   // 事件横幅（位于内容区顶部，常驻展示进行中的公共事件）
   let eb=document.getElementById('event-board');
-  if(!eb){eb=document.createElement('div');eb.id='event-board';c.prepend(eb);}
+  if(!eb){eb=document.createElement('div');eb.id='event-board';eb.className='event-board';c.prepend(eb);}
   eb.innerHTML=renderEventBoard();
   let tb=document.getElementById('tutorial-board');
   if(!tb){tb=document.createElement('div');tb.id='tutorial-board';c.prepend(tb);}
@@ -3046,8 +3128,8 @@ function renderCity(){
   // v9.1：城市市场布局参考“交易所”样式：左侧为物价图，右侧为中转面板 + 物品列表
   let html=`<div class="city-layout">`;
   html+=`<div class="market-panel market-split">`;
-  html+=`<div class="market-tabs"><button class="buy-tab active" onclick="switchMarket('buy')">🛒 购入</button><button class="sell-tab" onclick="switchMarket('sell')">💰 售出</button></div>`;
-  html+=`<div class="market-body">`;
+  html+=`<div class="market-tabs"><button class="buy-tab active" onclick="switchMarket('buy')">🛒 购入</button><button class="sell-tab" onclick="switchMarket('sell')">💰 售出</button><button class="chart-toggle" onclick="toggleMarketChart()" title="${_chartCollapsed?'展开行情折线图':'折叠行情折线图，为交易区腾出空间'}" aria-expanded="${_chartCollapsed?'false':'true'}">${_chartCollapsed?'📈 展开行情':'📉 收起行情'}</button></div>`;
+  html+=`<div class="market-body${_chartCollapsed?' chart-collapsed':''}">`;
   // 左侧：物价图（填充“空缺区域”）
   html+=`<div class="market-chart"><div class="chart-panel"><h4>📈 行情走势 <select id="chart-select" onchange="onChartSelect()"><option value="">-- 选择物资 --</option>`;
   for(let gid of chartable){const it=getItem(gid);html+=`<option value="${gid}" ${gid===_chartItem?'selected':''}>${it.icon} ${it.name}</option>`}
@@ -3597,7 +3679,6 @@ else{(async()=>{
 </script>
 
 <!-- 后台指令台（v7.4） -->
-<div id="cmd-fab" onclick="toggleCmdPanel()" title="后台指令">🛠</div>
 <div id="cmd-panel" style="display:none">
   <div id="cmd-head">🛠 后台指令台 <span style="float:right;cursor:pointer" onclick="toggleCmdPanel()">✕</span></div>
   <div id="cmd-out"></div>
@@ -3617,7 +3698,16 @@ else{(async()=>{
   </div>
 </div>
 <div id="danmaku-layer"></div>
-<div id="chat-fab" title="弹幕聊天室">💬</div>
+<ul id="floating-tools" class="floating-tools">
+  <li class="icon-content">
+    <span class="tooltip">弹幕聊天室</span>
+    <button id="chat-fab" class="link" data-tool="chat" type="button" onclick="showChatPanel()" aria-label="弹幕聊天室"><span class="tool-glyph">💬</span></button>
+  </li>
+  <li class="icon-content">
+    <span class="tooltip">后台指令</span>
+    <button id="cmd-fab" class="link" data-tool="command" type="button" onclick="toggleCmdPanel()" aria-label="后台指令"><span class="tool-glyph">🛠</span></button>
+  </li>
+</ul>
 <div id="chat-panel" style="display:none">
   <div id="chat-head">💬 弹幕聊天室（可拖动） <span class="ch-close" onclick="hideChatPanel()">✕</span></div>
   <div id="chat-hist" style="display:none"></div>
