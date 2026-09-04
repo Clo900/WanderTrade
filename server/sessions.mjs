@@ -15,13 +15,14 @@
 import { randomBytes } from 'node:crypto';
 
 const TTL_MS = 7 * 24 * 3600 * 1000;   // 7 天
-const MAX_PER_USER = 8;                // 单账号并发会话上限
+const MAX_PER_USER = 1;                // v9.14.4：同账号强制单会话（新登录挤掉旧端，杜绝双写互相覆盖）
 
 export function createSessions(opts) {
   const ttlMs = (opts && opts.ttlMs) || TTL_MS;
   const maxPerUser = (opts && opts.maxPerUser) || MAX_PER_USER;
   const tokens = new Map();   // token -> { user, exp }
   const byUser = new Map();   // user -> Map(token -> exp)（有序插入）
+  const kicked = new Map();   // v9.14.4：token -> 被挤占时间戳（仅"新登录挤掉旧会话"记录，客户端可区分提示）
 
   function expireOf(user) {
     let m = byUser.get(user);
@@ -29,21 +30,34 @@ export function createSessions(opts) {
     return m;
   }
 
-  /** 签发新 token；超限时先吊销该用户最旧会话 */
+  /** 签发新 token；单账号仅保留最新会话——旧会话被"挤占"（客户端可据此明确提示） */
   function create(user) {
     const m = expireOf(user);
     const now = Date.now();
     for (const [tk, exp] of m) { if (exp <= now) { m.delete(tk); tokens.delete(tk); } }
-    while (m.size >= maxPerUser) {
+    while (m.size >= maxPerUser) {           // v9.14.4：cap=1 → 新登录挤掉旧会话
       const oldest = m.keys().next().value;
       if (oldest === undefined) break;
       m.delete(oldest); tokens.delete(oldest);
+      kicked.set(oldest, now);               // 标记"被挤占"，旧端下次请求收到 err:'kicked'
     }
+    pruneKicked();
     const token = randomBytes(24).toString('hex');
     const exp = now + ttlMs;
     m.set(token, exp);
     tokens.set(token, { user, exp });
     return token;
+  }
+
+  /** 清理过老的被挤占标记（防内存增长） */
+  function pruneKicked() {
+    const now = Date.now();
+    for (const [tk, ts] of kicked) { if (now - ts > ttlMs * 2) kicked.delete(tk); }
+  }
+
+  /** 该 token 是否因"被新登录挤占"而失效（区别于过期 / 登出吊销） */
+  function wasKicked(token) {
+    return kicked.has(token);
   }
 
   /** 校验并滑动续期；无效返回 null */
@@ -81,5 +95,5 @@ export function createSessions(opts) {
     byUser.delete(user);
   }
 
-  return { create, resolve, revoke, revokeUser };
+  return { create, resolve, revoke, revokeUser, wasKicked };
 }

@@ -246,7 +246,7 @@ e:\WanderTrade\
 | **城市页渲染** | 市场卡片、价格图表、情报所、任务板 |
 | **载具仓库** | 车厢装配/卸载/升级、核心强化、耐久系统 |
 | **任务系统** | 任务生成、接取、交付、刷新 |
-| **在线同步** | `startOnline()`、`syncPlayer()`、`autoSave()`、断线重连 |
+| **在线同步** | `startOnline()`、`syncPlayer()`、`autoSave()`、断线重连（v9.14.3：`pushSaveOnline()` 单飞串行 + 冲突自愈重推；v9.14.4：同账号单会话 + 多窗口租约锁 `_game_tab_lease`） |
 | **认证系统** | `doLogin()`、`doRegister()`、`doLogout()` |
 | **旅行系统** | `startTravel()`、`advanceDay()`、旅行进度动画 |
 | **成就/排行** | 成就解锁检测、排行榜数据获取 |
@@ -606,9 +606,9 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 | 模块 | 职责 |
 |------|------|
 | `index.mjs` | 入口：参数解析、服务装配、优雅退出（先全量落盘再关闭） |
-| `sessions.mjs` | 内存会话 Token：签发 / 校验（7 天滑动续期） / 吊销（v9.14.1） |
+| `sessions.mjs` | 内存会话 Token：签发 / 校验（7 天滑动续期） / 吊销（v9.14.1；v9.14.4 单账号仅 1 会话，新登录挤占旧会话并标记 `kicked`） |
 | `gs-validate.mjs` | gs 白名单清洗 + 快照差分审计（`CAPS` 常量区可调；纯函数）（v9.14.1） |
-| `routes.mjs` | 路由：静态资源分发 + 全部 API 端点 + SSE（`/api/chat/stream`）+ v9.14.1 鉴权门（guard）与 /api/save 四道防线管线 |
+| `routes.mjs` | 路由：静态资源分发 + 全部 API 端点 + SSE（`/api/chat/stream`）+ v9.14.1 鉴权门（guard）与 /api/save 四道防线管线（v9.14.3：拒绝审计 → `server_save_conflict.log`；v9.14.4：guard 区分 `kicked`、拒绝日志带 `cliver`、静态 .html no-cache） |
 | `store.mjs` | 原子 JSON 读写（tmp+rename）+ 防抖落盘器（Debouncer） |
 | `world.mjs` | 世界加载/迁移/重建（`__schema` 兼容旧版）、`GetWorldDay`、30 分钟补货、公告 |
 | `players.mjs` | 玩家存档内存缓存（Map + 并发加载去重）、防抖落盘、昵称/聊天档案、单调版本号 `sv`（getSv/bumpSv，v9.14.1） |
@@ -720,7 +720,7 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 | POST | `/api/register` | 注册即登录，body: `{user, nickname, pass}`，成功返回 `{ok, token}` |
 | POST | `/api/login` | 登录，body: `{user, pass}`，成功返回 `{ok, nickname, token}` |
 | GET | `/api/player/{user}` | 获取本人存档（需登录），返回 `{ok, nickname, gs, sv}` |
-| POST | `/api/save` | 保存存档，body: `{user, gs, baseSv}`（需登录）；服务端执行"sv 版本校验 + 白名单清洗 + 快照差分审计"，通过后接受并返回 `{ok, sv}`；失败返回 `{ok:false, conflict:true, reason?/anomaly?}` |
+| POST | `/api/save` | 保存存档，body: `{user, gs, baseSv, cliver}`（需登录）；服务端执行"sv 版本校验 + 白名单清洗 + 快照差分审计"，通过后接受并返回 `{ok, sv}`；失败返回 `{ok:false, conflict:true, reason?/anomaly?}`（v9.14.3：拒绝事件记入 `server_save_conflict.log`、客户端对 `stale` 冲突自愈重推而非直接回拉；v9.14.4：日志带 `cliver` 客户端版本） |
 | POST | `/api/logout` | 登出，吊销当前会话 Token（v9.14.1） |
 | POST | `/api/chat` | 发送聊天，body: `{user, loc, msg}`（需登录，防冒充） |
 | GET | `/api/chat?since=` | 增量获取聊天消息（公开） |

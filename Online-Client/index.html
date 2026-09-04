@@ -367,7 +367,7 @@ function getToken(){try{return localStorage.getItem(TOKEN_KEY)||''}catch(e){retu
 function setToken(t){try{if(t)localStorage.setItem(TOKEN_KEY,t);else localStorage.removeItem(TOKEN_KEY);}catch(e){}}
 // v9.14.1：客户端发布版本标记——版本变化时强制重登一次，
 // 消除"用户是否已在新版"的歧义（旧会话/旧页面在下一轮刷新必然弹回登录）
-const APP_VERSION='v9.14.2';
+const APP_VERSION='v9.14.3';
 const VER_KEY='_ver_seen';
 function verSeen(){try{return localStorage.getItem(VER_KEY)||''}catch(e){return ''}}
 function markVerSeen(){try{localStorage.setItem(VER_KEY,APP_VERSION)}catch(e){}}
@@ -432,13 +432,15 @@ const NET={
       return j}catch(e){netMiss();return null}}
 };
 // v9.14：会话失效（无 token / token 被吊销）→ 清理本地并弹回登录
+// v9.14.4：err='kicked'（被新登录挤占）给明确提示；其余失效走通用文案
 function handleAuthErr(j,url){
   if(!j)return;
-  if((j.err==='need login'||j.err==='unauthorized')&&getToken()&&!/\/api\/(login|register|world|admin|logout)/.test(url)){
-    onAuthExpired();
+  if(getToken()&&!/\/api\/(login|register|world|admin|logout)/.test(url)){
+    if(j.err==='kicked'){onAuthExpired('该账号已在其他设备/窗口登录，本端已退出（后登录者优先）');return;}
+    if(j.err==='need login'||j.err==='unauthorized'){onAuthExpired();return;}
   }
 }
-function onAuthExpired(){
+function onAuthExpired(msg){
   if(!ONLINE)return;
   window.__gsReady=false;
   setToken(null);
@@ -450,7 +452,7 @@ function onAuthExpired(){
   if(ov)ov.style.display='flex';
   if(ra)ra.style.display='flex';
   toggleAuth('login');
-  authErr('登录已失效，请重新登录');
+  authErr(msg||'登录已失效，请重新登录');
   renderTopbar();
 }
 // v7.8：断线恢复/多端冲突后的全量同步（服务器较新→拉取覆盖；本地较新→上传）
@@ -476,7 +478,7 @@ function makeSavePayload(user){
   delete up.day;delete up.gameStartTime;delete up.mailbox;
   delete up.__basePrices;delete up.__purchaseLimits; // 世界数据随服务器，不随玩家档上传
   delete up.__clockOffset;delete up.__loaded;delete up.__lastSv;delete up.__gsReady;delete up.__lastServerAt;
-  return {user,gs:up,baseSv:(GS.__lastSv||0)};
+  return {user,gs:up,baseSv:(GS.__lastSv||0),cliver:APP_VERSION}; // v9.14.4：携带客户端版本，服务端拒绝日志可溯源
 }
 // v8.19：玩家存档"服务器↔本机"合并——本机离线档较新则恢复并上传（保留离线完成的教程/任务进度），否则恢复服务器档
 async function syncPlayer(user,forceServer){
@@ -736,18 +738,79 @@ async function startOnline(){
   },60000);
   return true;
 }
+// ===== 多窗口租约锁（v9.14.4） =====
+// 同一浏览器多窗口/多标签共享同一份 localStorage（含同一登录 token），服务端
+// 单会话无法区分它们。租约锁保证任意时刻只有一个"前台活跃窗口"拥有存档写权：
+// 前台窗口每 2s 续约；后台/失焦窗口不续约（浏览器会节流其定时器），自然让位。
+// 非持有窗口静默跳过自动保存与 pagehide 兜底上传，切回前台时重新抢约——
+// 杜绝"旧窗口用过期内存整档覆盖活跃窗口"（v9.14.4 双写治理的客户端一半）。
+const __TAB_LS='_game_tab_lease';
+const __tabId=Math.random().toString(36).slice(2)+Date.now().toString(36);
+let __leaseWarned=false;
+function tabRefresh(){ // 仅前台可见时续约（后台标签 interval 被节流 → 自然让位）
+  try{if(!document.hidden)localStorage.setItem(__TAB_LS,JSON.stringify({id:__tabId,ts:Date.now()}));}catch(e){}
+}
+function tabMayPush(){
+  try{
+    const l=JSON.parse(localStorage.getItem(__TAB_LS)||'null');
+    if(!l||l.id===__tabId)return true;           // 无竞争者 / 自己持有
+    if(Date.now()-l.ts>10000)return true;        // 持有者失联（休眠/关闭）→ 可接管
+    return false;                                // 其他窗口活跃中：不写
+  }catch(e){return true}
+}
+setInterval(tabRefresh,2000);
+window.addEventListener('focus',()=>{tabRefresh();}); // 切回前台立即抢约
 // 自动存档：在线→服务器（400ms 防抖合并连续渲染 + 多端冲突检测），离线→localStorage
 let __saveSeq=0,__saveTimer=null;
 window.__gsReady=false; // v8.20：玩家存档确立前禁止自动保存，防止刷新瞬间的初始档覆盖真实进度
-// v9.14：在线推送存档统一入口（成功回写 __lastSv；sv 冲突 → 强制以服务器权威档为准）
+// v9.14.3：在线推送存档统一入口（单飞串行 + 冲突自愈，成功回写 __lastSv）。
+// 修复"同 baseSv 双发 → 误冲突 → 整档回拉吞掉刚接任务"（zero123 事件）：
+//   1) 同一时刻只允许一个在途推送；期间的新请求置 __pushAgain，本轮结束用
+//      最新 GS 快照再推一轮（saveNow 立即推 与 autoSave 定时推 不再互撞）；
+//   2) conflict(stale) 且非 anomaly → 采用服务端返回的 sv 为新基准，把当前
+//      本地档重推（≤PUSH_MAX_TRY 次自愈，单端"假冲突"不丢本地新操作）；
+//      连续冲突 / anomaly（真异常注入）才 fullSync(true) 回拉服务器权威档。
+let __pushRunning=false,__pushAgain=false;
+const PUSH_MAX_TRY=2;
 async function pushSaveOnline(){
-  const r=await NET.post('/api/save',makeSavePayload(localStorage.getItem(AUTH_KEY)));
-  if(r&&r.ok&&typeof r.sv==='number')GS.__lastSv=r.sv;
-  else if(r&&r.conflict&&ONLINE){
-    toast('⚠ 检测到版本冲突（多端操作/GM 变更），正在以服务器为准同步…','info');
-    fullSync(true);
+  const user=localStorage.getItem(AUTH_KEY);
+  if(!user||!ONLINE||!GS.__loaded)return null;
+  if(!tabMayPush()){ // v9.14.4：非租约持有窗口不写档（另一窗口活跃中）
+    if(!__leaseWarned){__leaseWarned=true;toast('已检测到本浏览器其他窗口在运行，本窗口暂停自动保存（切回即可恢复）','info');}
+    return null;
   }
-  return r;
+  __leaseWarned=false;
+  if(__pushRunning){__pushAgain=true;return null;}      // 已在途：登记追赶，本轮结束后携带最新档补推
+  __pushRunning=true;
+  try{
+    let attempt=0;
+    do{
+      __pushAgain=false;
+      if(localStorage.getItem(AUTH_KEY)!==user)return null; // 推送期间登出/换号：放弃在途
+      GS.__savedAt=Date.now();
+      const r=await NET.post('/api/save',makeSavePayload(user));
+      if(r&&r.ok&&typeof r.sv==='number'){GS.__lastSv=r.sv;return r;}
+      if(r&&r.conflict){
+        const cur=typeof r.sv==='number'?r.sv:0;
+        if(r.anomaly){                                    // 真异常注入/回退：回拉服务器权威档
+          toast('⚠ 检测到异常数据，已回拉服务器存档','err');
+          await fullSync(true);
+          return r;
+        }
+        if(attempt>=PUSH_MAX_TRY){                        // 连续冲突：存在持续对端写入 → 以服务器为准
+          toast('⚠ 检测到持续写入冲突，已以服务器存档为准同步…','info');
+          await fullSync(true);
+          return r;
+        }
+        GS.__lastSv=cur;attempt++;                        // 单端"假冲突"自愈：采用服务器基准
+        toast('⚠ 存档版本偏移，已自动校准并保留本地进度…','info');
+        __pushAgain=true;                                 // 用新基准重推当前本地最新档
+      }else{
+        return r;                                         // 网络失败等：留给下轮 render 重试
+      }
+    }while(__pushAgain);
+    return null;
+  }finally{__pushRunning=false;}
 }
 function autoSave(){
   const user=localStorage.getItem(AUTH_KEY);
@@ -792,6 +855,7 @@ window.addEventListener('pagehide',()=>{
   if(!window.__gsReady)return; // v8.20：存档未确立前不兜底保存
   if(ONLINE){
     if(!GS.__loaded)return; // v8.24：未从真实存档加载前不兜底上传
+    if(!tabMayPush())return; // v9.14.4：非租约持有窗口（另一窗口活跃中）关闭时不兜底上传，防旧内存覆盖活跃窗口
     GS.__savedAt=Date.now();
     try{
       // v9.14：sendBeacon 无法自定义 Header → token 随 body 携带
