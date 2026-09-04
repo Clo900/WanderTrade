@@ -105,7 +105,9 @@ export function createRoutes(ctx, services) {
       const tok = rawToken(b);
       const u = tok ? sessions.resolve(tok) : null;
       if (!u) {
-        sendJson(res, { ok: false, err: 'need login' });
+        // v9.14.4：区分"被新登录挤占"（err:'kicked'，客户端给明确提示）与普通失效
+        const kickedFlag = tok ? sessions.wasKicked(tok) : false;
+        sendJson(res, { ok: false, err: kickedFlag ? 'kicked' : 'need login' });
         return null;
       }
       if (String(u) !== String(claimedUser)) {
@@ -207,7 +209,7 @@ export function createRoutes(ctx, services) {
       const curSv = players.getSv(user);
       const baseSv = Number.isInteger(b.baseSv) && b.baseSv >= 0 ? b.baseSv : -1;
       if (baseSv !== curSv) {
-        logSaveReject(user, 'stale', 'baseSv=' + baseSv, curSv); // v9.14.3 审计
+        logSaveReject(user, 'stale', 'baseSv=' + baseSv + (b.cliver ? ' cliver=' + b.cliver : ''), curSv); // v9.14.3 审计
         return sendJson(res, { ok: false, conflict: true, reason: 'stale', sv: curSv });
       }
 
@@ -224,7 +226,7 @@ export function createRoutes(ctx, services) {
         // v9.14 快照防线：与服务器权威快照差分审计（异常注入 → 拒绝并回拉）
         const issue = auditDiff(rec.gs, clean, { stockMode: w && w.stockMode });
         if (issue) {
-          logSaveReject(user, 'anomaly', JSON.stringify(issue), curSv); // v9.14.3 审计
+          logSaveReject(user, 'anomaly', JSON.stringify(issue) + (b.cliver ? ' cliver=' + b.cliver : ''), curSv); // v9.14.3 审计
           return sendJson(res, { ok: false, conflict: true, anomaly: issue, sv: curSv });
         }
       }
@@ -327,7 +329,9 @@ export function createRoutes(ctx, services) {
     }
     const ext = path.extname(filePath).toLowerCase();
     const ct = MIME[ext] || 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': ct, 'Content-Length': data.length });
+    const h = { 'Content-Type': ct, 'Content-Length': data.length };
+    if (ext === '.html') h['Cache-Control'] = 'no-cache'; // v9.14.4：HTML 每次重新校验，确保发版必达（旧 JS 页面不再滞留）
+    res.writeHead(200, h);
     res.end(data);
   }
 
