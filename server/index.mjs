@@ -23,6 +23,8 @@ import { createMailbox } from './mailbox.mjs';
 import { createStarfall } from './starfall.mjs';
 import { createRankings } from './rankings.mjs';
 import { createAdmin } from './admin.mjs';
+import { createGoldLedger } from './gold-ledger.mjs';
+import { createErrorLog } from './error-log.mjs';
 import { createRoutes } from './routes.mjs';
 
 /* ---- 参数解析（兼容 -Port 8080 / -Lan / -Bind host） ---- */
@@ -48,6 +50,8 @@ const ctx = {
   sfFile: path.join(root, 'starfall_activity.json'),
   sfLogFile: path.join(root, 'starfall_log.txt')
 };
+const errorLog = createErrorLog(ctx);
+ctx.errorLog = errorLog;
 
 console.log('');
 console.log('========================================');
@@ -67,7 +71,8 @@ const starfall = createStarfall(ctx, world, players, mailbox);
 const auth = createAuth(ctx, players, sessions);
 const rankings = createRankings(ctx, players);
 const admin = createAdmin(ctx, { world, players, starfall, mailbox });
-const services = { world, players, auth, sessions, tradeApi, chat, starfall, mailbox, rankings, admin };
+const goldLedger = createGoldLedger(ctx);
+const services = { world, players, auth, sessions, tradeApi, chat, starfall, mailbox, rankings, admin, goldLedger, errorLog };
 
 const w0 = await world.loadWorld();
 if (w0) {
@@ -82,6 +87,7 @@ const handle = createRoutes(ctx, services);
 const server = http.createServer(async (req, res) => {
   try { await handle(req, res); } catch (e) {
     try { console.log('  ERROR: ' + (e && e.message)); } catch (e2) { /* ignore */ }
+    try { await errorLog.record('http.server', e, { method: req.method, url: req.url }); } catch (e2) { console.error('[error-log] append error:', e2 && e2.message); }
     try { if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('server error'); } else res.end(); } catch (e2) { /* ignore */ }
   }
 });
@@ -107,10 +113,10 @@ async function shutdown(signal) {
   shuttingDown = true;
   console.log('');
   console.log('Shutting down... (' + signal + ')');
-  try { await players.flushAll(); } catch (e) { console.error('  players flush error: ' + e.message); }
-  try { await chat.flushAll(); } catch (e) { console.error('  chat flush error: ' + e.message); }
-  try { await starfall.flushAll(); } catch (e) { console.error('  starfall flush error: ' + e.message); }
-  try { await world.saveWorld(); } catch (e) { console.error('  world save error: ' + e.message); }
+  try { await players.flushAll(); } catch (e) { console.error('  players flush error: ' + e.message); await errorLog.record('shutdown.players', e).catch(() => {}); }
+  try { await chat.flushAll(); } catch (e) { console.error('  chat flush error: ' + e.message); await errorLog.record('shutdown.chat', e).catch(() => {}); }
+  try { await starfall.flushAll(); } catch (e) { console.error('  starfall flush error: ' + e.message); await errorLog.record('shutdown.starfall', e).catch(() => {}); }
+  try { await world.saveWorld(); } catch (e) { console.error('  world save error: ' + e.message); await errorLog.record('shutdown.world', e).catch(() => {}); }
   chat.closeAll(); // 先断开 SSE 长连接，server.close 才能尽快返回
   server.close(() => {
     console.log('Server stopped.');
@@ -122,3 +128,6 @@ async function shutdown(signal) {
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('uncaughtExceptionMonitor', (e, origin) => {
+  try { errorLog.recordSync('process.uncaughtException', e, { origin }); } catch (logError) { /* 进程即将退出，仅兜底 */ }
+});

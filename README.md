@@ -162,6 +162,8 @@ WanderTrade/
 | `starfall_log.txt` | 星陨城运维日志（结算/轮转/管理操作，服务端追加写入） |
 | `players/*.json` | 各玩家账号与游戏存档（含邮箱 `mailbox`） |
 | `chat.json` | 公共聊天记录 |
+| `logs/gold-consumption-YYYY-MM-DD.jsonl` | 客户端上报的金币消费审计流水，按服务器本地日期自动流转 |
+| `logs/error-YYYY-MM-DD.jsonl` | 服务端运行错误、请求异常及落盘失败，按服务器本地日期自动流转 |
 
 > 服务端采用内存态 + 防抖落盘：玩家存档/聊天/活动状态常驻内存，变更后约 0.5~1s 批量原子写入（tmp+rename），退出时全量落盘兜底。因此**停止服务时应使用 Ctrl+C 优雅退出**，避免强制杀进程丢失最后几秒的未落盘变更。
 

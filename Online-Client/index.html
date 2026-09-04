@@ -101,7 +101,7 @@
 </div>
 <!-- runtime.js 必须最先加载：后续模块只通过 Runtime/Capabilities 判断运行模式。 -->
 <script src="src/app/runtime.js"></script>
-<script src="src/core/state.js"></script>
+<script src="src/core/state.js?v=9145"></script>
 <script src="src/core/event-bus.js"></script>
 <!-- cache-bust: 修复弹窗无法点击/无法关闭 -->
 <script src="src/core/ui-primitives.js?v=921"></script>
@@ -187,6 +187,7 @@ document.addEventListener('DOMContentLoaded', function(){
 // ===== 状态订阅 + EventBus 桥接（v9.0） =====
 State.subscribe('gold', function(newGold, oldGold){
   EventBus.emit(EventBus.EVENTS.GOLD_CHANGED, {gold: newGold});
+  recordGoldConsumption(newGold,oldGold);
 });
 State.subscribe('location', function(newLoc){
   EventBus.emit(EventBus.EVENTS.LOCATION_CHANGED, {location: newLoc});
@@ -365,9 +366,36 @@ const PWD_PREFIX='_pwd_';
 const TOKEN_KEY='_auth_token';
 function getToken(){try{return localStorage.getItem(TOKEN_KEY)||''}catch(e){return ''}}
 function setToken(t){try{if(t)localStorage.setItem(TOKEN_KEY,t);else localStorage.removeItem(TOKEN_KEY);}catch(e){}}
+// 客户端金币消费待上传队列：网络失败时保留，服务端明确 ack 后再删除。
+const GOLD_CONSUMPTION_PREFIX='_gold_consumption_';
+function goldConsumptionKey(user){return GOLD_CONSUMPTION_PREFIX+user}
+function getGoldConsumptions(user){
+  try{const q=JSON.parse(localStorage.getItem(goldConsumptionKey(user))||'[]');return Array.isArray(q)?q:[]}catch(e){return[]}
+}
+function setGoldConsumptions(user,q){
+  try{localStorage.setItem(goldConsumptionKey(user),JSON.stringify((q||[]).slice(-2000)))}catch(e){}
+}
+function newGoldConsumptionId(){
+  try{if(crypto&&typeof crypto.randomUUID==='function')return crypto.randomUUID()}catch(e){}
+  return 'gc_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,12);
+}
+function recordGoldConsumption(next,prev){
+  if(!window.__gsReady||!ONLINE)return;
+  const user=localStorage.getItem(AUTH_KEY);
+  const before=Math.floor(Number(prev)),after=Math.floor(Number(next));
+  if(!user||!Number.isFinite(before)||!Number.isFinite(after)||after>=before)return;
+  const q=getGoldConsumptions(user);
+  q.push({id:newGoldConsumptionId(),ts:Date.now(),before,after,amount:before-after,location:String(GS.location||''),source:'client_state'});
+  setGoldConsumptions(user,q);
+}
+function ackGoldConsumptions(user,ids){
+  if(!Array.isArray(ids)||!ids.length)return;
+  const done=new Set(ids.map(String));
+  setGoldConsumptions(user,getGoldConsumptions(user).filter(x=>!done.has(String(x&&x.id))));
+}
 // v9.14.1：客户端发布版本标记——版本变化时强制重登一次，
 // 消除"用户是否已在新版"的歧义（旧会话/旧页面在下一轮刷新必然弹回登录）
-const APP_VERSION='v9.14.3';
+const APP_VERSION='v9.14.5';
 const VER_KEY='_ver_seen';
 function verSeen(){try{return localStorage.getItem(VER_KEY)||''}catch(e){return ''}}
 function markVerSeen(){try{localStorage.setItem(VER_KEY,APP_VERSION)}catch(e){}}
@@ -478,7 +506,7 @@ function makeSavePayload(user){
   delete up.day;delete up.gameStartTime;delete up.mailbox;
   delete up.__basePrices;delete up.__purchaseLimits; // 世界数据随服务器，不随玩家档上传
   delete up.__clockOffset;delete up.__loaded;delete up.__lastSv;delete up.__gsReady;delete up.__lastServerAt;
-  return {user,gs:up,baseSv:(GS.__lastSv||0),cliver:APP_VERSION}; // v9.14.4：携带客户端版本，服务端拒绝日志可溯源
+  return {user,gs:up,baseSv:(GS.__lastSv||0),cliver:APP_VERSION,goldConsumptions:getGoldConsumptions(user).slice(0,200)}; // 金币消费随存档上传
 }
 // v8.19：玩家存档"服务器↔本机"合并——本机离线档较新则恢复并上传（保留离线完成的教程/任务进度），否则恢复服务器档
 async function syncPlayer(user,forceServer){
@@ -507,7 +535,10 @@ async function syncPlayer(user,forceServer){
   window.__gsReady=true; // v8.20：玩家存档已恢复，此后自动保存生效
   if(useLocal){
     const r=await NET.post('/api/save',makeSavePayload(user));
-    if(r&&r.ok&&typeof r.sv==='number')GS.__lastSv=r.sv;
+    if(r&&r.ok&&typeof r.sv==='number'){
+      GS.__lastSv=r.sv;
+      ackGoldConsumptions(user,r.goldConsumptionAck);
+    }
     else if(r&&r.conflict&&ONLINE)fullSync(true);
   }
 }
@@ -789,7 +820,12 @@ async function pushSaveOnline(){
       if(localStorage.getItem(AUTH_KEY)!==user)return null; // 推送期间登出/换号：放弃在途
       GS.__savedAt=Date.now();
       const r=await NET.post('/api/save',makeSavePayload(user));
-      if(r&&r.ok&&typeof r.sv==='number'){GS.__lastSv=r.sv;return r;}
+      if(r&&r.ok&&typeof r.sv==='number'){
+        GS.__lastSv=r.sv;
+        ackGoldConsumptions(user,r.goldConsumptionAck);
+        if(getGoldConsumptions(user).length){__pushAgain=true;continue;}
+        return r;
+      }
       if(r&&r.conflict){
         const cur=typeof r.sv==='number'?r.sv:0;
         if(r.anomaly){                                    // 真异常注入/回退：回拉服务器权威档

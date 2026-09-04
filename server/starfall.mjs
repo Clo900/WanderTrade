@@ -34,13 +34,15 @@ export function createStarfall(ctx, world, players, mailbox) {
   const { root, sfFile, sfLogFile } = ctx;
   let act = null;
   let sfCats = null;              // { special:[], basic:[] }
-  const flush = new Debouncer(500);
+  const flush = new Debouncer(500, (key, e) => ctx.errorLog.record('store.starfall', e, { key }));
 
   /* ---- 运维日志：控制台 + 追加 starfall_log.txt ---- */
   function log(msg) {
     const line = '[' + new Date().toISOString().replace('T', ' ').slice(0, 19) + '] ' + msg;
     console.log(line);
-    appendFile(sfLogFile, line + '\n', 'utf8').catch(() => {});
+    appendFile(sfLogFile, line + '\n', 'utf8').catch(e => {
+      ctx.errorLog.record('starfall.activity-log', e).catch(logError => console.error('[error-log] append error:', logError && logError.message));
+    });
   }
 
   /* ---- 物资分类池：default-world.json itemCategories（Ordinal 排序与旧版一致） ---- */

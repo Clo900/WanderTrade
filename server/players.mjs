@@ -57,7 +57,7 @@ export function createPlayers(ctx) {
   const { playersDir } = ctx;
   const cache = new Map();     // user -> rec
   const loading = new Map();   // user -> Promise<rec|null>（并发加载去重）
-  const flush = new Debouncer(500);
+  const flush = new Debouncer(500, (user, e) => ctx.errorLog.record('store.players', e, { user }));
 
   function fileOf(user) { return path.join(playersDir, safeFileName(user)); }
 
