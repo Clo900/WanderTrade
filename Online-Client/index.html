@@ -347,7 +347,7 @@ function getToken(){try{return localStorage.getItem(TOKEN_KEY)||''}catch(e){retu
 function setToken(t){try{if(t)localStorage.setItem(TOKEN_KEY,t);else localStorage.removeItem(TOKEN_KEY);}catch(e){}}
 // v9.14.1：客户端发布版本标记——版本变化时强制重登一次，
 // 消除"用户是否已在新版"的歧义（旧会话/旧页面在下一轮刷新必然弹回登录）
-const APP_VERSION='v9.14.2';
+const APP_VERSION='v9.14.3';
 const VER_KEY='_ver_seen';
 function verSeen(){try{return localStorage.getItem(VER_KEY)||''}catch(e){return ''}}
 function markVerSeen(){try{localStorage.setItem(VER_KEY,APP_VERSION)}catch(e){}}
@@ -718,15 +718,49 @@ async function startOnline(){
 // 自动存档：在线→服务器（400ms 防抖合并连续渲染 + 多端冲突检测），离线→localStorage
 let __saveSeq=0,__saveTimer=null;
 window.__gsReady=false; // v8.20：玩家存档确立前禁止自动保存，防止刷新瞬间的初始档覆盖真实进度
-// v9.14：在线推送存档统一入口（成功回写 __lastSv；sv 冲突 → 强制以服务器权威档为准）
+// v9.14.3：在线推送存档统一入口（单飞串行 + 冲突自愈，成功回写 __lastSv）。
+// 修复"同 baseSv 双发 → 误冲突 → 整档回拉吞掉刚接任务"（zero123 事件）：
+//   1) 同一时刻只允许一个在途推送；期间的新请求置 __pushAgain，本轮结束用
+//      最新 GS 快照再推一轮（saveNow 立即推 与 autoSave 定时推 不再互撞）；
+//   2) conflict(stale) 且非 anomaly → 采用服务端返回的 sv 为新基准，把当前
+//      本地档重推（≤PUSH_MAX_TRY 次自愈，单端"假冲突"不丢本地新操作）；
+//      连续冲突 / anomaly（真异常注入）才 fullSync(true) 回拉服务器权威档。
+let __pushRunning=false,__pushAgain=false;
+const PUSH_MAX_TRY=2;
 async function pushSaveOnline(){
-  const r=await NET.post('/api/save',makeSavePayload(localStorage.getItem(AUTH_KEY)));
-  if(r&&r.ok&&typeof r.sv==='number')GS.__lastSv=r.sv;
-  else if(r&&r.conflict&&ONLINE){
-    toast('⚠ 检测到版本冲突（多端操作/GM 变更），正在以服务器为准同步…','info');
-    fullSync(true);
-  }
-  return r;
+  const user=localStorage.getItem(AUTH_KEY);
+  if(!user||!ONLINE||!GS.__loaded)return null;
+  if(__pushRunning){__pushAgain=true;return null;}      // 已在途：登记追赶，本轮结束后携带最新档补推
+  __pushRunning=true;
+  try{
+    let attempt=0;
+    do{
+      __pushAgain=false;
+      if(localStorage.getItem(AUTH_KEY)!==user)return null; // 推送期间登出/换号：放弃在途
+      GS.__savedAt=Date.now();
+      const r=await NET.post('/api/save',makeSavePayload(user));
+      if(r&&r.ok&&typeof r.sv==='number'){GS.__lastSv=r.sv;return r;}
+      if(r&&r.conflict){
+        const cur=typeof r.sv==='number'?r.sv:0;
+        if(r.anomaly){                                    // 真异常注入/回退：回拉服务器权威档
+          toast('⚠ 检测到异常数据，已回拉服务器存档','err');
+          await fullSync(true);
+          return r;
+        }
+        if(attempt>=PUSH_MAX_TRY){                        // 连续冲突：存在持续对端写入 → 以服务器为准
+          toast('⚠ 检测到持续写入冲突，已以服务器存档为准同步…','info');
+          await fullSync(true);
+          return r;
+        }
+        GS.__lastSv=cur;attempt++;                        // 单端"假冲突"自愈：采用服务器基准
+        toast('⚠ 存档版本偏移，已自动校准并保留本地进度…','info');
+        __pushAgain=true;                                 // 用新基准重推当前本地最新档
+      }else{
+        return r;                                         // 网络失败等：留给下轮 render 重试
+      }
+    }while(__pushAgain);
+    return null;
+  }finally{__pushRunning=false;}
 }
 function autoSave(){
   const user=localStorage.getItem(AUTH_KEY);

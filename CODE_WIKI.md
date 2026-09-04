@@ -720,7 +720,7 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 | POST | `/api/register` | 注册即登录，body: `{user, nickname, pass}`，成功返回 `{ok, token}` |
 | POST | `/api/login` | 登录，body: `{user, pass}`，成功返回 `{ok, nickname, token}` |
 | GET | `/api/player/{user}` | 获取本人存档（需登录），返回 `{ok, nickname, gs, sv}` |
-| POST | `/api/save` | 保存存档，body: `{user, gs, baseSv}`（需登录）；服务端执行"sv 版本校验 + 白名单清洗 + 快照差分审计"，通过后接受并返回 `{ok, sv}`；失败返回 `{ok:false, conflict:true, reason?/anomaly?}` |
+| POST | `/api/save` | 保存存档，body: `{user, gs, baseSv}`（需登录）；服务端执行"sv 版本校验 + 白名单清洗 + 快照差分审计"，通过后接受并返回 `{ok, sv}`；失败返回 `{ok:false, conflict:true, reason?/anomaly?}`（v9.14.3：拒绝事件记入 `server_save_conflict.log`；客户端对 `stale` 冲突自愈重推而非直接回拉） |
 | POST | `/api/logout` | 登出，吊销当前会话 Token（v9.14.1） |
 | POST | `/api/chat` | 发送聊天，body: `{user, loc, msg}`（需登录，防冒充） |
 | GET | `/api/chat?since=` | 增量获取聊天消息（公开） |

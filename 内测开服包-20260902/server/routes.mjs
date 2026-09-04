@@ -73,6 +73,20 @@ export function createRoutes(ctx, services) {
   const { clientRoot } = ctx;
   const { world, players, auth, sessions, tradeApi, chat, starfall, mailbox, rankings, admin } = services;
 
+  /* ---- /api/save 拒绝审计日志（v9.14.3） ----
+   * 记录每次被版本防线(stale) / 快照防线(anomaly) 拒绝的保存：时间戳、user、
+   * 原因、服务器 sv。控制台 + <root>/server_save_conflict.log 追加
+   * （写日志失败静默，不影响主流程）。用于事后定位"谁在何时为何被拒"。 */
+  const saveRejectLog = path.join(ctx.root || '.', 'server_save_conflict.log');
+  function logSaveReject(user, reason, detail, sv) {
+    try {
+      const line = '[' + new Date().toISOString().replace('T', ' ').slice(0, 19) + '] save-reject user=' + user +
+        ' reason=' + reason + ' sv=' + sv + (detail ? ' detail=' + String(detail).slice(0, 200) : '');
+      console.log(line);
+      fs.appendFile(saveRejectLog, line + '\n', 'utf8').catch(() => {});
+    } catch (e) { /* 日志失败不影响主流程 */ }
+  }
+
   async function handleApi(req, res, url, seg, method) {
     const action = seg[1] || '';
 
@@ -193,6 +207,7 @@ export function createRoutes(ctx, services) {
       const curSv = players.getSv(user);
       const baseSv = Number.isInteger(b.baseSv) && b.baseSv >= 0 ? b.baseSv : -1;
       if (baseSv !== curSv) {
+        logSaveReject(user, 'stale', 'baseSv=' + baseSv, curSv); // v9.14.3 审计
         return sendJson(res, { ok: false, conflict: true, reason: 'stale', sv: curSv });
       }
 
@@ -209,6 +224,7 @@ export function createRoutes(ctx, services) {
         // v9.14 快照防线：与服务器权威快照差分审计（异常注入 → 拒绝并回拉）
         const issue = auditDiff(rec.gs, clean, { stockMode: w && w.stockMode });
         if (issue) {
+          logSaveReject(user, 'anomaly', JSON.stringify(issue), curSv); // v9.14.3 审计
           return sendJson(res, { ok: false, conflict: true, anomaly: issue, sv: curSv });
         }
       }
