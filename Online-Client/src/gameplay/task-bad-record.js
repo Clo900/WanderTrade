@@ -26,6 +26,11 @@
     const log = GS.taskBadLog;
     if(!Array.isArray(log.abandonAt)) log.abandonAt = [];
     if(!Array.isArray(log.failAt)) log.failAt = [];
+    // v9.14.6.4：读取即裁剪——跨过全服 0 点后昨日记录立即失效。
+    // 此前仅在 record() 时裁剪，导致"昨日失败/放弃惩罚在 0 点后未刷新"（count/getDebuff
+    // 一直读到旧记录，直到玩家再次产生不良记录才被动清零）。
+    const now = (typeof global.nowMs === 'function') ? global.nowMs() : Date.now();
+    prune(log, now);
     return log;
   }
 

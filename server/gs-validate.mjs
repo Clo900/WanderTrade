@@ -330,13 +330,16 @@ export function auditDiff(prev, next, opts) {
     }
   }
 
-  // 5) 集合类只增不减（成就/见闻/称号/拜访城市/声望）
+  // 5) 集合类只增不减（成就/见闻/称号/拜访城市/声望/已解锁情报所）
+  // 注意：intel.drawn 不在此列 —— 它是"本城已抽事件去重集合"，客户端设计为
+  // "离开城市即清空"（v9.11.9，index.html 3241 行），合法清空若按"记录消失"审计
+  // 会被误判 progress_regress（线上 shuo 玩家 07:07 ironfort_ore:36 大量拒绝实证，
+  // v9.14.6.2 修复）。它仅是去重标记、不涉及经济数值，无需"只增不减"校验。
   const supersets = [
     ['achievements', prev.achievements, next.achievements],
     ['knownEvents', prev.knownEvents, next.knownEvents],
     ['eventSeen', prev.eventSeen, next.eventSeen],
     ['intel.unlocked', prev.intel && prev.intel.unlocked, next.intel && next.intel.unlocked],
-    ['intel.drawn', prev.intel && prev.intel.drawn, next.intel && next.intel.drawn],
     ['titles.owned', prev.titles && prev.titles.owned, next.titles && next.titles.owned],
     ['visitedCities', prev.visitedCities, next.visitedCities]
   ];

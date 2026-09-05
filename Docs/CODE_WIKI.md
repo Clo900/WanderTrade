@@ -613,7 +613,7 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 | `world.mjs` | 世界加载/迁移/重建（`__schema` 兼容旧版）、`GetWorldDay`、30 分钟补货、公告 |
 | `players.mjs` | 玩家存档内存缓存（Map + 并发加载去重）、防抖落盘、昵称/聊天档案、单调版本号 `sv`（getSv/bumpSv，v9.14.1） |
 | `auth.mjs` | 注册/登录/改昵称/改密码（SHA256+salt，昵称全服唯一；v9.14.1 签发会话 Token） |
-| `trade.mjs` | `trade` / `tradeBatch` 权威结算（守恒校验 + 价格比率窗口 [0.12,6]（v9.14.6.1 由 [0.3,3] 放宽，覆盖突破行情/需求加成合法报价）+ `__savedAt`/`sv` 防覆盖，v9.14.1 回传 `sv`） |
+| `trade.mjs` | `trade` / `tradeBatch` 权威结算（守恒校验 + 价格比率窗口 [0.12,6]（v9.14.6.1 由 [0.3,3] 放宽，覆盖突破行情/需求加成合法报价）+ `__savedAt`/`sv` 防覆盖，v9.14.1 回传 `sv`；v9.14.6.3 起 perPlayer 卖出不回补库存，库存仅由 30 分钟定时补货恢复） |
 | `warehouse.mjs` | 仓库权威结算（v9.14.6）：`unlock/expand/in/out` 四操作服务端校验并改写 `rec.gs`（cargo↔warehouses[loc].items / gold）→ `bumpSv`；内联与客户端 `cityStage()/getWhConfig()` 一致的城市阶段经济表（注释标注同步点） |
 | `chat.mjs` | 聊天内存环形缓冲（200 条）+ 落盘 + **SSE 订阅/广播** |
 | `starfall.mjs` | 星陨城状态机——**复用客户端 `starfall-core.js`**（确定性抽选/轮转）+ 服务端权威结算投递/日志（v9.14.2：启动自愈 `healActivity` + 空池拒绝） |
@@ -630,7 +630,7 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 2. **世界状态管理**：加载/保存世界数据，30 分钟自动补货（内存操作 + 防抖落盘）
 3. **用户认证**：注册、登录、密码哈希、会话 Token 签发/校验/吊销（v9.14.1）
 4. **玩家存档**：内存缓存 + 防抖原子落盘；单调版本号 `sv` 防回滚 + gs 白名单清洗 + 快照差分审计（v9.14.1 四道防线）
-5. **交易结算**：买入/卖出全量结算——库存扣减/回补 + 资金/持仓权威记账（per-player 模式；`/api/tradeBatch` 为经济权威接口）
+5. **交易结算**：买入/卖出全量结算——库存扣减（卖出不回补，v9.14.6.3 起库存仅由定时补货恢复）+ 资金/持仓权威记账（per-player 模式；`/api/tradeBatch` 为经济权威接口）
 6. **聊天室**：内存环形缓冲（200 条）+ **SSE 实时推流**（`/api/chat/stream`），轮询接口 `/api/chat?since=` 保留为回退
 7. **排行榜**：全服 Top 20 统计
 8. **星陨城活动（v9.9）**：活动状态机（确定性抽选 / 惰性轮转 / 结算）——**确定性逻辑来自双端共享核心 `starfall-core.js`**，服务端只做权威扣货记账、奖励邮件投递、历史冠军归档

@@ -110,7 +110,9 @@ export async function tradeBatch(ctx, services, body) {
       const have = Math.floor(rec.gs.cargo[iid] || 0);
       rec.gs.cargo[iid] = have + q;
     } else {
-      rec.gs.cityStocks[city][iid] = Math.floor(rec.gs.cityStocks[city][iid]) + q;
+      // v9.14.6.3：卖出不回补库存——库存是"定时补货"的限量供应（每 30 分钟补满），
+      // 只应由 maybeRefill 恢复；卖出仅扣 cargo、加 gold。此前 += q 回补导致
+      // "同城买→卖 / 卖出外来货"库存异常增加（可超 purchaseLimits，玩家反馈实证）。
       const left = Math.floor(rec.gs.cargo[iid] || 0) - q;
       if (left <= 0) delete rec.gs.cargo[iid];
       else rec.gs.cargo[iid] = left;
@@ -166,9 +168,8 @@ export async function trade(ctx, services, body) {
   if (dir === 'buy') {
     if (stock < qty) return { ok: false, err: 'stock shortage' };
     rec.gs.cityStocks[city][item] = stock - qty;
-  } else {
-    rec.gs.cityStocks[city][item] = stock + qty;
   }
+  // v9.14.6.3：卖出不回补库存（同 tradeBatch，库存仅由定时补货恢复）
   const now = Date.now();
   rec.gs.__savedAt = now; // v9.14：单笔交易同样保护，防止客户端旧档覆盖本次库存变更
   const sv = players.bumpSv(user);
