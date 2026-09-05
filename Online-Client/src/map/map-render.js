@@ -14,7 +14,10 @@
 // ===== 交互式地图（v7.9：缩放/平移/当前城居中/等高线/曲线路网/云雾） =====
 // 视口状态：g 元素 transform="translate(px,py) scale(s)"，世界坐标直接使用城市 x/y
 let MAP={s:0.8,px:0,py:0,init:false,drag:null};
-const MAP_VW=850,MAP_VH=520; // 视口像素（viewBox 尺寸）
+const MAP_CONFIG=window.WORLD_MAP||{};
+const TERRAIN_CONFIG=MAP_CONFIG.terrain||{};
+const MAP_VW=Number(MAP_CONFIG.viewBox&&MAP_CONFIG.viewBox.width)||850;
+const MAP_VH=Number(MAP_CONFIG.viewBox&&MAP_CONFIG.viewBox.height)||520; // 视口像素（viewBox 尺寸）
 function mapWorldRange(){
   const xs=CITIES.map(c=>c.x),ys=CITIES.map(c=>c.y);
   return{x1:Math.min(...xs)-70,y1:Math.min(...ys)-70,x2:Math.max(...xs)+70,y2:Math.max(...ys)+70};
@@ -133,39 +136,34 @@ function terrainHeightAt(x,y,R,peaks){
     const dx=(x-p.x)/p.sx,dy=(y-p.y)/p.sy;
     h+=p.amp*Math.exp(-(dx*dx+dy*dy))*0.82;
   }
-  // 王都周边：低丘陵，范围广、起伏缓
-  const dc=getCity('dawncapital');
-  const dh=Math.hypot((x-dc.x)/220,(y-dc.y)/155);
-  h+=0.105*Math.exp(-(dh*dh))*(0.7+0.3*Math.sin(x*0.03+y*0.022));
-  h+=0.05*Math.exp(-(Math.hypot((x-(dc.x-120))/170,(y-(dc.y+15))/120)**2));
-  // 霜岭堡北侧：高山脊，线密且起伏强
-  const ff=getCity('frostfort');
-  const ridgeA=pointSegDist(x,y,ff.x-160,ff.y-120,ff.x+30,ff.y-205);
-  const ridgeB=pointSegDist(x,y,ff.x-70,ff.y-55,ff.x+170,ff.y-145);
-  const northBoost=1+Math.max(0,(ff.y-y))/150;
-  h+=0.22*Math.exp(-(ridgeA*ridgeA)/(28*28))*northBoost;
-  h+=0.18*Math.exp(-(ridgeB*ridgeB)/(24*24))*northBoost;
-  h+=0.05*Math.exp(-(ridgeA*ridgeA)/(70*70))*Math.sin((x+y)*0.05+0.8);
-  // 盐湾港附近：沿海缓坡，地势整体更柔和、更开阔
-  const sb=getCity('saltbay');
-  const coast=pointSegDist(x,y,sb.x-190,sb.y+82,sb.x+170,sb.y+128);
-  const coastB=pointSegDist(x,y,sb.x-130,sb.y+36,sb.x+220,sb.y+72);
-  h+=0.05*Math.exp(-(coast*coast)/(78*78));
-  h+=0.03*Math.exp(-(coastB*coastB)/(96*96));
-  h-=0.08*Math.exp(-((x-sb.x)*(x-sb.x))/(260*260)-((y-(sb.y+126))*(y-(sb.y+126)))/(170*170));
-  // 星陨城周边：断裂地貌，沿裂谷产生折线状高差
-  const sf=getCity('starfall');
-  const faultA=pointSegDist(x,y,sf.x-150,sf.y-92,sf.x+145,sf.y+48);
-  const faultB=pointSegDist(x,y,sf.x-92,sf.y+92,sf.x+90,sf.y-65);
-  const along=((x-sf.x)*0.72+(y-sf.y)*0.48)/44;
-  h+=0.15*Math.exp(-(faultA*faultA)/(22*22))*(0.68+0.32*Math.sin(along));
-  h+=0.11*Math.exp(-(faultB*faultB)/(18*18))*(0.65+0.35*Math.cos(along*1.35));
-  h+=0.05*Math.exp(-(Math.hypot((x-sf.x)/130,(y-sf.y)/96)**2));
+  for(const feature of (TERRAIN_CONFIG.features||[])){
+    const anchor=getCity(feature.anchor)||{x:0,y:0};
+    const modulation=terrainModulation(feature.modulation,x,y,anchor);
+    if(feature.type==='gaussian'){
+      const offset=feature.offset||[0,0],radius=feature.radius||[100,100];
+      const dx=(x-anchor.x-offset[0])/radius[0],dy=(y-anchor.y-offset[1])/radius[1];
+      h+=Number(feature.amplitude||0)*Math.exp(-(dx*dx+dy*dy))*modulation;
+    }else if(feature.type==='ridge'){
+      const from=feature.from||[0,0],to=feature.to||[0,0],width=Number(feature.width)||30;
+      const dist=pointSegDist(x,y,anchor.x+from[0],anchor.y+from[1],anchor.x+to[0],anchor.y+to[1]);
+      const boost=feature.northBoost?1+Math.max(0,anchor.y-y)/Number(feature.northBoost):1;
+      h+=Number(feature.amplitude||0)*Math.exp(-(dist*dist)/(width*width))*boost*modulation;
+    }
+  }
+  const flatten=TERRAIN_CONFIG.cityFlatten||{amplitude:-0.058,radiusX:54,radiusY:40};
   for(const c of CITIES){
-    const dx=(x-c.x)/54,dy=(y-c.y)/40;
-    h-=0.058*Math.exp(-(dx*dx+dy*dy)); // 城市周边压低，形成更真实的盆地/缓坡
+    const dx=(x-c.x)/(Number(flatten.radiusX)||54),dy=(y-c.y)/(Number(flatten.radiusY)||40);
+    h+=Number(flatten.amplitude??-0.058)*Math.exp(-(dx*dx+dy*dy)); // 城市周边压低，形成盆地/缓坡
   }
   return Math.max(0,Math.min(1,h));
+}
+function terrainModulation(config,x,y,anchor){
+  if(!config)return 1;
+  let phase=Number(config.phase)||0;
+  if(Array.isArray(config.project)) phase+=((x-anchor.x)*config.project[0]+(y-anchor.y)*config.project[1])/(Number(config.divisor)||1);
+  else phase+=x*(Number(config.xFrequency)||0)+y*(Number(config.yFrequency)||0);
+  phase*=Number(config.frequency)||1;
+  return Number(config.base??1)+(Number(config.sin)||0)*Math.sin(phase)+(Number(config.cos)||0)*Math.cos(phase);
 }
 function contourEdgePoint(edge,x,y,step,tl,tr,br,bl,level){
   const lerp=(a,b,va,vb)=>{
@@ -208,11 +206,11 @@ function stitchContourSegments(segs,step){
 }
 function genMapDeco(){
   if(MAP_DECO)return MAP_DECO;
-  const rnd=mulberry32(20260812);
+  const rnd=mulberry32(Number(TERRAIN_CONFIG.seed)||20260812);
   const R=mapWorldRange();
   const cx0=(R.x1+R.x2)/2,cy0=(R.y1+R.y2)/2;
   const peaks=pickTerrainPeaks(R);
-  const step=18,nx=Math.ceil((R.x2-R.x1)/step),ny=Math.ceil((R.y2-R.y1)/step);
+  const step=Number(TERRAIN_CONFIG.gridStep)||18,nx=Math.ceil((R.x2-R.x1)/step),ny=Math.ceil((R.y2-R.y1)/step);
   const ER={x1:R.x1-220,y1:R.y1-180,x2:R.x2+220,y2:R.y2+180};
   const enx=Math.ceil((ER.x2-ER.x1)/step),eny=Math.ceil((ER.y2-ER.y1)/step);
   const field=[];
@@ -223,7 +221,7 @@ function genMapDeco(){
       field[gy][gx]=terrainHeightAt(x,y,ER,peaks);
     }
   }
-  const levels=[0.10,0.16,0.22,0.28,0.34,0.42,0.52];
+  const levels=TERRAIN_CONFIG.contourLevels||[0.10,0.16,0.22,0.28,0.34,0.42,0.52];
   const table={
     0:[],1:[[3,0]],2:[[0,1]],3:[[3,1]],4:[[1,2]],5:[[3,2],[0,1]],6:[[0,2]],7:[[3,2]],
     8:[[2,3]],9:[[0,2]],10:[[0,1],[2,3]],11:[[1,2]],12:[[1,3]],13:[[0,1]],14:[[3,0]],15:[]
@@ -283,7 +281,7 @@ function genMapDeco(){
 let MAP_CLOUDS=null;
 function genMapClouds(){
   if(MAP_CLOUDS)return MAP_CLOUDS;
-  const rnd=mulberry32(20260812);
+  const rnd=mulberry32(Number(TERRAIN_CONFIG.seed)||20260812);
   const R=mapWorldRange();
   const ER={x1:R.x1-220,y1:R.y1-180,x2:R.x2+220,y2:R.y2+180};
   const w=ER.x2-ER.x1,h=ER.y2-ER.y1;
@@ -339,7 +337,8 @@ function renderMap(){
   // 等高线背景 + 曲线路网
   const deco=genMapDeco();
   let roads='',rlabels='';
-  for(let[a,b,d]of ROADS){
+  for(const road of (window.ROAD_DEFS||[]).filter(r=>r.enabled!==false&&!r.hidden)){
+    const a=road.from,b=road.to,d=road.travelDistance;
     const rc=roadCurve(a,b,cityPos[a].x,cityPos[a].y,cityPos[b].x,cityPos[b].y,d);
     roads+=`<path d="${rc.d}" class="road-line"/><path d="${rc.d}" class="road-flow"/>`;
     rlabels+=`<text x="${rc.cx.toFixed(1)}" y="${(rc.cy-6).toFixed(1)}" class="road-label">${d}里</text>`;

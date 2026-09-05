@@ -105,7 +105,8 @@
 <script src="src/core/event-bus.js"></script>
 <!-- cache-bust: 修复弹窗无法点击/无法关闭 -->
 <script src="src/core/ui-primitives.js?v=921"></script>
-<script src="src/core/data.js?v=971"></script>
+<script src="src/data/world-map.generated.js?v=972"></script>
+<script src="src/core/data.js?v=972"></script>
 <script src="src/economy/source-pricing.js?v=971"></script>
 <script src="src/economy/price-exceptions.js?v=971"></script>
 <script src="src/economy/price-engine.js?v=971"></script>
@@ -133,8 +134,8 @@
 <script src="src/gameplay/starfall-core.js?v=9112"></script> <!-- v9.11.x：星陨城确定性逻辑共享核心（浏览器/Node 双端复用） -->
 <script src="src/gameplay/starfall.js?v=9112"></script>
 <script src="src/economy/market-ui.js?v=974"></script> <!-- v9.10.2：交易市场 UI 自主内联拆出 -->
-<script src="src/map/road-curves.js?v=974"></script> <!-- v9.10.2：路网曲线模块拆出 -->
-<script src="src/map/map-render.js?v=974"></script> <!-- v9.10.2：地图渲染模块拆出 -->
+<script src="src/map/road-curves.js?v=978"></script> <!-- 数据驱动路网曲线（含多拖拽节点/Y 形分支） -->
+<script src="src/map/map-render.js?v=975"></script> <!-- 数据驱动地图与地形 -->
 <script>
 /* ================================================
  * 游戏引擎
@@ -742,7 +743,7 @@ async function startOnline(){
   if(w.world)applyWorld(w.world);
   else{
     // 兜底：服务器尚未自动建世界时由客户端创建
-    const created={basePrices:BASE_PRICES,purchaseLimits:PURCHASE_LIMITS,tradeRoads:window.ROADS||[],worldStart:Date.now(),sourceConfig:(window.SourcePricing&&SourcePricing.DEFAULT_SOURCE_CONFIG)||{},sellExceptions:(window.PriceExceptions&&PriceExceptions.DEFAULT_SELL_EXCEPTIONS)||{}};
+    const created={basePrices:BASE_PRICES,purchaseLimits:PURCHASE_LIMITS,tradeRoads:window.ECONOMIC_ROADS||window.ROADS||[],worldStart:Date.now(),sourceConfig:(window.SourcePricing&&SourcePricing.DEFAULT_SOURCE_CONFIG)||{},sellExceptions:(window.PriceExceptions&&PriceExceptions.DEFAULT_SELL_EXCEPTIONS)||{}};
     const r=await NET.post('/api/world',created);
     if(!r||!r.ok){ONLINE=false;return false;}
     applyWorld(created);

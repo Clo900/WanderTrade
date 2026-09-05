@@ -19,12 +19,59 @@ function roadCurve(a,b,x1,y1,x2,y2,d){
   // 方向敏感 key 会让两者生成形状不同的曲线，导致旅行点"偏移出路网"
   const key=a<b?a+'|'+b:b+'|'+a;
   if(MAP_CURVES[key])return MAP_CURVES[key];
+  const def=(window.ROAD_DEFS||[]).find(r=>(r.from===a&&r.to===b)||(r.from===b&&r.to===a));
+  // 曲线配置始终按道路定义 from→to 解释，避免首次从反方向旅行时改变几何形状。
+  if(def&&a!==def.from){
+    [a,b]=[b,a];[x1,x2]=[x2,x1];[y1,y2]=[y2,y1];
+  }
   const dx=x2-x1,dy=y2-y1,len=Math.hypot(dx,dy)||1;
   const nx=-dy/len,ny=dx/len;
   const rnd=mapSeed(key);
   const distLi=d||10;
+  const curve=(def&&def.curve)||{mode:'auto',bend:1};
+  if(curve.mode==='control'){
+    const configured=Array.isArray(curve.controlPoints)?curve.controlPoints:(Array.isArray(curve.controlPoint)?[curve.controlPoint]:[]);
+    const points=[[x1,y1],...configured.map(p=>p.map(Number)),[x2,y2]];
+    if(points.length>=3){
+      const curves=[];let dPath=`M ${x1.toFixed(1)} ${y1.toFixed(1)}`;
+      for(let i=0;i<points.length-1;i++){
+        const p0=points[Math.max(0,i-1)],p1=points[i],p2=points[i+1],p3=points[Math.min(points.length-1,i+2)];
+        const c1=[p1[0]+(p2[0]-p0[0])/6,p1[1]+(p2[1]-p0[1])/6];
+        const c2=[p2[0]-(p3[0]-p1[0])/6,p2[1]-(p3[1]-p1[1])/6];
+        curves.push({p0:p1,c1,c2,p1:p2});
+        dPath+=` C ${c1[0].toFixed(1)} ${c1[1].toFixed(1)} ${c2[0].toFixed(1)} ${c2[1].toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+      }
+      const mid=pointOnCurves(curves,0.5);
+      return MAP_CURVES[key]={d:dPath,curves,cx:mid[0],cy:mid[1]};
+    }
+  }
+  if(curve.mode==='branch'&&Array.isArray(curve.branchPoint)&&curve.branchPoint.length===2){
+    const bp=curve.branchPoint.map(Number);
+    const tdx=bp[0]-x1,tdy=bp[1]-y1,fdx=x2-bp[0],fdy=y2-bp[1];
+    const trunkLen=Math.hypot(tdx,tdy)||1,forkLen=Math.hypot(fdx,fdy)||1;
+    const branchBend=Number(curve.bend??1);
+    const lead=Math.min(trunkLen,forkLen)/3*Math.max(0,Math.min(2,Number.isFinite(branchBend)?branchBend:1));
+    const ux=tdx/trunkLen,uy=tdy/trunkLen;
+    const c1a=[x1+tdx/3,y1+tdy/3],c2a=[bp[0]-tdx/3,bp[1]-tdy/3];
+    const c1b=[bp[0]+ux*lead,bp[1]+uy*lead],c2b=[x2-fdx/3,y2-fdy/3];
+    const curves=[{p0:[x1,y1],c1:c1a,c2:c2a,p1:bp},{p0:bp,c1:c1b,c2:c2b,p1:[x2,y2]}];
+    const dPath=`M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${c1a[0].toFixed(1)} ${c1a[1].toFixed(1)} ${c2a[0].toFixed(1)} ${c2a[1].toFixed(1)} ${bp[0].toFixed(1)} ${bp[1].toFixed(1)} C ${c1b[0].toFixed(1)} ${c1b[1].toFixed(1)} ${c2b[0].toFixed(1)} ${c2b[1].toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+    return MAP_CURVES[key]={d:dPath,curves,cx:(bp[0]+3*c1b[0]+3*c2b[0]+x2)/8,cy:(bp[1]+3*c1b[1]+3*c2b[1]+y2)/8};
+  }
+  if(curve.mode==='straight'){
+    const c1=[x1+dx/3,y1+dy/3],c2=[x1+dx*2/3,y1+dy*2/3];
+    const curves=[{p0:[x1,y1],c1,c2,p1:[x2,y2]}];
+    return MAP_CURVES[key]={d:`M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${c1[0].toFixed(1)} ${c1[1].toFixed(1)} ${c2[0].toFixed(1)} ${c2[1].toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`,curves,cx:(x1+x2)/2,cy:(y1+y2)/2};
+  }
+  if(curve.mode==='manual'&&Array.isArray(curve.controls)&&curve.controls.length===2){
+    const c1=curve.controls[0].map(Number),c2=curve.controls[1].map(Number);
+    const curves=[{p0:[x1,y1],c1,c2,p1:[x2,y2]}];
+    return MAP_CURVES[key]={d:`M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${c1[0].toFixed(1)} ${c1[1].toFixed(1)} ${c2[0].toFixed(1)} ${c2[1].toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`,curves,cx:(x1+x2+c1[0]+c2[0])/4,cy:(y1+y2+c1[1]+c2[1])/4};
+  }
   // 里数越长弧度越大（短途近似直路，长途蜿蜒绕行）：振幅 0.10~0.34
-  const amp=Math.min(0.34,0.10+distLi*0.006);
+  const bend=Number(curve.bend??1);
+  const autoAmp=Math.min(0.34,0.10+distLi*0.006);
+  const amp=Math.min(0.6,Math.max(0,autoAmp*(Number.isFinite(bend)?bend:1)));
   const segs=distLi>22?3:(distLi>9?2:1); // 长路拆多段 → 多个弯道
   let pd='',cxs=0,cys=0;
   const curves=[];

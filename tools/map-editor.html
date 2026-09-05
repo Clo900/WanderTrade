@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WanderTrade 地图编辑器</title>
+<style>
+:root{color-scheme:dark;font:14px/1.45 system-ui;background:#10151c;color:#e6edf3}*{box-sizing:border-box}body{margin:0;display:grid;grid-template-rows:auto 1fr;height:100vh}header{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid #30363d;background:#161b22;flex-wrap:wrap}button,.file{border:1px solid #3f4a58;background:#212a35;color:#e6edf3;padding:7px 11px;border-radius:6px;cursor:pointer}.file input{display:none}.primary{background:#2867b2}#status{margin-left:auto;color:#9da7b3}main{display:grid;grid-template-columns:minmax(500px,1fr) 320px;min-height:0}.canvas{overflow:auto;padding:18px;background:#0d1117}svg{width:100%;min-width:700px;border:1px solid #3b4654;background:radial-gradient(circle at 50% 45%,#263a43,#151f27);touch-action:none}.road{fill:none;stroke:#7a91a4;stroke-width:4;cursor:pointer}.road.hidden{stroke-dasharray:7 6;opacity:.45}.road.disabled{opacity:.18}.road.selected{stroke:#ffbd59;stroke-width:7}.city{cursor:move}.city circle{fill:#dfe9dc;stroke:#17232b;stroke-width:3}.city.selected circle{fill:#ffbd59}.city text{fill:#fff;paint-order:stroke;stroke:#17232b;stroke-width:4px;stroke-linejoin:round;font-weight:700;pointer-events:none}.control-guide{fill:none;stroke:#ffbd59;stroke-width:1.5;stroke-dasharray:5 4;opacity:.65;pointer-events:none}.control-handle{fill:#ffbd59;stroke:#fff;stroke-width:2;cursor:move}.panel{overflow:auto;padding:16px;border-left:1px solid #30363d;background:#161b22}h2{font-size:16px;margin:0 0 12px}fieldset{border:1px solid #30363d;border-radius:7px;margin:0 0 14px;padding:12px}legend{color:#9da7b3}label{display:grid;grid-template-columns:92px 1fr;gap:8px;align-items:center;margin:8px 0}input,select,textarea{width:100%;border:1px solid #3f4a58;background:#0d1117;color:#e6edf3;padding:6px;border-radius:4px}textarea{min-height:72px;resize:vertical}.row{display:flex;gap:8px}.hint{color:#9da7b3;font-size:12px}.danger{color:#ff7b72}body.connect .city circle,body.y-mode .city circle{stroke:#58a6ff;stroke-width:6}@media(max-width:850px){main{grid-template-columns:1fr}.panel{border-left:0;border-top:1px solid #30363d}}
+</style>
+</head>
+<body>
+<header>
+  <label class="file">打开 JSON<input id="open" type="file" accept="application/json,.json"></label>
+  <button id="install" class="primary">保存并安装</button>
+  <button id="export">仅导出 JSON</button>
+  <button id="connect">连接两座城市</button>
+  <button id="addNode">增加弯曲节点</button>
+  <button id="yRoad">生成 Y 形道路</button>
+  <button id="delete" class="danger">删除所选道路</button>
+  <span id="status">加载内置地图快照</span>
+</header>
+<main>
+  <section class="canvas"><svg id="map"><g id="roads"></g><g id="cities"></g><g id="handles"></g></svg></section>
+  <aside class="panel">
+    <h2>属性编辑</h2>
+    <fieldset><legend>地图</legend>
+      <label>版本<input id="version" type="number" min="1"></label>
+      <label>世界结构<input id="schema" type="number" min="1"></label>
+      <div class="hint">拖动城市即可修改坐标。虚线表示隐藏道路，淡色表示禁用道路。</div>
+    </fieldset>
+    <fieldset id="cityBox" hidden><legend>城市</legend>
+      <label>ID<input id="cityId" disabled></label><label>名称<input id="cityName"></label>
+      <label>类型<select id="cityTier"><option>village</option><option>town</option><option>capital</option><option>frontier</option><option>special</option></select></label>
+      <label>X<input id="cityX" type="number"></label><label>Y<input id="cityY" type="number"></label>
+      <label>商品<textarea id="cityGoods" placeholder="逗号分隔"></textarea></label>
+    </fieldset>
+    <fieldset id="roadBox" hidden><legend>道路</legend>
+      <label>ID<input id="roadId" disabled></label><label>端点<input id="roadEnds" disabled></label>
+      <label>旅行里程<input id="travel" type="number" min="0.1" step="0.1"></label>
+      <label>经济距离<input id="economic" type="number" min="0.1" step="0.1"></label>
+      <label>曲线<select id="curve"><option value="auto">auto</option><option value="straight">straight</option><option value="manual">manual</option><option value="control" disabled>control（拖拽）</option><option value="branch" disabled>branch（Y 形）</option></select></label>
+      <label>弯曲倍率<input id="bend" type="number" min="0" max="4" step="0.1"></label>
+      <label>控制点<input id="controls" placeholder="x1,y1,x2,y2"></label>
+      <label>启用<input id="enabled" type="checkbox"></label><label>隐藏<input id="hidden" type="checkbox"></label>
+    </fieldset>
+    <p class="hint">推荐双击项目根目录的 <code>start-map-editor.bat</code> 启动；“保存并安装”会校验地图、留档旧版、替换正式文件并更新运行时数据。直接打开本 HTML 时只能导出 JSON。</p>
+  </aside>
+</main>
+<script src="../Online-Client/src/data/world-map.generated.js"></script>
+<script src="../Online-Client/src/map/road-curves.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
+let data=structuredClone(window.WORLD_MAP), selected=null, dragging=null, dragControl=null, connectFrom=null, ySelection=[];
+function city(id){return data.cities.find(c=>c.id===id)}
+function roadControlPoints(r){return Array.isArray(r?.curve?.controlPoints)?r.curve.controlPoints:(Array.isArray(r?.curve?.controlPoint)?[r.curve.controlPoint]:[])}
+function parsePointList(value){return value.split(';').map(part=>part.split(',').map(Number)).filter(p=>p.length===2&&p.every(Number.isFinite))}
+function el(tag,attrs={}){const n=document.createElementNS(NS,tag);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,v);return n}
+function curvePath(r){const a=city(r.from),b=city(r.to);return a&&b?roadCurve(r.from,r.to,a.x,a.y,b.x,b.y,r.travelDistance).d:''}
+function render(){
+  window.ROAD_DEFS=data.roads;MAP_CURVES={};$('map').setAttribute('viewBox',`0 0 ${data.viewBox.width} ${data.viewBox.height}`);$('roads').replaceChildren();$('cities').replaceChildren();$('handles').replaceChildren();
+  for(const r of data.roads){const p=el('path',{d:curvePath(r),class:`road${r.hidden?' hidden':''}${r.enabled===false?' disabled':''}${selected?.type==='road'&&selected.id===r.id?' selected':''}`});p.addEventListener('click',e=>{e.stopPropagation();select('road',r.id)});$('roads').append(p)}
+  for(const c of data.cities){const g=el('g',{class:`city${selected?.type==='city'&&selected.id===c.id?' selected':''}`,transform:`translate(${c.x} ${c.y})`});g.dataset.id=c.id;g.append(el('circle',{r:11}),Object.assign(el('text',{x:15,y:5}),{textContent:c.name}));g.addEventListener('pointerdown',startDrag);g.addEventListener('click',e=>{e.stopPropagation();if(document.body.classList.contains('y-mode'))chooseYCity(c.id);else if(document.body.classList.contains('connect'))connectCity(c.id);else select('city',c.id)});$('cities').append(g)}
+  renderControlHandle();
+  const modeText=document.body.classList.contains('y-mode')?`；Y 形道路：请选择${['起点','终点 A','终点 B'][ySelection.length]}`:(connectFrom?'；已选起点 '+connectFrom:'');
+  $('status').textContent=`${data.cities.length} 城 / ${data.roads.length} 路${modeText}`;
+}
+function select(type,id){selected={type,id};fillPanel();render()}
+function fillPanel(){
+  $('version').value=data.version;$('schema').value=data.worldSchema;$('cityBox').hidden=selected?.type!=='city';$('roadBox').hidden=selected?.type!=='road';
+  if(selected?.type==='city'){const c=city(selected.id);$('cityId').value=c.id;$('cityName').value=c.name;$('cityTier').value=c.tier;$('cityX').value=c.x;$('cityY').value=c.y;$('cityGoods').value=c.goods.join(', ')}
+  if(selected?.type==='road'){const r=data.roads.find(x=>x.id===selected.id),mode=r.curve?.mode||'auto',point=mode==='branch'?r.curve.branchPoint:(mode==='control'?roadControlPoints(r):(r.curve?.controls||[]));$('roadId').value=r.id;$('roadEnds').value=`${r.from} → ${r.to}`;$('travel').value=r.travelDistance;$('economic').value=r.economicDistance;$('curve').value=mode;$('bend').value=r.curve?.bend??1;$('controls').value=mode==='control'?point.map(p=>p.join(',')).join('; '):(point||[]).flat().join(',');$('controls').placeholder=mode==='branch'?'分叉点 x,y':(mode==='control'?'节点1 x,y; 节点2 x,y':'x1,y1,x2,y2');$('enabled').checked=r.enabled!==false;$('hidden').checked=!!r.hidden}
+}
+function renderControlHandle(){if(selected?.type!=='road')return;const r=data.roads.find(x=>x.id===selected.id),a=city(r?.from),b=city(r?.to);if(!r||!a||!b)return;if(r.curve?.mode==='branch'){const point=r.curve.branchPoint,guide=el('path',{class:'control-guide',d:`M ${a.x} ${a.y} L ${point[0]} ${point[1]} L ${b.x} ${b.y}`}),handle=makeHandle(r,point,null);$('handles').append(guide,handle);return}if(r.curve?.mode!=='control')return;const points=roadControlPoints(r),guidePoints=[[a.x,a.y],...points,[b.x,b.y]];$('handles').append(el('path',{class:'control-guide',d:guidePoints.map((p,i)=>`${i?'L':'M'} ${p[0]} ${p[1]}`).join(' ')}));points.forEach((point,index)=>$('handles').append(makeHandle(r,point,index)))}
+function makeHandle(r,point,index){const handle=el('circle',{class:'control-handle',cx:point[0],cy:point[1],r:8});handle.addEventListener('pointerdown',e=>{e.stopPropagation();dragControl={roadId:r.id,index};$('map').setPointerCapture(e.pointerId)});handle.addEventListener('click',e=>e.stopPropagation());if(index!==null)handle.addEventListener('dblclick',e=>{e.stopPropagation();removeControlNode(r,index)});return handle}
+function removeControlNode(r,index){const points=roadControlPoints(r).map(p=>[...p]);points.splice(index,1);r.curve=points.length?{mode:'control',controlPoints:points,bend:r.curve.bend??1}:{mode:'straight',bend:1};fillPanel();render()}
+function startDrag(e){if(document.body.classList.contains('connect')||document.body.classList.contains('y-mode'))return;dragging=city(e.currentTarget.dataset.id);$('map').setPointerCapture(e.pointerId)}
+$('map').addEventListener('pointermove',e=>{if(!dragging&&!dragControl)return;const p=$('map').createSVGPoint();p.x=e.clientX;p.y=e.clientY;const q=p.matrixTransform($('map').getScreenCTM().inverse()),point=[Math.round(Math.max(0,Math.min(data.viewBox.width,q.x))),Math.round(Math.max(0,Math.min(data.viewBox.height,q.y)))];if(dragControl){const r=data.roads.find(x=>x.id===dragControl.roadId);if(r.curve.mode==='branch'){for(const member of data.roads.filter(x=>x.curve?.group===r.curve.group))member.curve.branchPoint=[...point]}else{const points=roadControlPoints(r).map(p=>[...p]);points[dragControl.index]=point;r.curve.controlPoints=points;delete r.curve.controlPoint}fillPanel();render();return}dragging.x=point[0];dragging.y=point[1];selected={type:'city',id:dragging.id};fillPanel();render()});
+window.addEventListener('pointerup',()=>{dragging=null;dragControl=null});
+function connectCity(id){if(!connectFrom){connectFrom=id;render();return}if(connectFrom===id){connectFrom=null;render();return}const edge=[connectFrom,id].sort(),key=edge.join('|');let road=data.roads.find(r=>[r.from,r.to].sort().join('|')===key);if(!road){road={id:edge.join('-'),from:connectFrom,to:id,travelDistance:10,economicDistance:10,layer:city(connectFrom).layer||'surface',enabled:true,hidden:false,curve:{mode:'auto',bend:1}};data.roads.push(road)}connectFrom=null;document.body.classList.remove('connect');select('road',road.id)}
+function chooseYCity(id){
+  if(ySelection.includes(id)){alert('起点和两个终点必须是不同城市。');return}
+  ySelection.push(id);if(ySelection.length<3){render();return}
+  const[from,toA,toB]=ySelection,o=city(from),a=city(toA),b=city(toB),mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
+  const branchPoint=[Math.round(o.x+(mx-o.x)*0.45),Math.round(o.y+(my-o.y)*0.45)];
+  const group=`y-${from}-${[toA,toB].sort().join('-')}`;
+  const put=to=>{const key=[from,to].sort().join('|');let r=data.roads.find(x=>[x.from,x.to].sort().join('|')===key);if(!r){r={id:[from,to].sort().join('-'),travelDistance:10,economicDistance:10,layer:o.layer||'surface',enabled:true,hidden:false};data.roads.push(r)}r.from=from;r.to=to;r.curve={mode:'branch',group,branchPoint:[...branchPoint],bend:1};return r};
+  const first=put(toA);put(toB);ySelection=[];document.body.classList.remove('y-mode');select('road',first.id);
+}
+function updateCity(){if(selected?.type!=='city')return;const c=city(selected.id);c.name=$('cityName').value;c.tier=$('cityTier').value;c.x=Number($('cityX').value);c.y=Number($('cityY').value);c.goods=$('cityGoods').value.split(',').map(x=>x.trim()).filter(Boolean);render()}
+function updateRoad(){if(selected?.type!=='road')return;const r=data.roads.find(x=>x.id===selected.id),old=r.curve||{},mode=$('curve').value,nums=$('controls').value.split(',').map(Number),bend=Number($('bend').value);r.travelDistance=Number($('travel').value);r.economicDistance=Number($('economic').value);if(old.mode==='branch'&&mode!=='branch'){for(const member of data.roads.filter(x=>x.curve?.group===old.group))member.curve={mode,bend}}else if(mode==='branch'){const point=nums.length===2&&nums.every(Number.isFinite)?nums:old.branchPoint;r.curve={mode:'branch',group:old.group,branchPoint:point,bend};for(const member of data.roads.filter(x=>x!==r&&x.curve?.group===old.group))member.curve={...member.curve,branchPoint:[...point],bend}}else if(mode==='control'){const points=parsePointList($('controls').value);r.curve={mode:'control',controlPoints:points.length?points:roadControlPoints(r),bend}}else{r.curve={mode,bend};if(mode==='manual'&&nums.length===4&&nums.every(Number.isFinite))r.curve.controls=[[nums[0],nums[1]],[nums[2],nums[3]]]};r.enabled=$('enabled').checked;r.hidden=$('hidden').checked;render()}
+for(const id of ['cityName','cityTier','cityX','cityY','cityGoods'])$(id).addEventListener('input',updateCity);for(const id of ['travel','economic','curve','bend','controls','enabled','hidden'])$(id).addEventListener('input',updateRoad);
+$('version').addEventListener('input',()=>data.version=Number($('version').value));$('schema').addEventListener('input',()=>data.worldSchema=Number($('schema').value));
+$('connect').onclick=()=>{connectFrom=null;ySelection=[];document.body.classList.remove('y-mode');document.body.classList.toggle('connect');render()};
+$('addNode').onclick=()=>{if(selected?.type!=='road'){alert('请先选择一条道路。');return}const r=data.roads.find(x=>x.id===selected.id);if(r.curve?.mode==='branch'){$('status').textContent='请直接拖动地图上的 Y 形分叉节点';return}const a=city(r.from),b=city(r.to),points=r.curve?.mode==='control'?roadControlPoints(r).map(p=>[...p]):[],anchors=[[a.x,a.y],...points,[b.x,b.y]];let segment=0,max=-1;for(let i=0;i<anchors.length-1;i++){const length=Math.hypot(anchors[i+1][0]-anchors[i][0],anchors[i+1][1]-anchors[i][1]);if(length>max){max=length;segment=i}}const left=anchors[segment],right=anchors[segment+1],point=[Math.round((left[0]+right[0])/2),Math.round((left[1]+right[1])/2)];points.splice(segment,0,point);r.curve={mode:'control',controlPoints:points,bend:1};fillPanel();render()};
+$('yRoad').onclick=()=>{connectFrom=null;ySelection=[];document.body.classList.remove('connect');document.body.classList.toggle('y-mode');render()};
+$('delete').onclick=()=>{if(selected?.type!=='road')return;const removed=data.roads.find(r=>r.id===selected.id);data.roads=data.roads.filter(r=>r.id!==selected.id);if(removed?.curve?.mode==='branch'){for(const member of data.roads.filter(r=>r.curve?.group===removed.curve.group))member.curve={mode:'auto',bend:member.curve.bend??1}}selected=null;fillPanel();render()};
+$('open').onchange=async e=>{try{data=JSON.parse(await e.target.files[0].text());selected=null;fillPanel();render()}catch(err){alert('JSON 无法读取：'+err.message)}};
+$('install').onclick=async()=>{if(location.protocol==='file:'){alert('请双击项目根目录 start-map-editor.bat 启动编辑器后再保存。');return}const button=$('install');button.disabled=true;$('status').textContent='正在校验并保存…';try{const response=await fetch('/api/map/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'保存失败');$('status').textContent=result.changed?`保存成功；旧版：${result.archive}`:'地图没有变化';alert($('status').textContent)}catch(err){$('status').textContent='保存失败';alert(err.message)}finally{button.disabled=false}};
+$('export').onclick=()=>{const blob=new Blob([JSON.stringify(data,null,2)+'\n'],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='world-map.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
+$('map').addEventListener('click',()=>{selected=null;fillPanel();render()});fillPanel();render();
+</script>
+</body></html>
