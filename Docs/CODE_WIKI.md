@@ -1,6 +1,6 @@
 # 艾尔希亚跑商 · Code Wiki
 
-> 版本：v9.8 ｜ 生成日期：2026-08-28 ｜ 状态：内测就绪
+> 版本：v9.14.x（模块版本号以代码注释为准） ｜ 生成日期：2026-09-07 ｜ 状态：内测就绪（已并入“地图编辑器”分支主线）
 
 ---
 
@@ -57,7 +57,7 @@
 | 属性 | 说明 |
 |------|------|
 | 项目名称 | 艾尔希亚跑商 (Aierxiya Trade) |
-| 版本 | v9.7 |
+| 版本 | v9.14.x（以代码注释 / 模块版本号为准） |
 | 项目类型 | Browser MMORPG（Web 多人跑商游戏） |
 | 技术栈 | 原生 HTML5 + CSS3 + JavaScript（客户端），Node.js 内置模块（服务端，零 npm 依赖） |
 | 数据库 | JSON 文件存档（world.json + players/*.json） |
@@ -86,31 +86,24 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                        客户端 (Browser)                          │
 │  ┌─────────────────────────────────────────────────────────────┐ │
-│  │  Online-Client/index.html  (主文件 ~183KB)                  │ │
+│  │  Online-Client/index.html  (主文件 ~237KB)                  │ │
 │  │  ├── CSS 外部样式: styles/theme.css + styles/app.css        │ │
 │  │  ├── 认证覆盖层                                             │ │
 │  │  ├── DOM 骨架: topbar / nav / content / views               │ │
-│  │  ├── 内联脚本: GS 状态 / 主渲染 / 地图 / 任务 / 载具 / ...  │ │
-│  │  └── 外部脚本 (按序加载):                                   │ │
-│  │       ① src/app/runtime.js           (运行模式判定)         │ │
-│  │       ② src/core/state.js            (状态容器 State/GS)    │ │
-│  │       ③ src/core/event-bus.js        (事件总线)             │ │
-│  │       ④ src/core/ui-primitives.js    (toast/modal)          │ │
-│  │       ⑤ src/core/data.js             (CITIES/ROADS/ITEMS)   │ │
-│  │       ⑥ src/economy/source-pricing.js(产地买入差异化)       │ │
-│  │       ⑦ src/economy/price-exceptions.js(卖出封顶/封底)      │ │
-│  │       ⑧ src/economy/price-engine.js  (价格引擎)             │ │
-│  │       ⑨ src/economy/demand-engine.js (需求引擎)             │ │
-│  │       ⑩ src/economy/events.js        (事件系统)             │ │
-│  │       ⑪ src/economy/trade-graph.js   (经济距离图)           │ │
-│  │       ⑫ src/economy/tax.js           (税务系统)             │ │
-│  │       ⑬ src/economy/trade-draft.js   (交易单/中转面板)       │ │
-│  │       ⑭ src/economy/trade-validate.js(交易单校验)           │ │
-│  │       ⑮ src/economy/trade-preview.js (交易单预览/总额)       │ │
-│  │       ⑯ src/gameplay/pathing-core.js (寻路算法)             │ │
-│  │       ⑰ src/gameplay/starfall-core.js(星陨城确定性核心★双端共用)││
-│  │       ⑱ src/gameplay/starfall.js     (星陨城活动面板)        │ │
-│  │       ⑲ src/gameplay/mailbox.js      (邮箱系统)              │ │
+│  │  ├── 内联脚本: GS 状态 / 主渲染 / 任务 / 载具 / 交易 ...    │ │
+│  │  │    （地图渲染与交互已拆至 src/map/*）                    │ │
+│  │  └── 外部脚本（按 index.html 顺序加载，均挂 window 全局）   │ │
+│  │       runtime → state → event-bus → ui-primitives →         │ │
+│  │       world-map.generated → data → source-pricing →         │ │
+│  │       price-exceptions → price-engine → demand-engine →      │ │
+│  │       events → trade-graph → tax → trade-draft →             │ │
+│  │       trade-validate → trade-preview → pathing-core →        │ │
+│  │       task-config → task-timer → task-bad-record →           │ │
+│  │       task-reward → mailbox → achievements → title-defs →    │ │
+│  │       titles → guide → starfall-core → starfall → market-ui →│ │
+│  │       road-curves → map-render                               │ │
+│  │       （world-map.generated 必须先于 data.js：data.js 从中    │ │
+│  │         派生 CITIES/ROADS/ECONOMIC_ROADS，唯一源 map/ 下）    │ │
 │  └─────────────────────────────────────────────────────────────┘ │
 │                              │                                   │
 │                     fetch/async/await + EventSource(SSE)         │
@@ -121,17 +114,22 @@
 │                服务端 (Node.js, 内存态 + 异步原子落盘)           │
 │  ┌─────────────────────────────────────────────────────────────┐ │
 │  │  server/index.mjs (入口/优雅退出)                           │ │
-│  │  server/routes.mjs   (路由: 静态 + 全部 API + SSE)          │ │
+│  │  server/routes.mjs   (路由: 静态 + API + SSE + 鉴权守卫)    │ │
 │  │  server/store.mjs    (原子 JSON 读写 + 防抖落盘)            │ │
-│  │  server/world.mjs    (世界加载/迁移/补货/公告)               │ │
+│  │  server/sessions.mjs (会话 Token 签发/校验/吊销)            │ │
+│  │  server/gs-validate.mjs(gs 白名单清洗+快照差分审计)          │ │
+│  │  server/world.mjs    (世界加载/迁移/补货/公告)              │ │
 │  │  server/players.mjs  (玩家存档内存缓存 + 落盘)              │ │
 │  │  server/auth.mjs     (注册/登录/昵称/密码)                  │ │
 │  │  server/trade.mjs    (trade / tradeBatch 权威结算)          │ │
+│  │  server/warehouse.mjs(仓库 unlock/expand/in/out 权威结算)   │ │
 │  │  server/chat.mjs     (聊天环形缓冲 + SSE 推流)              │ │
 │  │  server/starfall.mjs (星陨城状态机★复用客户端核心)           │ │
 │  │  server/mailbox.mjs  (邮箱投递/操作)                        │ │
 │  │  server/rankings.mjs (排行榜)                               │ │
 │  │  server/admin.mjs    (GM 指令)                              │ │
+│  │  server/gold-ledger.mjs(金币消费审计 jsonl)                 │ │
+│  │  server/daily-log.mjs/error-log.mjs(按日 JSONL 日志)        │ │
 │  └─────────────────────────────────────────────────────────────┘ │
 │                              │                                   │
 │                   JSON 文件系统 (无数据库)                       │
@@ -162,54 +160,50 @@
 ```
 e:\WanderTrade\
 ├── Online-Client/                  # 唯一客户端入口（在线 / 单机两种模式）
-│   ├── index.html                  # 主游戏文件 (含内联 JS；样式已外置)
-│   ├── styles/
-│   │   ├── theme.css               # 主题变量（含地图 --map-* 变量、浅/深色）
-│   │   └── app.css                 # 页面布局与组件样式
+│   ├── index.html                  # 主游戏文件（含内联 JS；样式外置；地图渲染已拆 src/map）
+│   ├── styles/                     # theme.css（主题变量）/ app.css（布局组件）
 │   └── src/
-│       ├── app/
-│       │   └── runtime.js          # 运行模式与能力判定
-│       ├── core/
-│       │   ├── state.js            # 状态容器与路径订阅
-│       │   ├── event-bus.js        # 瞬时业务事件总线
-│       │   ├── data.js             # 静态数据 (城市/道路/物资)
-│       │   └── ui-primitives.js    # UI 基础组件 (toast/modal)
-│       ├── economy/
-│       │   ├── price-engine.js     # 价格引擎 (中枢/突破/趋势/需求四档接入)
-│       │   ├── demand-engine.js    # 需求引擎 v9.5 (热门/正常/冷淡/拒收 + 16h 轮换)
-│       │   ├── source-pricing.js   # P1 产地买入差异化
-│       │   ├── price-exceptions.js # P3 卖出封顶/封底
-│       │   ├── events.js           # 事件系统 (44 条公共事件)
-│       │   ├── tax.js              # 税务系统
-│       │   ├── trade-graph.js      # 经济距离图
-│       │   ├── trade-draft.js / trade-validate.js / trade-preview.js  # 中转交易单
-│       │   └── task-reward.js      # 任务奖励 (品质×时效)
-│       └── gameplay/
-│           ├── pathing-core.js     # 寻路核心 (Dijkstra)
-│           ├── task-config.js      # 任务配置
-│           ├── task-timer.js       # 任务时限 (T1 离城计时)
-│           ├── task-bad-record.js  # 24h 不良记录
-│           ├── starfall.js         # 星陨城活动面板 + 单机结算 (v9.9)
-│           └── mailbox.js          # 邮箱弹窗 (v9.9)
+│       ├── app/runtime.js          # 运行模式与能力判定
+│       ├── core/                   # state / event-bus / ui-primitives / data.js
+│       │                           # data.js 由 WORLD_MAP 派生 CITIES/ROADS/ITEMS
+│       ├── data/                   # world-map.generated.js（快照，勿手改）/ achievements.js / title-defs.js
+│       ├── economy/                # price-engine / demand-engine / source-pricing / price-exceptions /
+│       │                           # events / tax / trade-graph / trade-draft / trade-validate /
+│       │                           # trade-preview / task-reward / market-ui
+│       ├── gameplay/               # pathing-core / task-config / task-timer / task-bad-record /
+│       │                           # starfall-core / starfall / mailbox / titles / guide
+│       └── map/                    # road-curves.js（曲线几何）/ map-render.js（渲染/交互/等高线/云雾）
 │
-├── Docs/
-│   ├── JS模块拆分首批迁移清单.md    # 首批模块拆分设计文档
-│   ├── 地图模块实现索引.md          # 地图模块实现索引（文件+行号）
-│   ├── 颜色与样式文件表.md          # 客户端 CSS 文件职责与维护边界
-│   └── 星陨城活动玩法设计.md        # 星陨城活动设计（v9.9 已落地）
+├── Docs/                           # 开发与设计文档（共 18 篇）
+│   ├── CODE_WIKI.md                # 本文档
+│   ├── 地图模块实现索引.md          # 地图模块实现索引
+│   ├── 地图生产与维护.md            # ★地图编辑器 / 数据化地图工作流（地图维护入口）
+│   ├── 反作弊与存档安全加固.md      # 服务端防作弊与存档四道防线
+│   ├── 交易系统与物价引擎实现索引.md # 经济 / 交易系统索引
+│   ├── 跑商网页游戏设计文档.md / 跑商游戏事件系统设计.md / 任务系统设计.md 等
+│   └── ...                         # 其余见仓库实际文件
 │
-├── server/                         # Node.js 服务端 (index.mjs + 12 模块)
-├── start-server.bat                # 一键启动脚本
-├── setup-admin.ps1                 # 局域网防火墙放行 (管理员运行)
-├── world.json                      # 运行中世界状态 (自动生成)
-├── default-world.json              # 世界模板 (价格种子)
-├── players/                        # 玩家存档目录 (自动创建)
-├── chat.json                       # 聊天记录 (自动生成)
-│
-├── 跑商网页游戏设计文档.md           # 完整设计文档 (含版本历史)
-├── 跑商游戏事件系统设计.md           # 事件系统独立设计文档
-├── 部署上线指南.txt                  # 部署与运维指南
-└── .gitignore                      # Git 忽略规则
+├── map/                            # ★地图唯一人工维护源（数据化地图）
+│   ├── world-map.json              # 正式地图（编辑器 / 构建的唯一输入）
+│   └── world-map.schema.json       # 编辑器 Schema
+├── scripts/
+│   ├── map/                        # build-map / install-map / validate-map / editor-server + 测试
+│   ├── e2e/                        # 浏览器回归套件（puppeteer-core）
+│   ├── load/                       # 并发压测
+│   └── tests/                      # Node 单元测试
+├── tools/map-editor.html           # 可视化地图编辑器
+├── server/                         # Node.js 服务端（index.mjs + 17 个模块，见 §5.1）
+├── start-server.bat                # 一键启动服务器
+├── start-map-editor.bat            # 一键启动地图编辑器
+├── setup-admin.ps1                 # 局域网防火墙放行（管理员运行）
+├── .gitattributes                  # 换行规范（文本统一 LF，防生成文件校验误报）
+├── default-world.json              # 世界模板（价格/限购/经济配置；由 build-map 同步 tradeRoads）
+├── world.json                      # 运行中世界状态（自动生成）
+├── players/  chat.json             # 玩家存档 / 聊天记录（自动生成）
+├── starfall_activity.json          # 星陨城活动状态（自动生成）
+├── starfall_log.txt                # 星陨城运维日志
+├── logs/                           # 按日 jsonl：金币消费审计 / 服务端错误
+└── 内测开服包-20260902/            # 独立打包快照（发布分发用，需手动同步最新代码）
 ```
 
 ---
@@ -586,7 +580,7 @@ getActiveEvents() → getItemMult(city, item, mode) → priceFor() → 市场价
 
 ### 5.1 HTTP 服务器 server/（Node.js）
 
-**文件路径**：`server/`（`index.mjs` 入口 + 12 个模块，纯 `node:http`/`node:fs`/`node:crypto`，零 npm 依赖）
+**文件路径**：`server/`（`index.mjs` 入口 + 17 个模块，纯 `node:http`/`node:fs`/`node:crypto`，零 npm 依赖）
 
 **技术栈**：Node.js 18+（内置模块）
 
@@ -1192,7 +1186,7 @@ runCmd("/gm <adminPass> setday <正确天数>")
 
 ### default-world.json
 
-世界种子文件，定义 13 城的基础价格和限购量：
+世界种子文件，定义 13 城的基础价格和限购量。**经济距离路网 `tradeRoads` 由地图构建脚本自动同步**（勿手改，见 `map/world-map.json` 条目）：
 
 - **__schema**：世界配置版本号（v9.7.1 起，服务端据此自动重建旧 world）
 - **basePrices**：每城 × 每物的基础价格（13 城 × 51 物，v9.7.1 重建）
@@ -1205,6 +1199,14 @@ runCmd("/gm <adminPass> setday <正确天数>")
 ### world.json
 
 运行时世界状态，服务器启动时自动从 `default-world.json` 生成（若不存在）；`__schema` 落后于 default 时自动重建配置（保留世界时间轴与运行时字段）。
+
+### map/world-map.json 与客户端快照（数据化地图）
+
+- `map/world-map.json`：地图唯一人工维护源（城市坐标/等级/可售商品、道路 `travelDistance`/`economicDistance`/曲线/图层、地形、区域）。
+- `Online-Client/src/data/world-map.generated.js`：构建产物（`window.WORLD_MAP`，`data.js` 的数据源），**勿手改**。
+- `scripts/map/build-map.mjs`：生成客户端快照 + 把经济距离同步进 `default-world.json.tradeRoads` 并抬升 `__schema`。
+- `scripts/map/validate-map.mjs`：结构与业务校验，含**经济一致性防线**——地图城市必须已登记 `basePrices`/`purchaseLimits`，且 `goods` 与 `purchaseLimits` 键集合一致（改 `goods`/新增城市需先同步经济表）。
+- 维护入口：双击 `start-map-editor.bat`；完整工作流与 LF 换行约定见 `Docs/地图生产与维护.md`。
 
 ---
 

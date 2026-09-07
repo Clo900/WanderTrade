@@ -99,7 +99,8 @@ JSON 文件存储
 - `app/runtime.js`：运行模式（在线/单机）与能力判定
 - `core/state.js`：游戏状态容器、批量更新与路径订阅
 - `core/event-bus.js`：业务事件发布与订阅
-- `core/data.js`：城市、道路和商品等静态数据
+- `core/data.js`：静态数据入口——由 `data/world-map.generated.js`（`window.WORLD_MAP`）派生 CITIES/ROADS/ITEMS
+- `data/world-map.generated.js`：客户端地图快照（自动生成，唯一源 `map/world-map.json`，勿手改）
 - `core/ui-primitives.js`：Toast、弹窗等基础交互
 - `economy/price-engine.js`：价格计算与市场周期
 - `economy/events.js`：公共事件系统
@@ -111,10 +112,16 @@ JSON 文件存储
 - `economy/demand-engine.js`：市场需求档位（热门/正常/冷淡/拒收，16h 轮换）
 - `economy/source-pricing.js`：产地买入差异化（距离即价格）
 - `economy/price-exceptions.js`：城市×物品卖出封顶/封底
+- `economy/market-ui.js`：交易市场 UI（v9.10.2 拆出）
 - `gameplay/pathing-core.js`：路径搜索与距离计算
-- `gameplay/starfall-core.js`：星陨城确定性逻辑共享核心（**浏览器 / Node 双端复用**，消灭双份实现）
-- `gameplay/starfall.js`：星陨城活动面板（动态图景/提交区/历史冠军）与单机本地结算
+- `gameplay/starfall-core.js`：星陨城确定性逻辑共享核心（**浏览器 / Node 双端复用**）
+- `gameplay/starfall.js`：星陨城活动面板与单机本地结算
 - `gameplay/mailbox.js`：邮箱弹窗（列表/详情/领取附件）
+- `gameplay/titles.js`：称号系统；`gameplay/guide.js`：新手引导层
+- `gameplay/task-config.js` / `task-timer.js` / `task-bad-record.js`：任务配置 / 计时 / 不良记录
+- `data/achievements.js` / `data/title-defs.js`：成就与称号定义（称号表双端共享）
+- `map/road-curves.js`：曲线路网几何（含 control / branch 曲线）
+- `map/map-render.js`：地图渲染 / 视口交互 / 等高线地形 / 云雾
 
 服务端基于 Node.js 内置模块（`node:http` 等，零 npm 依赖），内存态 + 防抖原子落盘，负责：
 
@@ -132,20 +139,23 @@ JSON 文件存储
 ```text
 WanderTrade/
 ├─ Online-Client/           统一客户端（在线 / 单机）
-│  ├─ index.html            页面结构、主脚本及游戏逻辑
+│  ├─ index.html            页面结构、主脚本及游戏逻辑（地图渲染已拆至 src/map/）
 │  ├─ styles/               静态样式（theme.css 主题变量 / app.css 布局组件）
-│  └─ src/                  已拆分的客户端模块（含 starfall-core.js 双端共享核心）
-├─ Docs/                    开发与迁移文档（拆分清单 / 地图索引 / 样式文件表 / 星陨城活动玩法设计）
+│  └─ src/                  已拆分客户端模块（core / economy / gameplay / map / data；含 starfall-core 双端共享核心）
+├─ Docs/                    开发与设计文档（CODE_WIKI / 地图模块实现索引 / 地图生产与维护 / 反作弊与存档安全加固 等 18 篇）
+├─ map/                     ★地图唯一人工维护源（world-map.json + world-map.schema.json，数据化地图）
+├─ scripts/map/             地图构建/校验/安装/编辑器服务（build-map / validate-map / install-map / editor-server）
 ├─ scripts/e2e/             浏览器回归套件（puppeteer-core + 系统 Chrome，`E2E_URL` 端口参数化）
 ├─ scripts/load/            并发压测（`load-test.mjs`，验证百人同时在线）
-├─ server/                  Node.js 服务端（index/store/world/players/auth/trade/chat/starfall/mailbox/rankings/admin/routes）
+├─ tools/map-editor.html    可视化地图编辑器
+├─ server/                  Node.js 服务端（index.mjs + 17 个模块：store/world/players/auth/trade/warehouse/chat/starfall/mailbox/rankings/admin/routes/sessions/gs-validate/gold-ledger/daily-log/error-log）
 ├─ start-server.bat         本机一键启动脚本（node server\index.mjs）
+├─ start-map-editor.bat     一键启动地图编辑器
 ├─ setup-admin.ps1          局域网防火墙放行脚本（Node 版无需 URL ACL）
-├─ default-world.json       新世界配置模板
+├─ .gitattributes           换行规范（文本统一 LF，防生成文件校验误报）
+├─ default-world.json       新世界配置模板（tradeRoads 由 build-map 自动同步）
 ├─ world.json               当前世界运行状态
-├─ CODE_WIKI.md             代码与架构说明
-├─ 跑商网页游戏设计文档.md   完整游戏设计文档
-└─ 跑商游戏事件系统设计.md   事件系统设计文档
+├─ 内测开服包-20260902/      独立打包快照（发布分发用，需手动同步最新代码）
 ```
 
 `players/` 和 `chat.json` 会在服务运行过程中按需生成。
@@ -193,13 +203,13 @@ State.batch(function () {
 
 进一步资料：
 
-- [代码与架构 Wiki](CODE_WIKI.md)
+- [代码与架构 Wiki](Docs/CODE_WIKI.md)
 - [浏览器回归套件说明](scripts/e2e/README.md)
 
 ## 资料
 
-- [游戏设计文档](跑商网页游戏设计文档.md)
-- [事件系统设计](跑商游戏事件系统设计.md)
+- [游戏设计文档](Docs/跑商网页游戏设计文档.md)
+- [事件系统设计](Docs/跑商游戏事件系统设计.md)
 - [反作弊与存档安全加固（v9.14.1）](Docs/反作弊与存档安全加固.md)
 - [JavaScript 模块拆分清单](Docs/JS模块拆分首批迁移清单.md)
 - [地图模块实现索引](Docs/地图模块实现索引.md)
@@ -237,6 +247,6 @@ http://localhost:8080/api/world
 
 ## 项目状态
 
-当前版本 **v9.8**，处于持续开发和模块化整理阶段。核心玩法可以运行；客户端已拆出 13+ 个模块（`runtime`/`state`/`event-bus`/`ui-primitives`/`data`/`price-engine`/`events`/`pathing-core`/`demand-engine`/`source-pricing`/`price-exceptions`/`tax`/`trade-*`/`task-*` 等），静态样式已全部外置到 `styles/` 并支持浅/深色主题切换。v9.5 起引入需求动态化与 51 种物资世界；v9.7.1 完成存档价格权威修复与世界配置版本化（`__schema`）；v9.7.2 完成新增物资价格合并补缺与存档结构版本化（`SAVE_SCHEMA`）；v9.7.3 上线服务端经济权威结算（`/api/tradeBatch` 全量结算 + 客户端 `serverLedger` 轻记账）并固化浏览器回归套件（`scripts/e2e/`）；v9.8 引入**欠债系统**（金币可为负数：任务惩罚/劫匪赎买可扣成负债，负债时无法买入物资，卖出/任务奖励自动还债，顶栏负数标红）。地图渲染与交互、载具、在线同步等业务逻辑仍保留在 `Online-Client/index.html` 中，作为后续拆分批次。
+当前版本处于 **v9.14.x** 开发阶段（模块版本号以代码注释为准），持续开发和模块化整理中；仓库已并入“地图编辑器”数据化地图主线（唯一源 `map/world-map.json`，worldSchema 972）。核心玩法可以运行；客户端已拆出 20+ 个模块（`runtime`/`state`/`event-bus`/`ui-primitives`/`data`/`price-engine`/`events`/`pathing-core`/`demand-engine`/`source-pricing`/`price-exceptions`/`tax`/`trade-*`/`task-*` 等），静态样式已全部外置到 `styles/` 并支持浅/深色主题切换。v9.5 起引入需求动态化与 51 种物资世界；v9.7.1 完成存档价格权威修复与世界配置版本化（`__schema`）；v9.7.2 完成新增物资价格合并补缺与存档结构版本化（`SAVE_SCHEMA`）；v9.7.3 上线服务端经济权威结算（`/api/tradeBatch` 全量结算 + 客户端 `serverLedger` 轻记账）并固化浏览器回归套件（`scripts/e2e/`）；v9.8 引入**欠债系统**（金币可为负数：任务惩罚/劫匪赎买可扣成负债，负债时无法买入物资，卖出/任务奖励自动还债，顶栏负数标红）。地图渲染与交互已拆至 `src/map/`（v9.10.2）；服务端仓库权威结算 `/api/warehouse`（v9.14.6）与金币消费审计、按日错误日志（`logs/*.jsonl`，v9.14.5）已落地；载具、任务、交易面板等主逻辑仍保留在 `Online-Client/index.html` 中，作为后续拆分批次。
 
 **v9.11.x 服务端迁移 Node**：在线服务端由 PowerShell（`server.ps1`）整体迁移至 Node.js（`server/`，零 npm 依赖），面向百人同时在线内测量级——实测 100 并发下 ~68 req/s、p95 延迟 ~1ms（旧版单线程循环理论吞吐仅约 5 req/s）。API 契约与存档格式完全不变；聊天升级为 **SSE 推流**（`/api/chat/stream`，失败自动回退轮询）；星陨城确定性逻辑抽取为双端共享核心 `starfall-core.js`，服务端直接复用客户端实现，消灭原"逐位复刻"的双份代码。启动命令由 `powershell -File server.ps1` 改为 `node server\index.mjs`，原 `server.ps1` 已移除。
