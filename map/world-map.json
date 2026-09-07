@@ -1,0 +1,72 @@
+{
+  "$schema": "./world-map.schema.json",
+  "version": 1,
+  "worldSchema": 972,
+  "viewBox": { "width": 850, "height": 520 },
+  "terrain": {
+    "seed": 20260812,
+    "preset": "aierxiya",
+    "gridStep": 18,
+    "contourLevels": [0.10, 0.16, 0.22, 0.28, 0.34, 0.42, 0.52],
+    "cityFlatten": { "amplitude": -0.058, "radiusX": 54, "radiusY": 40 },
+    "features": [
+      { "id": "capital-hills", "type": "gaussian", "anchor": "dawncapital", "offset": [0, 0], "amplitude": 0.105, "radius": [220, 155], "modulation": { "base": 0.7, "sin": 0.3, "xFrequency": 0.03, "yFrequency": 0.022 } },
+      { "id": "capital-west-hill", "type": "gaussian", "anchor": "dawncapital", "offset": [-120, 15], "amplitude": 0.05, "radius": [170, 120] },
+      { "id": "frost-ridge-a", "type": "ridge", "anchor": "frostfort", "from": [-160, -120], "to": [30, -205], "amplitude": 0.22, "width": 28, "northBoost": 150 },
+      { "id": "frost-ridge-b", "type": "ridge", "anchor": "frostfort", "from": [-70, -55], "to": [170, -145], "amplitude": 0.18, "width": 24, "northBoost": 150 },
+      { "id": "frost-ridge-texture", "type": "ridge", "anchor": "frostfort", "from": [-160, -120], "to": [30, -205], "amplitude": 0.05, "width": 70, "modulation": { "base": 0, "sin": 1, "xFrequency": 0.05, "yFrequency": 0.05, "phase": 0.8 } },
+      { "id": "salt-coast-a", "type": "ridge", "anchor": "saltbay", "from": [-190, 82], "to": [170, 128], "amplitude": 0.05, "width": 78 },
+      { "id": "salt-coast-b", "type": "ridge", "anchor": "saltbay", "from": [-130, 36], "to": [220, 72], "amplitude": 0.03, "width": 96 },
+      { "id": "salt-coast-basin", "type": "gaussian", "anchor": "saltbay", "offset": [0, 126], "amplitude": -0.08, "radius": [260, 170] },
+      { "id": "starfall-fault-a", "type": "ridge", "anchor": "starfall", "from": [-150, -92], "to": [145, 48], "amplitude": 0.15, "width": 22, "modulation": { "base": 0.68, "sin": 0.32, "project": [0.72, 0.48], "divisor": 44 } },
+      { "id": "starfall-fault-b", "type": "ridge", "anchor": "starfall", "from": [-92, 92], "to": [90, -65], "amplitude": 0.11, "width": 18, "modulation": { "base": 0.65, "cos": 0.35, "frequency": 1.35, "project": [0.72, 0.48], "divisor": 44 } },
+      { "id": "starfall-basin", "type": "gaussian", "anchor": "starfall", "offset": [0, 0], "amplitude": 0.05, "radius": [130, 96] }
+    ]
+  },
+  "regions": [
+    { "id": "heartlands", "name": "中央商路", "cityIds": ["greentown", "rivertown", "milltown", "pasturetown", "oaktown", "saltbay", "purplefield", "dawncapital"] },
+    { "id": "eastern-frontier", "name": "东部边境", "cityIds": ["ironfort", "moonvalley", "frostfort", "starfall"] },
+    { "id": "southern-route", "name": "南方商路", "cityIds": ["windoasis"] }
+  ],
+  "layers": [
+    { "id": "surface", "name": "大陆", "visible": true }
+  ],
+  "cities": [
+    { "id": "greentown", "name": "绿田村", "tier": "village", "x": 180, "y": 120, "layer": "surface", "goods": ["grain", "roots", "cup", "linen"] },
+    { "id": "rivertown", "name": "溪木村", "tier": "village", "x": 260, "y": 160, "layer": "surface", "goods": ["roots", "lumber", "fishnet", "tissue"] },
+    { "id": "milltown", "name": "磨坊村", "tier": "village", "x": 140, "y": 200, "layer": "surface", "goods": ["millet", "clay", "flour", "pottery"] },
+    { "id": "pasturetown", "name": "牧歌村", "tier": "village", "x": 250, "y": 300, "layer": "surface", "goods": ["millet", "cloth", "linen", "candle"] },
+    { "id": "oaktown", "name": "橡木镇", "tier": "town", "x": 400, "y": 180, "layer": "surface", "goods": ["lumber", "tar", "cup", "tissue", "oak", "mushroom", "honey"] },
+    { "id": "ironfort", "name": "铁砧堡", "tier": "town", "x": 600, "y": 260, "layer": "surface", "goods": ["ironware", "stone", "candle", "iron_ingot", "steel_blade"] },
+    { "id": "saltbay", "name": "盐湾港", "tier": "town", "x": 360, "y": 380, "layer": "surface", "goods": ["salt", "fishnet", "cloth", "fish", "pearl", "sailcloth"] },
+    { "id": "purplefield", "name": "紫穗原", "tier": "town", "x": 280, "y": 460, "layer": "surface", "goods": ["millet", "linen", "soap", "flour", "beer", "wool", "cheese", "dye", "wine"] },
+    { "id": "windoasis", "name": "风语绿洲", "tier": "town", "x": 520, "y": 420, "layer": "surface", "goods": ["glass", "salt", "pottery", "tissue", "hemp", "spice", "leather", "carpet", "silk"] },
+    { "id": "moonvalley", "name": "月影谷", "tier": "town", "x": 700, "y": 340, "layer": "surface", "goods": ["ink", "tissue", "pottery", "soap", "herb", "moon_crystal", "oil", "tea", "jade"] },
+    { "id": "dawncapital", "name": "晨曦王都", "tier": "capital", "x": 500, "y": 300, "layer": "surface", "goods": ["glass", "ink", "ironware", "grain", "cloth", "celadon", "tapestry"] },
+    { "id": "frostfort", "name": "霜岭堡", "tier": "frontier", "x": 780, "y": 140, "layer": "surface", "goods": ["stone", "ironware", "candle", "tar", "fur", "ginseng", "ivory", "amber"] },
+    { "id": "starfall", "name": "星陨城", "tier": "special", "cityType": "special", "x": 560, "y": 500, "layer": "surface", "goods": [] }
+  ],
+  "roads": [
+    { "id": "greentown-rivertown", "from": "greentown", "to": "rivertown", "travelDistance": 2, "economicDistance": 2, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "greentown-milltown", "from": "greentown", "to": "milltown", "travelDistance": 2, "economicDistance": 2, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "rivertown-pasturetown", "from": "rivertown", "to": "pasturetown", "travelDistance": 2, "economicDistance": 2, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "milltown-pasturetown", "from": "milltown", "to": "pasturetown", "travelDistance": 2, "economicDistance": 2, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "greentown-oaktown", "from": "greentown", "to": "oaktown", "travelDistance": 10, "economicDistance": 10, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "milltown-purplefield", "from": "milltown", "to": "purplefield", "travelDistance": 12, "economicDistance": 12, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "pasturetown-saltbay", "from": "pasturetown", "to": "saltbay", "travelDistance": 14, "economicDistance": 14, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "oaktown-ironfort", "from": "oaktown", "to": "ironfort", "travelDistance": 15, "economicDistance": 15, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "oaktown-dawncapital", "from": "oaktown", "to": "dawncapital", "travelDistance": 20, "economicDistance": 20, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "purplefield-dawncapital", "from": "purplefield", "to": "dawncapital", "travelDistance": 16, "economicDistance": 16, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "purplefield-saltbay", "from": "purplefield", "to": "saltbay", "travelDistance": 14, "economicDistance": 14, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "saltbay-dawncapital", "from": "saltbay", "to": "dawncapital", "travelDistance": 18, "economicDistance": 18, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "saltbay-windoasis", "from": "saltbay", "to": "windoasis", "travelDistance": 22, "economicDistance": 22, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "dawncapital-moonvalley", "from": "dawncapital", "to": "moonvalley", "travelDistance": 25, "economicDistance": 25, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "ironfort-moonvalley", "from": "ironfort", "to": "moonvalley", "travelDistance": 20, "economicDistance": 20, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "ironfort-frostfort", "from": "ironfort", "to": "frostfort", "travelDistance": 40, "economicDistance": 40, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "moonvalley-frostfort", "from": "moonvalley", "to": "frostfort", "travelDistance": 35, "economicDistance": 35, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "dawncapital-frostfort", "from": "dawncapital", "to": "frostfort", "travelDistance": 60, "economicDistance": 60, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "windoasis-oaktown", "from": "windoasis", "to": "oaktown", "travelDistance": 25, "economicDistance": 25, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "saltbay-starfall", "from": "saltbay", "to": "starfall", "travelDistance": 50, "economicDistance": 50, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } },
+    { "id": "frostfort-starfall", "from": "frostfort", "to": "starfall", "travelDistance": 45, "economicDistance": 45, "layer": "surface", "enabled": true, "hidden": false, "curve": { "mode": "auto", "bend": 1 } }
+  ]
+}

@@ -1,0 +1,33 @@
+# WanderTrade 换行规范
+# ---------------------------------------------------------------
+# 仓库文本统一以 LF 入库；Windows 检出时按下方 eol 规则转换，
+# 避免生成文件（如 world-map.generated.js、default-world.json）
+# 因检出成 CRLF 而触发字节级校验误报。
+# 提示：校验脚本已对快照比较做换行容忍，误报时先运行
+#   git add --renormalize .   （或直接重跑 node scripts/map/build-map.mjs）
+# ---------------------------------------------------------------
+* text=auto
+
+# 源码与数据：入库与检出均固定 LF
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.json  text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+
+# Windows 脚本：入库 LF、检出 CRLF（脚本兼容性更好）
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+
+# 二进制，避免 text=auto 误判
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.eot   binary
+*.ttf   binary

@@ -1,22 +1,17 @@
 /* ================================================
  * 静态数据与基础查询
  * ================================================ */
-const CITIES=[
-  {id:'greentown',name:'绿田村',tier:'village',x:180,y:120,goods:['grain','roots','cup','linen']},
-  {id:'rivertown',name:'溪木村',tier:'village',x:260,y:160,goods:['roots','lumber','fishnet','tissue']},
-  {id:'milltown',name:'磨坊村',tier:'village',x:140,y:200,goods:['millet','clay','flour','pottery']},
-  {id:'pasturetown',name:'牧歌村',tier:'village',x:250,y:300,goods:['millet','cloth','linen','candle']},
-  {id:'oaktown',name:'橡木镇',tier:'town',x:400,y:180,goods:['lumber','tar','cup','tissue','oak','mushroom','honey']},
-  {id:'ironfort',name:'铁砧堡',tier:'town',x:600,y:260,goods:['ironware','stone','candle','iron_ingot','steel_blade']},
-  {id:'saltbay',name:'盐湾港',tier:'town',x:360,y:380,goods:['salt','fishnet','cloth','fish','pearl','sailcloth']},
-  {id:'purplefield',name:'紫穗原',tier:'town',x:280,y:460,goods:['millet','linen','soap','flour','beer','wool','cheese','dye','wine']},
-  {id:'windoasis',name:'风语绿洲',tier:'town',x:520,y:420,goods:['glass','salt','pottery','tissue','hemp','spice','leather','carpet','silk']},
-  {id:'moonvalley',name:'月影谷',tier:'town',x:700,y:340,goods:['ink','tissue','pottery','soap','herb','moon_crystal','oil','tea','jade']},
-  {id:'dawncapital',name:'晨曦王都',tier:'capital',x:500,y:300,goods:['glass','ink','ironware','grain','cloth','celadon','tapestry']},
-  {id:'frostfort',name:'霜岭堡',tier:'frontier',x:780,y:140,goods:['stone','ironware','candle','tar','fur','ginseng','ivory','amber']},
-  {id:'starfall',name:'星陨城',tier:'special',x:560,y:500,cityType:'special',goods:[]}
-];
-const ROADS=[['greentown','rivertown',2],['greentown','milltown',2],['rivertown','pasturetown',2],['milltown','pasturetown',2],['greentown','oaktown',10],['milltown','purplefield',12],['pasturetown','saltbay',14],['oaktown','ironfort',15],['oaktown','dawncapital',20],['purplefield','dawncapital',16],['purplefield','saltbay',14],['saltbay','dawncapital',18],['saltbay','windoasis',22],['dawncapital','moonvalley',25],['ironfort','moonvalley',20],['ironfort','frostfort',40],['moonvalley','frostfort',35],['dawncapital','frostfort',60],['windoasis','oaktown',25],['saltbay','starfall',50],['frostfort','starfall',45]];
+const WORLD_MAP=window.WORLD_MAP;
+if(!WORLD_MAP||!Array.isArray(WORLD_MAP.cities)||!Array.isArray(WORLD_MAP.roads)){
+  throw new Error('地图数据未生成：请运行 node scripts/map/build-map.mjs');
+}
+const CITIES=WORLD_MAP.cities;
+const ROAD_DEFS=WORLD_MAP.roads.filter(r=>r.enabled!==false);
+const MAP_REGIONS=Array.isArray(WORLD_MAP.regions)?WORLD_MAP.regions:[];
+const MAP_LAYERS=Array.isArray(WORLD_MAP.layers)?WORLD_MAP.layers:[];
+// 兼容现有寻路和渲染模块；唯一人工维护源为 map/world-map.json。
+const ROADS=ROAD_DEFS.map(r=>[r.from,r.to,r.travelDistance]);
+const ECONOMIC_ROADS=ROAD_DEFS.map(r=>[r.from,r.to,r.economicDistance]);
 const ITEMS={grain:{id:'grain',name:'谷物',cat:'basic',icon:'🌾'},flour:{id:'flour',name:'面粉',cat:'basic',icon:'🌾'},cloth:{id:'cloth',name:'粗布',cat:'basic',icon:'🧵'},ironware:{id:'ironware',name:'铁器',cat:'basic',icon:'🔧'},pottery:{id:'pottery',name:'陶器',cat:'basic',icon:'🏺'},cup:{id:'cup',name:'木杯',cat:'basic',icon:'🥤'},tissue:{id:'tissue',name:'纸巾',cat:'basic',icon:'🧻'},soap:{id:'soap',name:'肥皂',cat:'basic',icon:'🧼'},candle:{id:'candle',name:'蜡烛',cat:'basic',icon:'🕯'},salt:{id:'salt',name:'食盐',cat:'basic',icon:'🧂'},hemp:{id:'hemp',name:'麻绳',cat:'basic',icon:'🪢'},
 // v9.5 新增基础物资（去同质化：每城可买组合更独特）
 millet:{id:'millet',name:'粟米',cat:'basic',icon:'🌾'},roots:{id:'roots',name:'根菜',cat:'basic',icon:'🥕'},lumber:{id:'lumber',name:'木料',cat:'basic',icon:'🪚'},clay:{id:'clay',name:'黏土',cat:'basic',icon:'🧱'},glass:{id:'glass',name:'玻璃',cat:'basic',icon:'🍶'},ink:{id:'ink',name:'墨',cat:'basic',icon:'🖋'},fishnet:{id:'fishnet',name:'渔网',cat:'basic',icon:'🎣'},stone:{id:'stone',name:'石材',cat:'basic',icon:'🪨'},tar:{id:'tar',name:'焦油',cat:'basic',icon:'🪔'},linen:{id:'linen',name:'亚麻布',cat:'basic',icon:'🎽'},
@@ -45,6 +40,11 @@ function cityStage(id){
 }
 window.CITIES = CITIES;
 window.ROADS = ROADS;
+window.ROAD_DEFS = ROAD_DEFS;
+window.ECONOMIC_ROADS = ECONOMIC_ROADS;
+window.MAP_REGIONS = MAP_REGIONS;
+window.MAP_LAYERS = MAP_LAYERS;
+window.WORLD_MAP = WORLD_MAP;
 window.ITEMS = ITEMS;
 window.fmt = fmt;
 window.getCity = getCity;

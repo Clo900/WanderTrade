@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WanderTrade world map",
+  "type": "object",
+  "required": ["version", "worldSchema", "viewBox", "terrain", "cities", "roads"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "worldSchema": { "type": "integer", "minimum": 1 },
+    "viewBox": {
+      "type": "object",
+      "required": ["width", "height"],
+      "properties": { "width": { "type": "number", "exclusiveMinimum": 0 }, "height": { "type": "number", "exclusiveMinimum": 0 } }
+    },
+    "cities": { "type": "array", "items": { "$ref": "#/$defs/city" } },
+    "roads": { "type": "array", "items": { "$ref": "#/$defs/road" } },
+    "terrain": {
+      "type": "object",
+      "properties": {
+        "seed": { "type": "integer" },
+        "gridStep": { "type": "number", "exclusiveMinimum": 0 },
+        "contourLevels": { "type": "array", "items": { "type": "number", "minimum": 0, "maximum": 1 } },
+        "features": { "type": "array", "items": { "$ref": "#/$defs/terrainFeature" } }
+      }
+    },
+    "regions": { "type": "array", "items": { "$ref": "#/$defs/region" } },
+    "layers": { "type": "array", "items": { "$ref": "#/$defs/layer" } }
+  },
+  "$defs": {
+    "city": {
+      "type": "object",
+      "required": ["id", "name", "tier", "x", "y", "goods"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+        "name": { "type": "string", "minLength": 1 },
+        "tier": { "enum": ["village", "town", "capital", "frontier", "special"] },
+        "x": { "type": "number" }, "y": { "type": "number" },
+        "layer": { "type": "string" },
+        "goods": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "road": {
+      "type": "object",
+      "required": ["id", "from", "to", "travelDistance", "economicDistance"],
+      "properties": {
+        "id": { "type": "string" }, "from": { "type": "string" }, "to": { "type": "string" },
+        "travelDistance": { "type": "number", "exclusiveMinimum": 0 },
+        "economicDistance": { "type": "number", "exclusiveMinimum": 0 },
+        "enabled": { "type": "boolean" }, "hidden": { "type": "boolean" },
+        "layer": { "type": "string" },
+        "curve": {
+          "type": "object",
+          "properties": {
+            "mode": { "enum": ["auto", "straight", "manual", "control", "branch"] },
+            "bend": { "type": "number", "minimum": 0 },
+            "controls": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/point" } },
+            "controlPoint": { "$ref": "#/$defs/point" },
+            "controlPoints": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/point" } },
+            "branchPoint": { "$ref": "#/$defs/point" },
+            "group": { "type": "string" }
+          }
+        }
+      }
+    },
+    "point": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } },
+    "layer": {
+      "type": "object", "required": ["id", "name"],
+      "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "visible": { "type": "boolean" } }
+    },
+    "region": {
+      "type": "object", "required": ["id", "name", "cityIds"],
+      "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "cityIds": { "type": "array", "items": { "type": "string" } } }
+    },
+    "terrainFeature": {
+      "type": "object", "required": ["id", "type", "amplitude"],
+      "properties": {
+        "id": { "type": "string" }, "type": { "enum": ["gaussian", "ridge"] }, "anchor": { "type": "string" },
+        "amplitude": { "type": "number" }, "offset": { "$ref": "#/$defs/point" }, "radius": { "$ref": "#/$defs/point" },
+        "from": { "$ref": "#/$defs/point" }, "to": { "$ref": "#/$defs/point" }, "width": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    }
+  }
+}
