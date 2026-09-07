@@ -61,3 +61,22 @@ test('兼容旧版单个 controlPoint 字段', () => {
   map.roads[0].curve = { mode: 'control', controlPoint: [220, 100] };
   assert.deepEqual(validateMap(map, sourceWorld), []);
 });
+
+test('拒绝新增城市但经济表未登记', () => {
+  const map = clone(sourceMap);
+  map.cities.push({ id: 'newtown', name: '新镇', tier: 'town', x: 60, y: 60, layer: 'surface', goods: ['grain'] });
+  map.roads.push({ id: 'greentown-newtown', from: 'greentown', to: 'newtown', travelDistance: 3, economicDistance: 3, layer: 'surface', enabled: true, hidden: false, curve: { mode: 'auto', bend: 1 } });
+  const world = { ...sourceWorld, tradeRoads: economicRoads(map) };
+  const errors = validateMap(map, world).join('\n');
+  assert.match(errors, /经济表未登记城市 newtown/);
+  assert.match(errors, /新增城市需先同步经济表/);
+});
+
+test('拒绝 goods 与 purchaseLimits 不一致的可售商品变更', () => {
+  const map = clone(sourceMap);
+  map.cities.find(c => c.id === 'greentown').goods = ['grain', 'roots', 'cup']; // 移除 linen，经济表仍含 linen
+  const world = { ...sourceWorld, tradeRoads: economicRoads(map) };
+  const errors = validateMap(map, world).join('\n');
+  assert.match(errors, /purchaseLimits 不一致/);
+  assert.match(errors, /goods 未列出 \[linen\]/);
+});

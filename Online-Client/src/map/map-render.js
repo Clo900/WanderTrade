@@ -392,14 +392,22 @@ function renderMap(){
   const view=`translate(${MAP.px.toFixed(1)},${MAP.py.toFixed(1)}) scale(${MAP.s})`;
   let info='',hint='';
   if(GS.traveling){
-    const elapsed=Date.now()-GS.traveling.startedAt,total=GS.traveling.arrivalTime-GS.traveling.startedAt;
+    const elapsed=Date.now()-GS.traveling.startedAt,total=Math.max(1,GS.traveling.arrivalTime-GS.traveling.startedAt);
     const pct=Math.min(100,Math.max(0,Math.round(elapsed/total*100)));
-    const curDist=Math.round(sp.distance*pct/100),totalDist=sp.distance;
+    // 地图更新后旧路线可能不可达（shortestPath 返回 null），
+    // 里程/来源回退到出发时快照（GS.traveling.routeDistance），避免空引用崩溃。
+    const routeOK=!!(sp&&sp.path&&sp.path.length>1);
+    const totalDist=routeOK?sp.distance:(GS.traveling.routeDistance||0);
+    const curDist=Math.round(totalDist*pct/100);
     info=`<div class="map-info"><span class="city-name">→ ${getCityName(GS.traveling.to)}</span>
     <div class="travel-progress"><div class="fill" id="travel-fill" style="width:${pct}%"></div><div class="text" id="travel-text">${fmt(curDist)} 里 / ${fmt(totalDist)} 里</div></div>
-    <span style="font-size:10px;color:var(--text3)">来自 ${getCityName(sp?.path?.[0]||GS.location)}</span></div>`;hint='<p class="map-hint">旅行中… 蓝色圆点为当前位置 · 拖动地图/滚轮缩放</p>';
+    <span style="font-size:10px;color:var(--text3)">来自 ${getCityName(routeOK?sp.path[0]:GS.location)}</span></div>`;hint='<p class="map-hint">旅行中… 蓝色圆点为当前位置 · 拖动地图/滚轮缩放</p>';
   }else{
-    const cc=getCity(loc);info=`<div class="map-info">📍 当前：<span class="city-name">${cc.name}</span><span style="margin-left:8px">${cc.tier==='village'?'新手村':(cc.tier==='capital'?'王都':(cc.tier==='frontier'?'边陲':'城镇'))}</span><span style="margin-left:auto;color:var(--text3)">拖动地图 · 滚轮缩放 · ⌖ 回到当前位置</span></div>`;hint='<p class="map-hint">点击城市节点发起旅行 · 相邻新手村约 24 秒抵达</p>';
+    // 存档 location 可能指向已不存在的城市（改图/换档后），回退显示原 id
+    const cc=getCity(loc);
+    const ccName=cc?cc.name:(loc?loc:'未知');
+    const ccTier=cc?(cc.tier==='village'?'新手村':(cc.tier==='capital'?'王都':(cc.tier==='frontier'?'边陲':'城镇'))):'';
+    info=`<div class="map-info">📍 当前：<span class="city-name">${ccName}</span>${ccTier?`<span style="margin-left:8px">${ccTier}</span>`:''}<span style="margin-left:auto;color:var(--text3)">拖动地图 · 滚轮缩放 · ⌖ 回到当前位置</span></div>`;hint='<p class="map-hint">点击城市节点发起旅行 · 相邻新手村约 24 秒抵达</p>';
   }
   return `<div class="map-wrap" id="map-wrap"><svg viewBox="0 0 ${MAP_VW} ${MAP_VH}"><g class="map-scene" transform="${view}">${deco}${clouds}${cityShields}${roads}${rlabels}${cities}${names}${travelDot}</g></svg>
   <div class="map-tools"><button title="放大" onclick="mapZoom(1.25)">＋</button><button title="缩小" onclick="mapZoom(0.8)">－</button><button title="回到当前位置" onclick="mapCenter()">⌖</button></div></div>${info}${hint}`;

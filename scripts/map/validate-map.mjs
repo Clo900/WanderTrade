@@ -32,6 +32,8 @@ export function validateMap(map, world) {
     else if (layerIds.has(layer.id)) fail(`layers[${i}].id`, `重复：${layer.id}`); else layerIds.add(layer.id);
   }
   const goods = new Set(Object.values(world?.basePrices || {}).flatMap(prices => Object.keys(prices || {})));
+  const basePricesTable = (world && world.basePrices) || {};
+  const purchaseLimitsTable = (world && world.purchaseLimits) || {};
   for (const [i, city] of cities.entries()) {
     const at = `cities[${i}]`;
     if (!/^[a-z][a-z0-9_-]*$/.test(city?.id || '')) fail(`${at}.id`, '格式无效');
@@ -50,6 +52,24 @@ export function validateMap(map, world) {
       }
     }
     if (city?.layer && !layerIds.has(city.layer)) fail(`${at}.layer`, `未知图层：${city.layer}`);
+    // 经济一致性防线：地图城市必须已在经济表（basePrices/purchaseLimits）登记，
+    // 且可售商品集合与 purchaseLimits 一致——编辑器改 goods/新增城市必须同步经济表。
+    const bpOfCity = basePricesTable[city.id];
+    const plOfCity = purchaseLimitsTable[city.id];
+    if (!bpOfCity || typeof bpOfCity !== 'object') fail(`${at}.basePrices`, `经济表未登记城市 ${city.id}（default-world.json 缺 basePrices）；新增城市需先同步经济表`);
+    if (!plOfCity || typeof plOfCity !== 'object') {
+      fail(`${at}.purchaseLimits`, `经济表未登记城市 ${city.id}（default-world.json 缺 purchaseLimits）；新增城市需先同步经济表`);
+    } else {
+      const plKeys = Object.keys(plOfCity).filter(g => plOfCity[g] != null).sort().join(',');
+      const goodsKeys = [...new Set(city.goods)].sort().join(',');
+      if (plKeys !== goodsKeys) {
+        const missing = city.goods.filter(g => !(g in plOfCity)).sort();
+        const extra = Object.keys(plOfCity).filter(g => !city.goods.includes(g)).sort();
+        fail(`${at}.goods`, `可售商品与 default-world.purchaseLimits 不一致（goods 变更需先同步经济表）：` +
+          (missing.length ? `purchaseLimits 缺少 [${missing.join(', ')}]；` : '') +
+          (extra.length ? `goods 未列出 [${extra.join(', ')}]；` : ''));
+      }
+    }
   }
   const roadIds = new Set(), edges = new Set(), graph = new Map(cities.map(c => [c.id, []])), branchGroups = new Map();
   for (const [i, road] of roads.entries()) {
@@ -107,7 +127,9 @@ export async function runValidation({ checkGenerated = true } = {}) {
   const errors = validateMap(map, world);
   if (checkGenerated) {
     const actual = await readFile(files.generated, 'utf8').catch(() => '');
-    if (actual !== generatedSource(map)) errors.push('world-map.generated.js: 快照过期，请运行构建脚本');
+    // 快照内容必须与正式地图一致；换行符差异（Windows 检出 CRLF）不算过期
+    const normalizeEol = text => String(text).replace(/\r\n?/g, '\n');
+    if (normalizeEol(actual) !== normalizeEol(generatedSource(map))) errors.push('world-map.generated.js: 快照过期，请运行构建脚本');
   }
   return { map, world, errors };
 }
