@@ -1,6 +1,6 @@
 # 艾尔希亚跑商 · Code Wiki
 
-> 版本：v9.14.x（模块版本号以代码注释为准） ｜ 生成日期：2026-09-07 ｜ 状态：内测就绪（已并入“地图编辑器”分支主线）
+> 版本：v9.14.6.8（体验补丁集 · 新手引导悬浮层） ｜ 生成日期：2026-09-08 ｜ 状态：内测就绪（已并入“地图编辑器”分支主线）
 
 ---
 
@@ -236,6 +236,7 @@ e:\WanderTrade\
 |------|------|
 | **GS 状态对象** | 全局游戏状态（由 `state.js` 的 `State.init()` 提供），包含金币、货物、载具、声望、任务等所有玩家数据 |
 | **渲染系统** | `render()` 主渲染函数，按视图类型分发渲染 |
+| **新手引导（悬浮层，v9.14.6.8）** | `renderTutorial()` 按步骤渲染：step≥6 空；step0 为右侧悬浮欢迎卡 `.tut-welcome`（5 步简介 + 开始/跳过）；step1~5 为右上角进行中胶囊 `.tut-chip`（当前步 + 5 进度圆点 + 跳过）；容器 `#tutorial-board` 位于 body 顶层（fixed、pointer-events 透传、窄屏自动沉底）；渲染内容未变不重写 innerHTML 防闪烁；步骤文案/高光见 `tutBasicCard/tutSellCard/tutCardExpanded` 定位 helper 与 Guide 气泡 |
 | **地图渲染** | SVG 地图生成、等高线、曲线路网、缩放平移、旅行动画 |
 | **城市页渲染** | 市场卡片、价格图表、情报所、任务板 |
 | **载具仓库** | 车厢装配/卸载/升级、核心强化、耐久系统 |
@@ -343,6 +344,8 @@ AUTH_KEY;     // 登录标识
 3. **Intervention**（王国调控段）：2~3 个中枢周期线性拉回正常带
 4. **Shift**（永久漂移）：小概率（15%）永久改变物价带
 
+> v9.14.6.6 增补：**顺价窗口**机制（详见 `Docs/交易系统与物价引擎实现索引.md`）——常态下同一座可买入城市不再出现"卖出中枢价 > 买入中枢价"（买卖价走独立种子造成的常态顺价被钳制）；顺价只作为低概率（1.5%/中枢）且极短（1~2 游戏日）的窗口事件存在，窗口与突破/调控共用确定性种子体系但独立盐 7700，互不干扰。
+
 #### 关键函数
 
 | 函数 | 说明 |
@@ -355,6 +358,10 @@ AUTH_KEY;     // 登录标识
 | `getEffectiveBand(cityId, itemId, hub, salt, center)` | 累计漂移后的有效物价带 |
 | `priceFor(cityId, itemId, day, salt, center, multiplier)` | **核心求价函数**，事件乘数注入点 |
 | `getDayPrice(cityId, itemId, day)` | 获取买入价（含事件乘数） |
+| `getBaseBuyPrice(cityId, itemId, day)` | 纯中枢买入价（无事件乘数/产地折扣）：物价表显示与顺价判定的原始数据（v9.10.4 口径） |
+| `getBaseSellPrice(cityId, itemId, day)` | 纯中枢卖出价（无事件/需求/声望，保留价差）：物价表显示与顺价判定原始数据；v9.14.6.6 起对**本城可买入**物资做"顺价钳制"（窗口外卖出中枢价 ≤ 买入中枢价 ×(1−价差)），非产出/纯卖城市（`goods` 不含）不参与钳制 |
+| `getArbitrageWindow(cityId, itemId, day)` | 顺价窗口判定（v9.14.6.6）：每中枢 1.5% 概率开启、持续 1~2 游戏日（盐 7700 起，与突破/调控序列隔离），命中才允许同城"卖出 > 买入"短暂出现 |
+| `isBuyableAt(cityId, itemId)` | 顺价钳制门控（v9.14.6.6）：本城 `goods` 是否含该物资（可同城买入才钳制；纯卖城保留跨城溢价） |
 | `getSellPrice(cityId, itemId, day)` | 获取卖出价（含价差率 + 事件乘数 + 声望加成 + **v9.5 需求四档修正**：拒收→null / 热门 ×(1+HOT_BONUS) / 冷淡 ×COOL_MULT，位于 P3 封顶/封底之前） |
 | `getPriceHistory(cityId, itemId, days)` | 获取历史价格序列 |
 | `getMarketPhase(cityId, itemId, day)` | 判定当前市场阶段（normal/breakout/trend/intervention） |
@@ -604,13 +611,13 @@ node server\index.mjs [-Port 8080] [-Lan] [-Bind host]
 | `gs-validate.mjs` | gs 白名单清洗 + 快照差分审计（`CAPS` 常量区可调；纯函数）（v9.14.1） |
 | `routes.mjs` | 路由：静态资源分发 + 全部 API 端点 + SSE（`/api/chat/stream`）+ v9.14.1 鉴权门（guard）与 /api/save 四道防线管线（v9.14.3：拒绝审计 → `server_save_conflict.log`；v9.14.4：guard 区分 `kicked`、拒绝日志带 `cliver`、静态 .html no-cache） |
 | `store.mjs` | 原子 JSON 读写（tmp+rename）+ 防抖落盘器（Debouncer） |
-| `world.mjs` | 世界加载/迁移/重建（`__schema` 兼容旧版）、`GetWorldDay`、30 分钟补货、公告 |
+| `world.mjs` | 世界加载/迁移/重建（`__schema` 兼容旧版）、`getWorldDay`、30 分钟补货、公告（v9.14.6.5：perPlayer 补货补满至 `purchaseLimits × (1 + 15% × 本城声望)`，对齐 `getMaxStock` 库存上限；此前只补基础值，高声望下"库存/上限"永远补不满） |
 | `players.mjs` | 玩家存档内存缓存（Map + 并发加载去重）、防抖落盘、昵称/聊天档案、单调版本号 `sv`（getSv/bumpSv，v9.14.1） |
 | `auth.mjs` | 注册/登录/改昵称/改密码（SHA256+salt，昵称全服唯一；v9.14.1 签发会话 Token） |
 | `trade.mjs` | `trade` / `tradeBatch` 权威结算（守恒校验 + 价格比率窗口 [0.12,6]（v9.14.6.1 由 [0.3,3] 放宽，覆盖突破行情/需求加成合法报价）+ `__savedAt`/`sv` 防覆盖，v9.14.1 回传 `sv`；v9.14.6.3 起 perPlayer 卖出不回补库存，库存仅由 30 分钟定时补货恢复） |
 | `warehouse.mjs` | 仓库权威结算（v9.14.6）：`unlock/expand/in/out` 四操作服务端校验并改写 `rec.gs`（cargo↔warehouses[loc].items / gold）→ `bumpSv`；内联与客户端 `cityStage()/getWhConfig()` 一致的城市阶段经济表（注释标注同步点） |
 | `chat.mjs` | 聊天内存环形缓冲（200 条）+ 落盘 + **SSE 订阅/广播** |
-| `starfall.mjs` | 星陨城状态机——**复用客户端 `starfall-core.js`**（确定性抽选/轮转）+ 服务端权威结算投递/日志（v9.14.2：启动自愈 `healActivity` + 空池拒绝） |
+| `starfall.mjs` | 星陨城状态机——**复用客户端 `starfall-core.js`**（确定性抽选/轮转）+ 服务端权威结算投递/日志（v9.14.2：启动自愈 `healActivity` + 空池拒绝；v9.14.6.5：历史冠军归档昵称 `firstNick`，回退用户名） |
 | `mailbox.mjs` | 投递 / 已读 / 删除 / 领取，满 50 自动清理最旧 |
 | `rankings.mjs` | 排行榜（基于内存缓存，Top 20） |
 | `admin.mjs` | GM 指令（timescale/setday/givegold/giveitem/broadcast/starfall/mail） |
