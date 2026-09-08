@@ -184,6 +184,7 @@ nav button:hover{color:var(--text);background:rgba(255,255,255,0.03)}
 .task-bad-warn{font-size:12px;font-weight:700;color:var(--red);background:rgba(255,60,60,0.08);border:1px solid var(--red);border-radius:var(--radius-sm);padding:8px 10px;margin-bottom:8px}
 .task-bad-info{font-size:12px;color:var(--text2);background:var(--bg);border:1px dashed var(--text3);border-radius:var(--radius-sm);padding:8px 10px;margin-bottom:8px}
 .task-meta{font-size:11px;color:var(--text3)}
+.task-card .task-meta{font-size:10px;line-height:1.4;min-height:28px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .task-reward{font-size:12px;color:var(--gold)}
 /* 任务倒计时与进度条（v9.x 限时系统） */
 .task-cd-wrap{margin:2px 0}
@@ -217,16 +218,37 @@ nav button:hover{color:var(--text);background:rgba(255,255,255,0.03)}
 .wagon-opt .wo-price{margin-left:auto;font-weight:800;color:var(--gold);white-space:nowrap}
 .wh-split{border-top:1px solid var(--text3);margin:14px 0;opacity:0.4}
 
-/* ===== 新手引导面板（v6.14） ===== */
-.tutorial-panel{background:linear-gradient(90deg,rgba(91,155,213,0.14),rgba(91,155,213,0.05));border:1px solid var(--travel);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:10px;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.tut-head{font-weight:800;color:var(--travel);white-space:nowrap}
-.tut-progress{background:var(--travel);color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;margin-left:6px}
-.tut-body{flex:1;min-width:200px;font-size:13px;color:var(--text)}
-.tut-btns{display:flex;gap:6px;align-items:center}
-.tut-steps{flex-basis:100%;display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--text3)}
-.tut-step{padding:2px 8px;border-radius:10px;background:var(--panel);border:1px solid var(--text3)}
-.tut-step.tut-done{color:var(--green);border-color:var(--green);background:rgba(80,200,120,0.08)}
-.tut-step.tut-cur{color:#111;background:var(--accent);border-color:var(--accent);font-weight:700}
+/* ===== 新手引导悬浮层（v9.14.6.7：由内容区顶部条改为悬浮窗，叠加于主 UI 之上） ===== */
+#tutorial-board{position:fixed;inset:0;pointer-events:none;z-index:95010}
+#tutorial-board>*{pointer-events:auto}
+/* 欢迎卡（step0）：右侧中部悬浮，不遮操作区 */
+.tut-welcome{position:fixed;top:68px;right:14px;width:310px;max-width:calc(100vw - 28px);background:linear-gradient(180deg,rgba(91,155,213,.12),rgba(91,155,213,.02)),var(--panel);border:1px solid var(--travel);border-radius:14px;box-shadow:0 12px 34px rgba(0,0,0,.38);padding:14px 16px;display:flex;flex-direction:column;gap:10px;animation:tutFloatIn .22s ease-out}
+.tut-welcome .tw-head{display:flex;align-items:center;gap:10px}
+.tut-welcome .tw-badge{font-size:26px;line-height:1}
+.tut-welcome .tw-title{font-size:15px;font-weight:800;color:var(--text)}
+.tut-welcome .tw-sub{font-size:11px;color:var(--text2)}
+.tut-welcome .tw-body{font-size:13px;line-height:1.6;color:var(--text2)}
+.tut-welcome .tw-steps{display:flex;flex-direction:column;gap:5px}
+.tut-welcome .tw-step{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);padding:5px 9px;background:rgba(255,255,255,.03);border:1px solid rgba(165,155,148,.16);border-radius:8px;line-height:1.3}
+.tut-welcome .tw-step b{min-width:18px;text-align:center;color:var(--accent);background:rgba(255,190,60,.12);border-radius:6px;padding:1px 0;font-size:11px}
+.tut-welcome .tw-btns{display:flex;gap:8px}
+.tut-welcome .tw-btns .btn{flex:1}
+/* 进行中胶囊（step1~5）：右上角常驻进度 + 跳过 */
+.tut-chip{position:fixed;top:64px;right:14px;display:flex;align-items:center;gap:8px;max-width:calc(100vw - 28px);background:var(--panel);border:1px solid var(--accent);border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.32);padding:6px 8px 6px 13px;font-size:12px;color:var(--text);animation:tutFloatIn .22s ease-out}
+.tut-chip .tc-icon{font-size:15px;line-height:1}
+.tut-chip .tc-title{font-weight:700;white-space:nowrap}
+.tut-chip .tc-dots{display:flex;gap:4px;align-items:center}
+.tut-chip .tc-dot{width:7px;height:7px;border-radius:50%;background:var(--text3);opacity:.45}
+.tut-chip .tc-dot.done{background:var(--green);opacity:1}
+.tut-chip .tc-dot.cur{background:var(--accent);opacity:1;box-shadow:0 0 0 2px rgba(255,190,60,.28)}
+.tut-chip .tc-prog{color:var(--text2);white-space:nowrap;font-size:11px}
+.tut-chip .tc-skip{background:none;border:1px solid var(--text3);color:var(--text2);font-size:11px;padding:3px 10px;border-radius:999px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.tut-chip .tc-skip:hover{color:var(--text);border-color:var(--text2)}
+@keyframes tutFloatIn{from{transform:translateY(-8px);opacity:0}to{transform:translateY(0);opacity:1}}
+@media(max-width:640px){
+  .tut-welcome{top:auto;bottom:96px;left:10px;right:10px;width:auto}
+  .tut-chip{top:auto;bottom:96px;right:10px;left:10px;justify-content:center}
+}
 
 /* ===== 认证覆盖层（v7.0 内测） ===== */
 .auth-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);z-index:99999;display:flex;align-items:center;justify-content:center}
@@ -298,9 +320,10 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 .goods-pane{display:flex;flex-direction:column;height:100%}
 .goods-pane .market-cards{
   /* 物资列表：填满左侧面板高度，超出内部纵向滚动（v9.11 恢复 v9.8 布局，去除 v9.10 的固定 3.5 行压缩） */
+  /* v9.14.6.5：3 列 → 2 列——3 列格子过窄（约 150px），图标/价格/库存/滑条挤在一起看不清；2 列更宽更清晰 */
   padding:10px;
   display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
+  grid-template-columns:repeat(2,minmax(0,1fr));
   gap:10px;
   flex:1;
   overflow-y:auto;
@@ -372,7 +395,7 @@ canvas{border-radius:var(--radius-sm);max-width:100%}
 .goods-pane .item-card .ic-change{font-size:12px;font-weight:700;line-height:1.3}
 .goods-pane .item-card .ic-limit{font-size:11px;line-height:1.35}
 .goods-pane .item-card .ic-cargo-info{font-size:11px;line-height:1.35}
-.goods-pane .item-card.expanded{grid-column:1/-1}
+.goods-pane .item-card.expanded{/* v9.14.6.5：原位展开，不再跨列重排，避免选中数量时破坏物资列表格子排布 */}
 .item-card:hover{border-color:var(--accent);background:var(--cardHover);box-shadow:0 6px 16px rgba(48,40,34,.14);transform:translateY(-1px)}
 .item-card:active{border-color:var(--buy)}
 .item-card.expanded{border-color:var(--text3);background:var(--cardHover)}

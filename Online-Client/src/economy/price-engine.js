@@ -159,10 +159,35 @@ function getDayPrice(cityId,itemId,day){
 function getBaseBuyPrice(cityId,itemId,day){
   return priceFor(cityId,itemId,day,0,undefined,1);
 }
+// —— 顺价窗口（v9.14.6.5）：极低概率 + 极短窗口的"买入价<卖出价"套利机会 ——
+// 独立盐 7700 起，与突破事件/王国调控序列完全隔离，互不冲突；窗口只持续 1~2 游戏日（10~20 现实分钟）
+function getArbitrageWindow(cityId,itemId,day){
+  const hub=Math.floor(day/CENTRAL_PERIOD);
+  if(seededRnd(mkSeed(cityId,itemId,hub,7700))>=0.015)return null; // 每中枢周期 1.5% 概率进入窗口
+  const startDay=hub*CENTRAL_PERIOD+Math.floor(seededRnd(mkSeed(cityId,itemId,hub,7701))*CENTRAL_PERIOD);
+  const len=1+Math.floor(seededRnd(mkSeed(cityId,itemId,hub,7702))*2); // 1~2 游戏日
+  if(day>=startDay&&day<startDay+len)return{startDay:startDay,len:len};
+  return null;
+}
+// —— 本城是否实际出售该物资（可同城买入 → 才存在"同城买→卖"套利面）——
+// v9.14.6.6：钳制只作用于本城 goods 内的物资。非产出/纯卖城市不售此物（无法同城买入），
+//   其卖出高价是"跨城溢价"的正当来源，绝不能按同城买入价压价。
+function isBuyableAt(cityId,itemId){
+  const c=(typeof CITIES!=='undefined'&&CITIES&&Array.isArray(CITIES))?CITIES.find(function(x){return x&&x.id===cityId}):null;
+  return !!(c&&Array.isArray(c.goods)&&c.goods.indexOf(itemId)>=0);
+}
 // —— 纯中枢卖出价（无事件乘数/声望加成，保留买卖价差）：物价表显示与顺价判定的原始数据 ——
 function getBaseSellPrice(cityId,itemId,day){
   const base=BASE_PRICES[cityId]?.[itemId];if(base==null)return null;
-  return Math.round(priceFor(cityId,itemId,day,100,Math.round(base*(1-getSpreadRate(cityId,day))),1));
+  let sell=Math.round(priceFor(cityId,itemId,day,100,Math.round(base*(1-getSpreadRate(cityId,day))),1));
+  // v9.14.6.6：顺价钳制（仅限本城可买入的物资）——正常时保证纯中枢卖出价 ≤ 买入价
+  //   （消除买卖价独立波动导致的常态"同城买<卖"），仅在"顺价窗口"（低概率 + 1~2 游戏日）内允许短暂高于买入价。
+  //   非产出/纯卖城市的跨城高售价不参与钳制（见 isBuyableAt），跨城跑商收益不受影响。
+  const buy=getBaseBuyPrice(cityId,itemId,day);
+  if(buy!=null&&sell>buy&&isBuyableAt(cityId,itemId)&&!getArbitrageWindow(cityId,itemId,day)){
+    sell=Math.round(buy*(1-getSpreadRate(cityId,day)));
+  }
+  return sell;
 }
 // —— 纯物价卖出价（含事件乘数/声望加成，不含需求档位）：供趋势标注 / 折线图 / 需求引擎趋势感知使用 ——
 function rawSellPrice(cityId,itemId,day){
@@ -268,6 +293,7 @@ window.buildLimits = buildLimits;
 window.getDayPrice = getDayPrice;
 window.getBaseBuyPrice = getBaseBuyPrice;
 window.getBaseSellPrice = getBaseSellPrice;
+window.getArbitrageWindow = getArbitrageWindow;
 window.getSellPrice = getSellPrice;
 window.getPriceBreakdown = getPriceBreakdown;
 window.getPriceDirection = getPriceDirection;

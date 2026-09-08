@@ -3,6 +3,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>艾尔希亚跑商</title>
+<!-- v9.14.6.7：内联 favicon，消除无图标时浏览器对 /favicon.ico 的 404 噪音 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%9A%9B%3C/text%3E%3C/svg%3E">
 <script>
 (function(){
   try{
@@ -12,7 +14,7 @@
 })();
 </script>
 <link rel="stylesheet" href="styles/theme.css?v=9135">
-<link rel="stylesheet" href="styles/app.css?v=9139">
+<link rel="stylesheet" href="styles/app.css?v=9148">
 </head>
 <body>
 <!-- 统一 SVG 图标精灵 -->
@@ -91,7 +93,6 @@
   <button data-tab="achrank"><svg class="nav-icon"><use href="#icon-achievement"/></svg><span>成就排行</span></button>
 </nav>
 <div id="content">
-  <div id="tutorial-board"></div>
   <div id="event-board" class="event-board"><span class="event-location"><svg class="tb-icon loc"><use href="#icon-location"/></svg><span class="tb-loc-name">绿田村</span></span></div>
   <div id="view-map" class="active"></div>
   <div id="view-city" class=""></div>
@@ -99,6 +100,8 @@
   <div id="view-achrank"></div>
 </div>
 </div>
+<!-- v9.14.6.7：新手引导悬浮层容器——脱离内容区布局（body 顶层 fixed，见 app.css #tutorial-board） -->
+<div id="tutorial-board"></div>
 <!-- runtime.js 必须最先加载：后续模块只通过 Runtime/Capabilities 判断运行模式。 -->
 <script src="src/app/runtime.js"></script>
 <script src="src/core/state.js?v=9145"></script>
@@ -106,10 +109,10 @@
 <!-- cache-bust: 修复弹窗无法点击/无法关闭 -->
 <script src="src/core/ui-primitives.js?v=921"></script>
 <script src="src/data/world-map.generated.js?v=972"></script>
-<script src="src/core/data.js?v=972"></script>
+<script src="src/core/data.js?v=9146"></script>
 <script src="src/economy/source-pricing.js?v=971"></script>
 <script src="src/economy/price-exceptions.js?v=971"></script>
-<script src="src/economy/price-engine.js?v=971"></script>
+<script src="src/economy/price-engine.js?v=9147"></script>
 <script src="src/economy/demand-engine.js?v=971"></script>
 <script src="src/economy/events.js?v=971"></script>
 <script src="src/economy/trade-graph.js"></script>
@@ -132,7 +135,7 @@
 <script src="src/gameplay/titles.js?v=912"></script> <!-- v9.10.3：称号系统 -->
 <script src="src/gameplay/guide.js?v=913"></script> <!-- v9.13.0：引导层（Spotlight 遮罩/气泡/定位，纯表现层） -->
 <script src="src/gameplay/starfall-core.js?v=9112"></script> <!-- v9.11.x：星陨城确定性逻辑共享核心（浏览器/Node 双端复用） -->
-<script src="src/gameplay/starfall.js?v=9112"></script>
+<script src="src/gameplay/starfall.js?v=9146"></script>
 <script src="src/economy/market-ui.js?v=974"></script> <!-- v9.10.2：交易市场 UI 自主内联拆出 -->
 <script src="src/map/road-curves.js?v=978"></script> <!-- 数据驱动路网曲线（含多拖拽节点/Y 形分支） -->
 <script src="src/map/map-render.js?v=975"></script> <!-- 数据驱动地图与地形 -->
@@ -276,6 +279,20 @@ function applyCargoLoss(pct){
 function showPrivateEvent(){
   const pe=GS.pendingEvent;if(!pe)return;State.set('pendingEvent',null);
   if(pe.type==='rob'){
+    const cargoIds=Object.keys(GS.cargo).filter(id=>GS.cargo[id]>0);
+    if(cargoIds.length===0){
+      // v9.14.6.5：无货时劫匪改抢金币——按与货物损失同区间的比例（10%~30%）扣金币，允许负债
+      const gold=Math.max(0,GS.gold||0);
+      const goldLoss=Math.round(gold*pe.pct);
+      if(goldLoss<=0){
+        showModal('🏴 路遇劫匪','你既无货物也无金币，劫匪悻悻离去','继续赶路',()=>render());
+      }else{
+        const newGold=GS.gold-goldLoss;
+        State.set('gold',newGold);
+        showModal('🏴 路遇劫匪',`你两手空空，劫匪搜走了 ${fmt(goldLoss)} 金币${newGold<0?'（金币已负债，需卖货或完成任务还清）':''}`,'继续赶路',()=>render());
+      }
+      return;
+    }
     let val=0;for(const id in GS.cargo)val+=(GS.cargo[id]||0)*((GS.buyPrice[id])||0);
     const ransom=Math.round(val*0.2);
     // v9.8：欠债系统——赎买允许欠债（金币不足也扣款为负），"硬抗损失"仍为备选
@@ -405,6 +422,7 @@ function forceReloginForVersion(){
   setToken(null);
   localStorage.removeItem(AUTH_KEY);
   window.__gsReady=false;
+  window.__netStarted=false; // v9.14.6.5：强制重登后重置在线启动标志，重登时重新 applyWorld 同步 gameStartTime（否则 Day 卡在 1）
   if(window.GS&&GS.__lastSv!==undefined)GS.__lastSv=0;
   if(window.Starfall&&Starfall.reset)Starfall.reset();
   const ov=document.getElementById('auth-overlay');
@@ -980,6 +998,7 @@ function doLogout(){
   if(GS.__lastSv!==undefined)GS.__lastSv=0;
   localStorage.removeItem(AUTH_KEY);
   resetGameState(); // v8.12（D）：登出重置内存状态，防止离线账号间串档
+  window.__netStarted=false; // v9.14.6.5：登出后重置在线启动标志，下次登录重新 applyWorld 同步 gameStartTime（否则 Day 卡在 1）
   if(window.Starfall&&Starfall.reset)Starfall.reset(); // v9.10.5：清星陨城模块态（_net/_sel/周期），防跨账号泄漏（M3）
   document.getElementById('auth-overlay').style.display='flex';
   document.getElementById('auth-user').value='';document.getElementById('auth-nick').value='';document.getElementById('auth-pass').value='';
@@ -1850,7 +1869,9 @@ function refillStocks(){
     GS.lastStockRefill=now;
     for(let c of CITIES){
       if(!GS.cityStocks[c.id])GS.cityStocks[c.id]={};
-      for(let gid of c.goods)GS.cityStocks[c.id][gid]=PURCHASE_LIMITS[c.id]?.[gid]||100;
+      // v9.14.6.5：补货补满至"最大库存"（基础 × 声望 1+15%/级），此前只补基础值导致高声望下"库存/上限"永远补不满
+      const repMult=1+0.15*getRepLevel(c.id);
+      for(let gid of c.goods)GS.cityStocks[c.id][gid]=Math.round((PURCHASE_LIMITS[c.id]?.[gid]||100)*repMult);
     }
   }
 }
@@ -2961,30 +2982,47 @@ function doUpgradeVehicle(){
 //       tab 导航页签；sub 市场页签（buy/sell）；noAutoTab 不自动切导航页签（引导玩家自行点击）；
 //       noAutoSub 不自动切市场页签；introCheck/introAction 中转面板介绍「下一步」环节；
 //       sel 引导目标定位（选择器字符串或函数，供 guide.js 遮罩高亮 + 滚动定位）
+// v9.14.6.7：物资卡为"点击展开"式交互（展开才显示数量滑条与「加入中转面板」），
+//   引导目标/文案同步该交互：未展开→高亮卡片并提示先点击展开；已展开→高光指向卡内按钮。
+function tutCardExpanded(c){return !!(c&&c.classList&&c.classList.contains('expanded'))}
+function tutBasicCard(){
+  const cs=[].slice.call(document.querySelectorAll('#market-cards .item-card'));
+  for(const c of cs){const g=window.ITEMS&&window.ITEMS[c.getAttribute('data-gid')];if(g&&g.cat==='basic')return c;}
+  return cs[0]||null;
+}
+function tutSellCard(){
+  const cs=[].slice.call(document.querySelectorAll('#market-cards .item-card'));
+  for(const c of cs){const b=c.querySelector('.btn-sell');if(b&&!b.classList.contains('disabled'))return c;}
+  return cs[0]||null;
+}
 const TUTORIAL_STEPS=[
   null,
   // v9.13.1/v9.13.2：分阶段引导——去城市页 → 选物资 → 加入中转（介绍中转面板+下一步）→ 确认购入
+  // v9.14.6.7：物资卡展开式交互——未展开时先引导点击卡片展开，展开后高光指向卡内「加入中转面板」按钮
   {icon:'🛒',title:'购买基础物资',tab:'city',sub:'buy',btn:'🛒 去市场',noAutoTab:true,
    introCheck:function(){return tutHasDraft('buy')&&!tutPhase.buyIntroDone;},
    introAction:function(){tutPhase.buyIntroDone=true;syncTutorialGuide(1);},
    desc:function(){
      if(currentTab!=='city')return '先前往「城市」页面，在市场中购入基础物资';
      if(tutHasDraft('buy')&&!tutPhase.buyIntroDone)return '这就是「中转面板」（购物车）——可先加入多种物资，最后统一确认成交';
-     return '在市场购入一件基础物资（如谷物），装进你的载具';
+     if(tutHasDraft('buy'))return '在右侧中转面板点击「确认购入」，完成本次购买';
+     const c=tutBasicCard();
+     return (c&&!tutCardExpanded(c))?'在市场购入一件基础物资（如谷物）——先点击该卡片展开数量与操作':'在市场购入一件基础物资（如谷物）——在展开区点击「加入中转面板」装进载具';
    },
    hint:function(){
      if(currentTab!=='city')return '点击左侧导航栏的「🏙 城市」按钮';
      if(tutHasDraft('buy')&&!tutPhase.buyIntroDone)return '了解中转面板后，点击「下一步」继续完成购买';
      if(tutHasDraft('buy'))return '在右侧中转面板点击「确认购入」，完成本次购买';
-     return '在购入页选中基础物资卡片，点击「加入中转面板」';
+     const c=tutBasicCard();
+     if(!c)return '在本城购入页选中一件基础物资';
+     return tutCardExpanded(c)?'调整数量后，点击展开区内的「加入中转面板」':'点击选中该物资卡片（展开数量选择与操作按钮）';
    },
    sel:function(){
      if(currentTab!=='city')return document.querySelector('nav button[data-tab="city"]');
      if(tutHasDraft('buy')&&!tutPhase.buyIntroDone)return document.querySelector('#trade-draft')||document.querySelector('.side-pane')||null;
      if(tutHasDraft('buy'))return document.querySelector('#trade-draft .td-confirm')||document.querySelector('.td-confirm');
-     const cs=[].slice.call(document.querySelectorAll('.item-card[data-gid]'));
-     for(const c of cs){const g=window.ITEMS&&window.ITEMS[c.getAttribute('data-gid')];if(g&&g.cat==='basic')return c;}
-     return cs[0]||null;
+     const c=tutBasicCard();if(!c)return null;
+     return tutCardExpanded(c)?(c.querySelector('.btn-buy')||c):c;
    }},
   // v9.13.2：高亮目的地距离最短的可接任务（避免接取过长任务拖慢教学）
   {icon:'📋',title:'接取任务',desc:'在城市页签的任务板接取一个送货/送客任务',hint:'选择目的地最近的任务（更快抵达，节省教学时间）',tab:'city',btn:'📋 去任务板',
@@ -3017,22 +3055,26 @@ const TUTORIAL_STEPS=[
   {icon:'✅',title:'完成任务',desc:'抵达后回到城市页签，在任务板领取任务奖励',hint:'在任务板点击「领取奖励」',tab:'city',btn:'✅ 去领取',
    sel:function(){return document.querySelector('[data-tut="task-claim"]')||null;}},
   // v9.13.2：引导玩家自行点击「售出」页签（不自动切换）→ 选物资 → 加入中转 → 确认售出
+  // v9.14.6.7：售出卡同为"点击展开"式交互——未展开时先引导点击卡片，展开后高光指向「加入中转面板」
   {icon:'💰',title:'卖出物资',tab:'city',btn:'💰 去卖货',noAutoSub:true,
    desc:function(){
      if(tutHasDraft('sell'))return '在中转面板确认售出，赚取金币';
-     return document.querySelector('.sell-tab.active')?'在市场售出页卖出携带的物资，赚取金币':'先切换到「售出」页签，再卖出携带的物资';
+     if(!document.querySelector('.sell-tab.active'))return '在市场售出页卖出携带的物资，赚取金币';
+     const c=tutSellCard();
+     return (c&&!tutCardExpanded(c))?'卖出携带的物资——先点击该物资卡片展开数量与操作':'卖出携带的物资——在展开区点击「加入中转面板」，赚取金币';
    },
    hint:function(){
      if(tutHasDraft('sell'))return '在右侧中转面板点击「确认售出」，完成本次卖出';
      if(!document.querySelector('.sell-tab.active'))return '点击市场顶部的「💰 售出」页签';
-     return '在售出页选中物资卡片，点击「加入中转面板」';
+     const c=tutSellCard();
+     if(!c)return '在售出页选中一件携带的物资';
+     return tutCardExpanded(c)?'调整数量后，点击展开区内的「加入中转面板」':'点击选中该物资卡片（展开数量选择与操作按钮）';
    },
    sel:function(){
      if(tutHasDraft('sell'))return document.querySelector('#trade-draft .td-confirm')||document.querySelector('.td-confirm');
      if(!document.querySelector('.sell-tab.active'))return document.querySelector('.sell-tab')||null;
-     const cs=[].slice.call(document.querySelectorAll('#market-cards .item-card'));
-     for(const c of cs){const b=c.querySelector('.btn-sell');if(b&&!b.classList.contains('disabled'))return c;}
-     return cs[0]||null;
+     const c=tutSellCard();if(!c)return null;
+     return tutCardExpanded(c)?(c.querySelector('.btn-sell')||c):c;
    }}
 ];
 // v9.13.2：引导分阶段子状态（step1 中转面板介绍是否已点「下一步」）
@@ -3149,13 +3191,20 @@ function goTutorial(){
   if(s.sub&&window.switchMarket)switchMarket(s.sub);
   if(window.Guide)Guide.refresh(); // v9.13.0：重新定位目标（遮罩/气泡跟随）
 }
+// v9.14.6.7：新手引导改为「悬浮层」——不再占用内容区顶部条（原 tutorial-panel 已无布局位置）：
+//   step0 → 右侧悬浮欢迎卡；step1~5 → 右上角进行中胶囊（进度圆点 + 跳过）。
+//   具体步骤的操作提示与高光仍由 Guide.show（guide.js，跟随目标元素的悬浮气泡）承担。
 function renderTutorial(){
   // v8.19：step 缺失/非数字一律视为已完成（不显示教程），防止服务器旧档/异常结构导致教程复现
   const st=GS.tutorial&&typeof GS.tutorial.step==='number'?GS.tutorial.step:6;
   if(st>=6)return '';
-  if(st===0)return `<div class="tutorial-panel"><div class="tut-head">🎓 新手引导</div>
-    <div class="tut-body">欢迎来到全王国！跟随 5 步学会跑商：<b>买物资 → 接任务 → 前往目的地 → 完成任务 → 卖物资</b></div>
-    <div class="tut-btns"><button class="btn btn-primary" onclick="startTutorial()">🚀 开始引导</button></div></div>`;
+  if(st===0){
+    const intro=TUTORIAL_STEPS.slice(1).map((x,i)=>`<div class="tw-step"><b>${i+1}</b><span>${x.icon} ${x.title}</span></div>`).join('');
+    return `<div class="tut-welcome"><div class="tw-head"><span class="tw-badge">🎓</span><div><div class="tw-title">新手引导</div><div class="tw-sub">5 步学会跑商</div></div></div>
+      <div class="tw-body">欢迎来到全王国！跟随引导走完<b>买货 → 接任务 → 送货 → 卖货</b>，即可上手跑商。完成教程将获得称号「新手上路」。</div>
+      <div class="tw-steps">${intro}</div>
+      <div class="tw-btns"><button class="btn btn-primary" onclick="startTutorial()">🚀 开始引导</button><button class="btn" onclick="skipTutorial()">跳过</button></div></div>`;
+  }
   // v9.13.3：刷新/重进后 Guide 未激活时自动恢复引导（防中断）；已激活则同步阶段
   if(!window.Guide||!Guide.isActive()){
     if(st===1&&tutHasDraft('buy'))tutPhase.buyIntroDone=true; // 已有中转条目视为已过中转介绍
@@ -3163,10 +3212,9 @@ function renderTutorial(){
   }else{
     syncTutorialGuide(st);
   }
-  // v9.13.3：顶部面板精简为纯进度条（提示与操作移入右侧引导面板，修复 desc 函数被插值成源码）
-  const steps=TUTORIAL_STEPS.slice(1).map((x,i)=>`<span class="tut-step ${i+1<st?'tut-done':(i+1===st?'tut-cur':'')}">${i+1<st?'✔':x.icon} ${x.title}</span>`).join('');
-  return `<div class="tutorial-panel"><div class="tut-head">🎓 新手引导 <span class="tut-progress">${st}/5</span></div>
-    <div class="tut-steps">${steps}</div></div>`;
+  const s=TUTORIAL_STEPS[st];if(!s)return '';
+  const dots=TUTORIAL_STEPS.slice(1).map((x,i)=>{const n=i+1;const cls=n<st?'done':(n===st?'cur':'');return `<span class="tc-dot ${cls}"></span>`;}).join('');
+  return `<div class="tut-chip" title="新手引导 · ${s.title}"><span class="tc-icon">${s.icon}</span><span class="tc-title">${s.title}</span><span class="tc-dots">${dots}</span><span class="tc-prog">${st}/5</span><button class="tc-skip" onclick="skipTutorial()">跳过</button></div>`;
 }
 
 // ===== UI 渲染 =====
@@ -3220,9 +3268,11 @@ function renderContent(){
   let eb=document.getElementById('event-board');
   if(!eb){eb=document.createElement('div');eb.id='event-board';eb.className='event-board';c.prepend(eb);}
   eb.innerHTML=renderEventBoard();
-  let tb=document.getElementById('tutorial-board');
-  if(!tb){tb=document.createElement('div');tb.id='tutorial-board';c.prepend(tb);}
-  tb.innerHTML=renderTutorial();
+  // v9.14.6.7：新手引导改为悬浮层（body 顶层 fixed，#tutorial-board 已挂于 HTML）；
+  // 内容无变化时不重写 innerHTML，避免每次 render 重放入场动画造成闪烁
+  const tb=document.getElementById('tutorial-board')||(function(){const d=document.createElement('div');d.id='tutorial-board';document.body.appendChild(d);return d;}());
+  const tutHtml=renderTutorial();
+  if(tb.getAttribute('data-html')!==tutHtml){tb.setAttribute('data-html',tutHtml);tb.innerHTML=tutHtml;}
   document.querySelectorAll('#content > div').forEach(d=>d.classList.remove('active'));
   switch(currentTab){
     case'map':document.getElementById('view-map').classList.add('active');c.querySelector('#view-map').innerHTML=renderMap();break;
@@ -3303,7 +3353,7 @@ function renderStation(){
   const canRepair=cur<max&&GS.gold>=cost&&!GS.traveling;
   const uc=getUpgradeCost();
   const matStock=(m)=>GS.materials[m]||0;
-  const canUp=GS.gold>=uc.gold&&matStock('gear')>=uc.gear&&matStock('repair_kit')>=uc.repair_kit;
+  const canUp=GS.gold>=uc.gold&&matStock('gear')>=uc.gear&&matStock('repair_kit')>=uc.repair_kit&&(!uc.staralloy||matStock('staralloy')>=uc.staralloy);
   return `<div class="station-panel"><h3>🚉 车站 <span style="font-size:12px;color:var(--text2)">载具保养 · 维修 · 升级 · 车厢管理</span></h3>
   <div class="station-grid">
     <div class="station-card">
@@ -3322,8 +3372,8 @@ function renderStation(){
       <div class="sc-label">载具升级</div>
       <div class="sc-val">Lv${lv} → Lv${lv+1}</div>
       <div class="sc-label" style="margin-top:4px">车厢位 ${getWagonSlots()} → ${getWagonSlots()+1} · 耐久 +20（${max}→${nextMax}）</div>
-      <div class="sc-label" style="margin-top:4px">消耗：${fmt(uc.gold)}金 · ⚙️${uc.gear}${uc.repair_kit?' · 🧰'+uc.repair_kit:''}</div>
-      <div class="sc-label" style="margin-top:4px">持有：⚙️${matStock('gear')} · 🧰${matStock('repair_kit')}（任务获得）</div>
+      <div class="sc-label" style="margin-top:4px">消耗：${fmt(uc.gold)}金 · ⚙️${uc.gear}${uc.repair_kit?' · 🧰'+uc.repair_kit:''}${uc.staralloy?' · 💫星陨合金×'+uc.staralloy:''}</div>
+      <div class="sc-label" style="margin-top:4px">持有：⚙️${matStock('gear')} · 🧰${matStock('repair_kit')} · 💫星陨合金${matStock('staralloy')}（任务/活动获得）</div>
       <button class="btn btn-primary station-btn" onclick="doUpgradeVehicle()" ${canUp?'':'disabled'}>🚛 升级</button>
     </div>
   </div>

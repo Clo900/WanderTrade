@@ -154,8 +154,11 @@ export function createWorld(ctx) {
         if (!rec.gs || !rec.gs.cityStocks) continue;
         for (const cn of Object.keys(world.purchaseLimits || {})) {
           if (!rec.gs.cityStocks[cn]) rec.gs.cityStocks[cn] = {};
+          // v9.14.6.5：补货补满至"最大库存"（基础 × 声望 1+15%/级）；此前只补基础值，高声望下"库存/上限"永远补不满
+          const repLv = (rec.gs.reputation && rec.gs.reputation[cn] && rec.gs.reputation[cn].level) || 0;
+          const mult = 1 + 0.15 * repLv;
           for (const inn of Object.keys(world.purchaseLimits[cn])) {
-            rec.gs.cityStocks[cn][inn] = world.purchaseLimits[cn][inn];
+            rec.gs.cityStocks[cn][inn] = Math.round((world.purchaseLimits[cn][inn] || 0) * mult);
           }
         }
         players.markDirty(rec.user);

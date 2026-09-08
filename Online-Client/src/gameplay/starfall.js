@@ -155,7 +155,10 @@
       });
     }
     act.history = act.history || [];
-    act.history.unshift({ period: act.period, first: arr.length ? arr[0].user : null, progress: act.totalProgress, target: GOAL });
+    // v9.14.6.5：单机历史冠军归档昵称（回退用户名）
+    var firstUser = arr.length ? arr[0].user : null;
+    var firstNick = firstUser ? ((window.GS && GS.nickname) || null) : null;
+    act.history.unshift({ period: act.period, first: firstUser, firstNick: firstNick, progress: act.totalProgress, target: GOAL });
     if(act.history.length > HISTORY_KEEP) act.history = act.history.slice(0, HISTORY_KEEP);
   }
 
@@ -461,7 +464,7 @@
       }
       s += '</select>' +
         '<button class="sf-hist-nav" onclick="Starfall.histShift(1)">◀</button>' +
-        '<span class="sf-hist-cur">第 ' + h.period + ' 期 · 冠军：' + (h.first ? esc(h.first) : '（无人上榜）') + '</span>' +
+        '<span class="sf-hist-cur">第 ' + h.period + ' 期 · 冠军：' + (h.firstNick ? esc(h.firstNick) : (h.first ? esc(h.first) : '（无人上榜）')) + '</span>' +
         '<button class="sf-hist-nav" onclick="Starfall.histShift(-1)">▶</button></div>' +
         '<div class="sf-hist-idx">建设度 ' + fmt(h.progress || 0) + '/' + fmt(h.target || GOAL) + ' · ' + (_histIdx + 1) + ' / ' + hist.length + '</div>';
     }

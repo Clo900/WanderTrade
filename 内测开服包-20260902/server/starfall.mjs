@@ -192,10 +192,15 @@ export function createStarfall(ctx, world, players, mailbox) {
       }
 
       const first = arr.length ? arr[0].user : null;
-      const newH = { period, first, progress: totalProgress, target: GOAL };
+      // v9.14.6.5：历史冠军显示昵称（回退用户名）；结算时把冠军昵称一并归档
+      let firstNick = null;
+      if (first) {
+        try { const rec = await players.loadRec(first); firstNick = (rec && rec.nickname) || null; } catch (e) { /* 昵称缺失时回退用户名 */ }
+      }
+      const newH = { period, first, firstNick, progress: totalProgress, target: GOAL };
       actRef.history = [newH].concat(actRef.history || []);
       if (actRef.history.length > HISTORY_KEEP) actRef.history = actRef.history.slice(0, HISTORY_KEEP);
-      log('[Settle] 第 ' + period + ' 期结算完成：冠军=' + (first || '(无人上榜)') + '，奖励邮件 ' + arr.length + ' 封');
+      log('[Settle] 第 ' + period + ' 期结算完成：冠军=' + (firstNick || first || '(无人上榜)') + '，奖励邮件 ' + arr.length + ' 封');
     })();
   }
 
