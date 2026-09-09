@@ -262,12 +262,30 @@ export function createStarfall(ctx, world, players, mailbox) {
     return out;
   }
 
+  /* ---- 历史冠军昵称自愈补齐（v9.14.6.9） ----
+   * v9.14.6.5 起结算归档才带 firstNick，早期归档（如第 83/84 期）只有 first（用户名/id）。
+   * 读取时对缺失 firstNick 的条目用玩家档案实时补昵称；补齐过则回写存档，避免每次查询。 */
+  async function enrichHistoryNicks(hist) {
+    if (!Array.isArray(hist)) return hist;
+    let changed = false;
+    for (const h of hist) {
+      if (!h || h.firstNick || !h.first) continue;
+      try {
+        const rec = await players.loadRec(h.first);
+        if (rec && rec.nickname) { h.firstNick = rec.nickname; changed = true; }
+      } catch (e) { /* 读档失败或无昵称：保留 first 由客户端回退显示 */ }
+    }
+    if (changed) save();
+    return hist;
+  }
+
   /* ---- GET /api/starfall/activity?user= ---- */
   async function activity(user) {
     const a = await loadStarfall();
     await maybeRotate();
     const snap = snapshot(a, user);
     const c = world.sfConfig();
+    const history = await enrichHistoryNicks(a.history);
     return {
       ok: true,
       activity: {
@@ -275,7 +293,7 @@ export function createStarfall(ctx, world, players, mailbox) {
         phaseStartedAt: a.phaseStartedAt, phaseEndsAt: a.phaseEndsAt,
         target: a.target, required: a.required, totalProgress: a.totalProgress,
         top10: await withNicks(snap.rows), myRank: snap.myRank, myScore: snap.myScore,
-        history: a.history,
+        history: history,
         sfConfig: { runMs: c.runMs, interMs: c.interMs }
       }
     };
@@ -356,7 +374,8 @@ export function createStarfall(ctx, world, players, mailbox) {
     if (action === 'status') {
       const pcount = a.scores ? Object.keys(a.scores).length : 0;
       const hist = a.history || [];
-      const top = hist.length ? hist[0].first : null;
+      await enrichHistoryNicks(hist);
+      const top = hist.length ? (hist[0].firstNick || hist[0].first) : null;
       const c = world.sfConfig();
       return {
         ok: true,

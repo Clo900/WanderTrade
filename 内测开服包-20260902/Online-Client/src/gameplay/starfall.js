@@ -252,6 +252,10 @@
     var arr = [];
     for(var u in a.scores){ arr.push({ user: u, score: a.scores[u], ts: (a.firstOrder || {})[u] || 0 }); }
     arr.sort(function(x, y){ return y.score - x.score || x.ts - y.ts; });
+    // v9.14.6.9：离线/本地行同样带昵称（在线 top10 由服务端补 nickname；此处兜底避免显示用户名 id）
+    for(var i = 0; i < arr.length; i++){
+      if(!arr[i].nickname && arr[i].user === me && window.GS && GS.nickname) arr[i].nickname = GS.nickname;
+    }
     for(var i = 0; i < arr.length; i++){ if(arr[i].user === me) return { rank: i + 1, score: arr[i].score, rows: arr.slice(0, 10) }; }
     return { rank: 0, score: 0, rows: arr.slice(0, 10) };
   }
