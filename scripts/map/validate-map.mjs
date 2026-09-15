@@ -85,12 +85,18 @@ export function validateMap(map, world) {
     if (edges.has(edge)) fail(at, `道路重复：${edge}`); else edges.add(edge);
     if (road?.layer && !layerIds.has(road.layer)) fail(`${at}.layer`, `未知图层：${road.layer}`);
     const mode = road?.curve?.mode || 'auto';
-    if (!['auto', 'straight', 'manual', 'control', 'branch'].includes(mode)) fail(`${at}.curve.mode`, `不支持：${mode}`);
+    if (!['auto', 'straight', 'manual', 'hex', 'control', 'branch'].includes(mode)) fail(`${at}.curve.mode`, `不支持：${mode}`);
     if (road?.curve?.bend !== undefined && (!Number.isFinite(road.curve.bend) || road.curve.bend < 0)) fail(`${at}.curve.bend`, '必须是非负数');
     if (mode === 'manual' && !(Array.isArray(road.curve.controls) && road.curve.controls.length === 2 && road.curve.controls.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)))) fail(`${at}.curve.controls`, 'manual 模式需要两个 [x,y] 控制点');
     const controlPoints = Array.isArray(road.curve?.controlPoints) ? road.curve.controlPoints : (Array.isArray(road.curve?.controlPoint) ? [road.curve.controlPoint] : []);
     if (mode === 'control' && !(controlPoints.length && controlPoints.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)))) fail(`${at}.curve.controlPoints`, 'control 模式至少需要一个 [x,y] 控制节点');
     if (mode === 'control' && controlPoints.some(p => p[0] < 0 || p[0] > (map.viewBox?.width || 0) || p[1] < 0 || p[1] > (map.viewBox?.height || 0))) fail(`${at}.curve.controlPoints`, '控制节点超出 viewBox');
+    const hexPath = road.curve?.hexPath;
+    if (mode === 'hex' && !(Array.isArray(hexPath) && hexPath.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)))) fail(`${at}.curve.hexPath`, 'hex 模式需要格心坐标数组');
+    if (mode === 'hex' && Array.isArray(hexPath) && hexPath.some(p => p[0] < 0 || p[0] > (map.viewBox?.width || 0) || p[1] < 0 || p[1] > (map.viewBox?.height || 0))) fail(`${at}.curve.hexPath`, '六角路径节点超出 viewBox');
+    const hexWaypoints = road.curve?.hexWaypoints;
+    if (mode === 'hex' && hexWaypoints !== undefined && !(Array.isArray(hexWaypoints) && hexWaypoints.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)))) fail(`${at}.curve.hexWaypoints`, '六角弯曲节点必须是 [x,y] 格心坐标数组');
+    if (mode === 'hex' && Array.isArray(hexWaypoints) && hexWaypoints.some(p => p[0] < 0 || p[0] > (map.viewBox?.width || 0) || p[1] < 0 || p[1] > (map.viewBox?.height || 0))) fail(`${at}.curve.hexWaypoints`, '六角弯曲节点超出 viewBox');
     if (mode === 'branch' && !(typeof road.curve.group === 'string' && road.curve.group && Array.isArray(road.curve.branchPoint) && road.curve.branchPoint.length === 2 && road.curve.branchPoint.every(Number.isFinite))) fail(`${at}.curve`, 'branch 模式需要 group 和 [x,y] 分叉点');
     if (mode === 'branch' && Array.isArray(road.curve?.branchPoint) && (road.curve.branchPoint[0] < 0 || road.curve.branchPoint[0] > (map.viewBox?.width || 0) || road.curve.branchPoint[1] < 0 || road.curve.branchPoint[1] > (map.viewBox?.height || 0))) fail(`${at}.curve.branchPoint`, '分叉点超出 viewBox');
     if (mode === 'branch' && road.curve?.group) {
@@ -116,6 +122,15 @@ export function validateMap(map, world) {
   for (const [i, feature] of (Array.isArray(map.terrain?.features) ? map.terrain.features : []).entries()) {
     if (!['gaussian', 'ridge'].includes(feature?.type)) fail(`terrain.features[${i}].type`, '仅支持 gaussian/ridge');
     if (feature?.anchor && !cityIds.has(feature.anchor)) fail(`terrain.features[${i}].anchor`, `城市不存在：${feature.anchor}`);
+  }
+  if (map.terrain?.hexTiles !== undefined && !Array.isArray(map.terrain.hexTiles)) fail('terrain.hexTiles', '必须是数组');
+  const terrainTypes = new Set(['lake', 'grassland', 'forest', 'mountain', 'swamp']), terrainCells = new Set();
+  for (const [i, tile] of (Array.isArray(map.terrain?.hexTiles) ? map.terrain.hexTiles : []).entries()) {
+    const at = `terrain.hexTiles[${i}]`, key = `${tile?.column},${tile?.row}`;
+    if (!Number.isInteger(tile?.column) || tile.column < 0 || (Number.isInteger(map.editor?.hexGrid?.columns) && tile.column >= map.editor.hexGrid.columns)) fail(`${at}.column`, '超出六角网格');
+    if (!Number.isInteger(tile?.row) || tile.row < 0 || (Number.isInteger(map.editor?.hexGrid?.rows) && tile.row >= map.editor.hexGrid.rows)) fail(`${at}.row`, '超出六角网格');
+    if (!terrainTypes.has(tile?.type)) fail(`${at}.type`, `地形类型无效：${tile?.type}`);
+    if (terrainCells.has(key)) fail(at, `地块坐标重复：${key}`); else terrainCells.add(key);
   }
   if ((world?.__schema || 0) < (map.worldSchema || 0)) fail('default-world.__schema', '低于地图要求的 worldSchema');
   if (JSON.stringify(world?.tradeRoads) !== JSON.stringify(economicRoads(map))) fail('default-world.tradeRoads', '未与地图经济距离同步，请运行构建脚本');

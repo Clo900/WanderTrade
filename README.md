@@ -147,7 +147,8 @@ WanderTrade/
 ├─ scripts/map/             地图构建/校验/安装/编辑器服务（build-map / validate-map / install-map / editor-server）
 ├─ scripts/e2e/             浏览器回归套件（puppeteer-core + 系统 Chrome，`E2E_URL` 端口参数化）
 ├─ scripts/load/            并发压测（`load-test.mjs`，验证百人同时在线）
-├─ tools/map-editor.html    可视化地图编辑器
+├─ tools/map-editor/        独立六角网格地图编辑器（JSON 导入/校验/导出）
+├─ tools/map-editor.html    旧入口兼容跳转页
 ├─ server/                  Node.js 服务端（index.mjs + 17 个模块：store/world/players/auth/trade/warehouse/chat/starfall/mailbox/rankings/admin/routes/sessions/gs-validate/gold-ledger/daily-log/error-log）
 ├─ start-server.bat         本机一键启动脚本（node server\index.mjs）
 ├─ start-map-editor.bat     一键启动地图编辑器

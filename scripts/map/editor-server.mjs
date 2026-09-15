@@ -6,9 +6,8 @@ import { root } from './validate-map.mjs';
 
 const host = '127.0.0.1', port = Number(process.env.MAP_EDITOR_PORT) || 8790;
 const assets = new Map([
-  ['/', [path.join(root, 'tools', 'map-editor.html'), 'text/html; charset=utf-8']],
-  ['/Online-Client/src/data/world-map.generated.js', [path.join(root, 'Online-Client', 'src', 'data', 'world-map.generated.js'), 'text/javascript; charset=utf-8']],
-  ['/Online-Client/src/map/road-curves.js', [path.join(root, 'Online-Client', 'src', 'map', 'road-curves.js'), 'text/javascript; charset=utf-8']]
+  ['/', [path.join(root, 'tools', 'map-editor', 'index.html'), 'text/html; charset=utf-8']],
+  ['/index.html', [path.join(root, 'tools', 'map-editor', 'index.html'), 'text/html; charset=utf-8']]
 ]);
 const send = (res, status, body, type = 'application/json; charset=utf-8') => {
   res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
@@ -21,6 +20,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && assets.has(pathname)) {
       const [file, type] = assets.get(pathname);
       return send(res, 200, await readFile(file), type);
+    }
+    if (req.method === 'GET' && pathname === '/api/map') {
+      return send(res, 200, await readFile(path.join(root, 'map', 'world-map.json')));
     }
     if (req.method === 'POST' && pathname === '/api/map/save') {
       let raw = '';

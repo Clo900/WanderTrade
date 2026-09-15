@@ -62,6 +62,32 @@ test('兼容旧版单个 controlPoint 字段', () => {
   assert.deepEqual(validateMap(map, sourceWorld), []);
 });
 
+test('接受六角格心路径并拒绝越界路径节点', () => {
+  const map = clone(sourceMap);
+  map.roads[0].curve = { mode: 'hex', hexPath: [[210, 105], [255, 131]] };
+  assert.deepEqual(validateMap(map, sourceWorld), []);
+  map.roads[0].curve.hexPath.push([map.viewBox.width + 1, 100]);
+  assert.match(validateMap(map, sourceWorld).join('\n'), /六角路径节点超出/);
+});
+
+test('接受六角道路弯曲节点并拒绝越界节点', () => {
+  const map = clone(sourceMap);
+  map.roads[0].curve = { mode: 'hex', hexWaypoints: [[210, 105]], hexPath: [[210, 105], [255, 131]] };
+  assert.deepEqual(validateMap(map, sourceWorld), []);
+  map.roads[0].curve.hexWaypoints.push([map.viewBox.width + 1, 100]);
+  assert.match(validateMap(map, sourceWorld).join('\n'), /六角弯曲节点超出/);
+});
+
+test('接受六角地形并拒绝无效或重复地块', () => {
+  const map = clone(sourceMap);
+  map.terrain.hexTiles = [{ column: 1, row: 2, type: 'forest' }];
+  assert.deepEqual(validateMap(map, sourceWorld), []);
+  map.terrain.hexTiles.push({ column: 1, row: 2, type: 'desert' });
+  const errors = validateMap(map, sourceWorld).join('\n');
+  assert.match(errors, /地形类型无效/);
+  assert.match(errors, /地块坐标重复/);
+});
+
 test('拒绝新增城市但经济表未登记', () => {
   const map = clone(sourceMap);
   map.cities.push({ id: 'newtown', name: '新镇', tier: 'town', x: 60, y: 60, layer: 'surface', goods: ['grain'] });

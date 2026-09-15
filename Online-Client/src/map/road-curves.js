@@ -29,6 +29,16 @@ function roadCurve(a,b,x1,y1,x2,y2,d){
   const rnd=mapSeed(key);
   const distLi=d||10;
   const curve=(def&&def.curve)||{mode:'auto',bend:1};
+  if(curve.mode==='hex'&&Array.isArray(curve.hexPath)){
+    const points=[[x1,y1],...curve.hexPath.map(p=>p.map(Number)),[x2,y2]],curves=[];
+    let dPath=`M ${x1.toFixed(1)} ${y1.toFixed(1)}`;
+    for(let i=0;i<points.length-1;i++){
+      const p0=points[i],p1=points[i+1],c1=[p0[0]+(p1[0]-p0[0])/3,p0[1]+(p1[1]-p0[1])/3],c2=[p0[0]+(p1[0]-p0[0])*2/3,p0[1]+(p1[1]-p0[1])*2/3];
+      curves.push({p0,c1,c2,p1});dPath+=` L ${p1[0].toFixed(1)} ${p1[1].toFixed(1)}`;
+    }
+    const mid=pointOnCurves(curves,0.5);
+    return MAP_CURVES[key]={d:dPath,curves,cx:mid[0],cy:mid[1]};
+  }
   if(curve.mode==='control'){
     const configured=Array.isArray(curve.controlPoints)?curve.controlPoints:(Array.isArray(curve.controlPoint)?[curve.controlPoint]:[]);
     const points=[[x1,y1],...configured.map(p=>p.map(Number)),[x2,y2]];
