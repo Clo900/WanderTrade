@@ -119,7 +119,7 @@
     const riverField = world.rivers;
     const terrainRules = world.terrainRules;
 
-    let br = 0, bg = 0, bb = 0, ar = 0, ag = 0, ab = 0, shore = 0, band = 0, waterW = 0, wSum = 0;
+    let br = 0, bg = 0, bb = 0, ar = 0, ag = 0, ab = 0, shore = 0, waterW = 0, wSum = 0;
     let transition = 0, foothill = 0;
     for (let i = 0; i < group.length; i += 2) {
       const t = group[i];
@@ -130,10 +130,7 @@
       br += c.r * w; bg += c.g * w; bb += c.b * w;
       ar += a.r * w; ag += a.g * w; ab += a.b * w;
       shore += (t.shore || 0) * w;
-      if (t.terrain === 'water') {
-        waterW += w;
-        band += (1 - Math.min(1, (t.distToLand || 0) / 3.2)) * w;
-      }
+      if (t.terrain === 'water') waterW += w;
       if (terrainRules && terrainRules.byTile[t.key]) {
         transition += terrainRules.byTile[t.key].transitionStrength * w;
         foothill += terrainRules.byTile[t.key].foothill * w;
@@ -179,16 +176,14 @@
     if (foothill > 0 && waterW <= 0) out.lerp(colorOf(P.rock.mid), FOOTHILL_TINT * foothill * inv);
     if (transition > 0 && waterW <= 0) out.lerp(tmpAlt, 0.16 * transition * inv);
 
-    // 浅水带：0 格（紧贴陆地）最亮，向外 3 格转为深水；同样加权平均，
-    // 水面渐变因此是连续的，而不是一格一色
-    if (waterW > 0) {
-      const b = band / waterW;
-      if (b > 0) {
-        const smooth = b * b * (3 - 2 * b);
-        out.lerp(colorOf(P.water.shallow), 0.5 * smooth * waterW * inv);
-        out.lerp(colorOf(P.water.foam), 0.28 * smooth * smooth * waterW * inv);
-      }
-    }
+    // 浅水带不再由顶点色表达（v1.9）。旧版在这里按 `distToLand / 3.2` 把水面朝
+    // `water.shallow / water.foam` 提亮，看上去是在做「近岸浅、远处深」，
+    // 但它**必然是一格一格的**：同一个水格上，格心顶点的权重是「本格 + 6 邻」、
+    // 角点顶点是「压在这个角上的 3 格」，两套权重算出的 `distToLand` 平均值不同，
+    // 于是每个六边形内部都有一圈色阶 —— 正是「蜂窝纹」。
+    // 真正的水深现在由几何给出（hex-world 的敞水深度场 + 岸坡因子），
+    // 由画面深度过渡（render/water-depth.js）读出来，是连续且唯一的：
+    // 这里是重复逻辑，删掉；水面顶点色只保留纯粹的基色。
 
     out.convertSRGBToLinear();
     return out;
@@ -276,8 +271,10 @@
    * 构建一组地形的曲面网格
    * @param {object} world
    * @param {string} groupName 'land' | 'forest' | 'field' | 'flower' | 'water'
+   * @param {number} [flatY] 给定时，所有顶点高度强制为它（用于**水平水面**：
+   *   水面不能读地形高度，否则「水下地表被下切」会把水面一起拖下去）
    */
-  function buildGroupGeometry(world, groupName) {
+  function buildGroupGeometry(world, groupName, flatY) {
     const size = world.hexSize;
     const H = Config.value.height;
     const bw = Config.value.palette.blendWeights || {};
@@ -286,6 +283,7 @@
     // 格内中环：半径比例、微起伏幅度、中环处的混色渗透量
     const innerR = H.innerRing === false ? 0 : Math.max(0, Math.min(0.85, H.innerRingRadius == null ? 0.5 : H.innerRingRadius));
     const innerRelief = H.innerRelief == null ? 0 : H.innerRelief;
+    const flat = flatY == null ? null : flatY;
     // 角点的等权平均≈「朝邻居渗透 2/3」，中环取两者之间的插值，色带因此单调
     const centerBlend = bw.center == null ? 0.32 : bw.center;
     const midBlend = lerp(centerBlend, 2 / 3, innerR);
@@ -302,7 +300,7 @@
 
       // 中心顶点（该顶点只属于自己）
       const centerIdx = positions.length / 3;
-      const centerY = world.heightAt(tile.x, tile.z);
+      const centerY = flat == null ? world.heightAt(tile.x, tile.z) : flat;
       positions.push(tile.x, centerY, tile.z);
       vertexColor(world, colorGroupAtVertex(world, tile, -1), tile.x, tile.z, centerY, c);
       colors.push(c.r, c.g, c.b);
@@ -318,7 +316,8 @@
         const mx = tile.x + Math.cos(ang) * size * innerR;
         const mz = tile.z + Math.sin(ang) * size * innerR;
         let my = world.heightAt(mx, mz);
-        if (innerRelief > 0) {
+        if (flat != null) my = flat;
+        else if (innerRelief > 0) {
           const n = Rng.valueNoise2(mx / (size * 1.2), mz / (size * 1.2), world.seed + 6613);
           my += innerRelief * world.maxRise * (n - 0.5) * 2;
         }
@@ -337,7 +336,7 @@
         const ang = Hex.cornerAngle(k);
         const px = tile.x + Math.cos(ang) * size;
         const pz = tile.z + Math.sin(ang) * size;
-        const py = world.heightAt(px, pz);
+        const py = flat == null ? world.heightAt(px, pz) : flat;
         positions.push(px, py, pz);
         vertexColor(world, colorGroupAtVertex(world, tile, k), px, pz, py, c);
         colors.push(c.r, c.g, c.b);
@@ -453,7 +452,8 @@
    * @returns {object} 地块层
    */
   function build(world) {
-    const P = Config.value.palette;
+    const C = Config.value;
+    const P = C.palette;
     const size = world.hexSize;
     const group = new THREE.Group();
     group.name = 'terrain';
@@ -544,9 +544,30 @@
     const rockMesh = makeSurface('rock', new THREE.MeshStandardMaterial({
       vertexColors: true, map: cliff, roughness: 1, metalness: 0
     }));
-    const waterMesh = makeSurface('water', new THREE.MeshStandardMaterial({
-      vertexColors: true, map: crackle, roughness: 0.35, metalness: 0.02
+    // ---------- 水面 / 水下地表（两件事必须拆开）----------
+    //   · **水下地表（bed）** = 水格的地表。`world.heightAt` 用「敞水深度场 ×
+    //     岸坡因子」把它切下去（见 hex-world 的 openWaterDepth / shoreFade）：
+    //     深度是 (x,z) 的纯函数且跨格连续，水深就是它相对水面的落差。
+    //   · **水面** = 一个**水平面**，高度只由 `config.water.level` 决定。
+    // 旧版把两者合在同一个网格里（水格的「地表」就是水面），于是「水深」这个概念
+    // 在数据上根本不存在，深度过渡也就无从谈起。
+    const waterLevelY = size * ((C.water && C.water.level) || 0);
+    const bedMesh = new THREE.Mesh(buildGroupGeometry(world, 'water'), new THREE.MeshStandardMaterial({
+      vertexColors: true, map: crackle, roughness: 0.55, metalness: 0.01
     }));
+    bedMesh.castShadow = false;
+    bedMesh.receiveShadow = true;
+    bedMesh.name = 'terrain-water-bed';
+    group.add(bedMesh);
+
+    const waterMat = new THREE.MeshStandardMaterial({
+      vertexColors: true, map: crackle, roughness: 0.35, metalness: 0.02
+    });
+    const waterMesh = new THREE.Mesh(buildGroupGeometry(world, 'water', waterLevelY), waterMat);
+    waterMesh.castShadow = false;
+    waterMesh.receiveShadow = true;
+    waterMesh.name = 'terrain-water';
+    group.add(waterMesh);
 
     // 水面裙边
     const skirtGeom = buildWaterSkirt(world, boardTopY);
@@ -583,8 +604,12 @@
       flowerMesh: flowerMesh,
       rockMesh: rockMesh,
       waterMesh: waterMesh,
+      bedMesh: bedMesh,
+      waterMaterial: waterMat,
       skirtMesh: skirtMesh,
       boardMesh: board,
+      /** 水位（绝对高度）：河面 / 湖面 / 海面共用同一个值 */
+      waterLevelY: waterLevelY,
       /** 供射线拾取使用的表面集合 */
       pickTargets: [landMesh, forestMesh, fieldMesh, flowerMesh, rockMesh, waterMesh],
 
@@ -602,11 +627,16 @@
         flowerMesh.material.color.setHex(env.terrain.flower);
         rockMesh.material.color.setHex(env.terrain.rock);
         waterMesh.material.color.setHex(env.terrain.water);
+        // 水下地表（河床/海底）不跟着水面走：它读的是同一个水色系但更暗、更湿，
+        // 这样深度过渡把水面变透明时，透出来的是「床」而不是另一层水
+        bedMesh.material.color.setHex(env.terrain.water);
         skirtMesh.material.color.setHex(env.terrain.skirt);
         board.material.color.setHex(env.terrain.board);
         boardInk.material.color.setHex(env.terrain.boardEdge);
         waterMesh.material.roughness = 0.35 - (env.wetness || 0) * 0.12;
         waterMesh.material.metalness = 0.02 + (env.wetness || 0) * 0.03;
+        bedMesh.material.roughness = 0.55 - (env.wetness || 0) * 0.10;
+        bedMesh.material.metalness = 0.01 + (env.wetness || 0) * 0.02;
         outline.material.color.setHex(env.accent && env.accent.highlightLine != null ? env.accent.highlightLine : 0xfff0c0);
         fill.material.color.setHex(env.accent && env.accent.highlightFill != null ? env.accent.highlightFill : 0xffd166);
       },

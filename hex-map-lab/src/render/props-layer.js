@@ -99,6 +99,14 @@
     const scree = C.ecology.ridgeScree || [0.62, 0.92];
     const screeInner = scree[0];
     const screeOuter = scree[1];
+    /**
+     * 山脚碎石坡的**判据**：山体在这里盖了多厚（绝对单位）。
+     *
+     * ⚠ 旧版判据是「离格心的距离」，在山体改成高度场收脚之后就失效了 ——
+     * 坡面会铺到格边，固定半径那一圈岩石直接被埋进坡里。正确判据是
+     * 「这里没被山体盖住」，于是岩石永远落在山脚的可见地面上。
+     */
+    const screeClear = C.ecology.ridgeScreeClearance == null ? 0.6 : C.ecology.ridgeScreeClearance;
 
     const tiles = world.tileList;
     for (let ti = 0; ti < tiles.length; ti++) {
@@ -124,12 +132,19 @@
         const hx = Rng.hash2(tile.q * 13 + n, tile.r * 7 + n, seed + 613);
         const hz = Rng.hash2(tile.q * 7 - n, tile.r * 17 + n, seed + 811);
         if (screeOnly) {
-          // 山脚碎石坡：绕格心一圈铺在外圈上（中环之外 → 不钻出山体）
-          const a = hx * Math.PI * 2;
-          const rr = size * (screeInner + (screeOuter - screeInner) * hz);
-          x = tile.x + Math.cos(a) * rr;
-          z = tile.z + Math.sin(a) * rr;
-          angle = a;
+          // 山脚碎石坡：在格内试几个候选位置，取第一个「没被山体盖住」的。
+          // 判据见上面 screeClear 的注释；四次都撞在坡上就干脆不放这一颗。
+          let ok = false;
+          for (let attempt = 0; attempt < 4 && !ok; attempt++) {
+            const a = (hx + attempt * 0.37) * Math.PI * 2;
+            const rr = size * (screeInner + (screeOuter - screeInner) *
+              ((hz + attempt * 0.29) % 1));
+            x = tile.x + Math.cos(a) * rr;
+            z = tile.z + Math.sin(a) * rr;
+            angle = a;
+            ok = !occ || occ.thickness(x, z) < screeClear;
+          }
+          if (!ok) continue;
         } else if (rowLike) {
           // 作物成行：行距与条纹方向都取自贴图（Textures.fieldRowSpacing），
           // 贴图是按世界坐标平铺的，所以直接按世界 X 量化到行距上，

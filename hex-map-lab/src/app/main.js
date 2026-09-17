@@ -9,7 +9,7 @@
  *       ↑
  *   world(hex-world / road-builder / city-graph / tile-state)   纯逻辑
  *       ↑
- *   render(scene / terrain / ink / grid / road / props / village / city / player / ambience)
+ *   render(scene / terrain / mountain / water-depth / ink / grid / road / props / village / city / player / ambience)
  *   interaction(camera-control / picker)
  *   simulation(travel-sim)
  *       ↑
@@ -78,16 +78,25 @@
     const sceneKit = HL.SceneKit.create({ container: canvasHost, world });
 
     // ---------- 3) 各表现层（顺序＝绘制层次从底到顶）----------
+    // 每层的建造耗时一起记：地表与山体是两大头（山体还要按 LOD 建 4 级），
+    // 回归时看这一行就知道是哪一层变慢了。
+    const layerMs = {};
+    function timed(name, fn) {
+      const t0 = performance.now();
+      const out = fn();
+      layerMs[name] = performance.now() - t0;
+      return out;
+    }
     const layers = {
-      terrain: HL.TerrainLayer.build(world),
-      mountains: HL.MountainLayer.build(world),
-      rivers: HL.RiverLayer.build(world, riverData),
-      ink: HL.InkLayer.build(world),
+      terrain: timed('地形', function () { return HL.TerrainLayer.build(world); }),
+      mountains: timed('山体', function () { return HL.MountainLayer.build(world); }),
+      rivers: timed('河流', function () { return HL.RiverLayer.build(world, riverData); }),
+      ink: timed('描边', function () { return HL.InkLayer.build(world); }),
       grid: HL.GridLayer.build(world),
-      roads: HL.RoadLayer.build(world, roadData, state),
-      props: HL.PropsLayer.build(world, roadData, state),
-      village: HL.VillageLayer.build(world, state),
-      cities: HL.CityLayer.build(world),
+      roads: timed('道路', function () { return HL.RoadLayer.build(world, roadData, state); }),
+      props: timed('植被', function () { return HL.PropsLayer.build(world, roadData, state); }),
+      village: timed('村落', function () { return HL.VillageLayer.build(world, state); }),
+      cities: timed('城市', function () { return HL.CityLayer.build(world); }),
       players: HL.PlayerLayer.create({ hexSize: world.hexSize }),
       ambience: HL.AmbienceLayer.create({ world: world, maxAnisotropy: sceneKit.maxAnisotropy() })
     };
@@ -124,6 +133,42 @@
     layers.ambience.setCloudsVisible(false);
     layers.ambience.setCloudShadowsVisible(false);
     layers.ambience.setBirdsVisible(true);
+
+    // ---------- 3b) 画面深度过渡（水面 ↔ 地面）----------
+    // 一次半分辨率深度预通道（只画地表 + 山体），河 / 湖 / 海的**水面材质**都在
+    // 片元里读它：水底下有多深，水面就有多不透明、多深色。没有这一步，水面只是
+    // 一张同色的平面，与地面之间只能靠一条硬边分开。
+    const waterDepth = HL.WaterDepth.create({
+      sceneKit: sceneKit,
+      hexSize: world.hexSize,
+      waterLevelY: layers.terrain.waterLevelY,
+      // 预通道内容 = 地表各组 + 水下地表 + 山体全部 LOD 网格（**不含水面自己**，
+      // 否则「地表深度」恒等于水面深度，差值为 0，过渡失效）。
+      // 山体要给**全部级别**：当前可见的只是一部分，但每一级都可能被切到，
+      // 少了任何一级都会让远处水面在该级别下失去地形深度。
+      meshes: [
+        layers.terrain.landMesh, layers.terrain.forestMesh, layers.terrain.fieldMesh,
+        layers.terrain.flowerMesh, layers.terrain.rockMesh, layers.terrain.bedMesh
+      ].concat(layers.mountains.meshes),
+      waterMaterials: [
+        layers.terrain.waterMaterial,   // 海 / 湖（水格的水平水面）
+        layers.rivers.waterMaterial,    // 河面
+        layers.rivers.channelMaterial   // 河中泓
+      ]
+    });
+
+    // ---------- 3c) 山体 LOD 控制器 ----------
+    // 网格按 mountains.lod.details 已经建好（每簇每级一块），这里只负责按玩家的
+    // 缩放切换可见性：判据是「采样步长在屏幕上占多少像素」，因此正交 / 透视两种
+    // 相机同一条式子成立（正交是默认档，裸距离判据在它上面是错的）。
+    const mountainLod = HL.MountainLod.create({
+      levels: layers.mountains.levels,
+      hexSize: world.hexSize,
+      enabled: layers.mountains.lod.enabled,
+      targetPxPerStep: layers.mountains.lod.targetPxPerStep,
+      hysteresis: layers.mountains.lod.hysteresis,
+      updateInterval: layers.mountains.lod.updateInterval
+    });
 
     let hud = null;
 
@@ -326,6 +371,7 @@
     // ---------- 9) 尺寸自适应 ----------
     function onResize() {
       sceneKit.resize(null);
+      waterDepth.resize();
       picker.invalidate();
     }
     window.addEventListener('resize', onResize);
@@ -372,6 +418,10 @@
       layers.ambience.setTime(simNow);
 
       cameraControl.update(dt);
+      // 山体 LOD：按相机与视口像素密度切采样级别（相机不动时这一步开销为 0）
+      mountainLod.update(sceneKit.activeCamera(), canvasHost.clientHeight || 1, dt);
+      // 先跑深度预通道（水面材质读它），再画主通道
+      waterDepth.update();
       sceneKit.render();
 
       // HUD 推送（5Hz）
@@ -393,7 +443,11 @@
 
     console.log('[HexLab] 构建耗时 ' + (performance.now() - t0).toFixed(1) + 'ms，' +
       world.tileList.length + ' 格，' + layers.props.counts.total + ' 个植被道具，' +
-      layers.village.houseCount + ' 栋房屋');
+      layers.village.houseCount + ' 栋房屋，山体 LOD ' +
+      layers.mountains.levels.map(function (l) { return l.detail + '→' + l.tris + '三角'; }).join(' / '));
+    console.log('[HexLab] 分层耗时 ' + Object.keys(layerMs).map(function (k) {
+      return k + ' ' + layerMs[k].toFixed(0) + 'ms';
+    }).join(' / '));
 
     return {
       world: world,
@@ -405,6 +459,8 @@
       environmentProfile: function () { return environmentProfile; },
       sceneKit: sceneKit,
       layers: layers,
+      waterDepth: waterDepth,
+      mountainLod: mountainLod,
       cameraControl: cameraControl,
       sim: sim,
       hud: hud,

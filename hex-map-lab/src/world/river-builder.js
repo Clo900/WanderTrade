@@ -27,54 +27,32 @@
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
   function lerp(a, b, t) { return a + (b - a) * t; }
 
-  const DEFAULTS = {
-    enabled: true,
-    maxRivers: 4,
-    sourceSpacing: 7,        // 河源之间的最小格距
-    maxSteps: 90,            // 单条河最多走多少条棱
-    minLength: 5,            // 少于这么多条棱的「河」丢弃
-    /**
-     * 统一半宽（× hexSize）。整条河同宽、所有河同宽（支流也是河）——
-     * 参考文明 6：河宽基本恒定，不做「河源细、河口粗」的锥形收放。
-     */
-    width: 0.16,
-    subdiv: 6,               // 每条棱的细分数
-    renderSmoothing: 3,      // 仅表现层：河道圆润化迭代次数
-    meander: 0.45,           // 势能噪声权重（必须 < 1，否则不再保证单调下降）
-    /**
-     * 岸色带宽度：全部是「相对水带半宽」的**额外**倍数 —— 水宽变了岸也跟着变。
-     * 写死绝对半径会出现「窄段一圈巨大深色晕、宽段几乎没有岸」的观感崩坏。
-     *   wetScale   紧贴水线的湿润带（最窄）
-     *   bankScale  河床 / 岸边混色（中等）
-     *   floodScale 漫滩 / 冲积带（最宽）
-     */
-    wetScale: 0.45,
-    bankScale: 1.10,
-    floodScale: 2.20,
-    propsClearanceScale: 1.50,  // 植被 / 房屋离水边的避让距离（× 水带半宽）
-    /** 浅切槽：河线处切多深、槽比水带宽多少 */
-    channel: { depth: 0.10, widen: 1.25 },
-    tributary: {
-      enabled: true,
-      allowInnerWaterSource: true,
-      lakeMinInnerRing: 1,   // 内湖至少要离岸这么多格才考虑派生支流
-      minFloodplain: 0.55,   // 已经离主河这么近的湖不再派生支流
-      maxCount: 3,
-      maxSteps: 20,
-      minLength: 2
-    }
-  };
+  /**
+   * 河道需要的配置键。**只列名字、不列默认值** —— 值只在 world-config 里存一份。
+   *
+   * 旧版这里还有一整份 `DEFAULTS`，与 `config.river` 同名同义却**值不一致**
+   * （`maxRivers` 4 vs 5、`sourceSpacing` 7 vs 5），而 `settings()` 用
+   * `Object.assign` 让 config 覆盖它 —— 于是 DEFAULTS 里改了根本不生效，
+   * 纯粹是个陷阱。已删除；logic-test 会断言这些键都在。
+   */
+  const REQUIRED_KEYS = [
+    'maxRivers', 'sourceSpacing', 'maxSteps', 'minLength', 'width', 'subdiv',
+    'renderSmoothing', 'meander', 'wetScale', 'bankScale', 'floodScale',
+    'propsClearanceScale', 'channel', 'tributary'
+  ];
 
   function settings() {
-    const C = Config.value;
-    const R = Object.assign({}, DEFAULTS, C.river || {});
-    R.channel = Object.assign({}, DEFAULTS.channel, (C.river && C.river.channel) || {});
-    R.tributary = Object.assign({}, DEFAULTS.tributary, (C.river && C.river.tributary) || {});
-    return R;
+    return Config.value.river || {};
+  }
+
+  /** 全图统一水位（绝对高度）：河、湖、海共用，见 config.water */
+  function waterLevel(size) {
+    const W = Config.value.water || {};
+    return size * (W.level == null ? 0 : W.level);
   }
 
   /** 空结果（关掉河流时也要给出一份字段完整的接口，调用方不需要到处判空） */
-  function empty(reason) {
+  function empty(reason, size) {
     return {
       rivers: [],
       counts: { rivers: 0, tributaries: 0, longest: 0, confluences: 0, samples: 0 },
@@ -88,7 +66,7 @@
       propsClearance: 0,
       halfWidth: 0,
       depth: 0,
-      waterY: 0,
+      waterY: waterLevel(size || 0),
       renderSmoothing: 0
     };
   }
@@ -252,9 +230,8 @@
         samples.push({
           x: lerp(a.x, b.x, u),
           z: lerp(a.z, b.z, u),
-          y: opt.waterY,                    // 水平水面：整条河一个高度
-          bank: opt.bankY,                  // 基准平面（切槽前的地面）
-          bed: opt.bedY,                    // 浅切槽底
+          y: opt.waterY,                    // 水平水面：整条河一个高度（= 全图水位）
+          bed: opt.bedY,                    // 浅切槽底（断言「水在槽里」用）
           halfW: opt.halfWidth
         });
       }
@@ -285,21 +262,22 @@
    */
   function build(world) {
     const R = settings();
-    if (R.enabled === false) return empty('disabled');
+    if (R.enabled === false) return empty('disabled', world.hexSize);
 
     const size = world.hexSize;
     const tiles = world.tileList;
     const channelDepthW = size * R.channel.depth;
     const bedY = -channelDepthW;
     /**
-     * 水面高度：比基准平面略高一点点（0.005 × hexSize ≈ 0.11 单位）。
-     * 为什么不是「比平面略低」：整图是统一平面，水如果低于平面，那么凡是没被
-     * 切槽的地块（水面格、城市格、山体格）都会把水带盖住 —— 河会在这些地方
-     * 凭空消失。抬到平面之上一点，肉眼仍是「与平地齐平」，但永远不会被遮。
-     * 「这是一条河」由浅切槽（水下切）+ 湿岸/河床混色来表达。
+     * 水面高度 = **全图统一水位**（`config.water.level`）。
+     *
+     * 旧版在这里写死 `size * 0.005`（比基准平面高 0.11 单位），理由是不抬高水面就会
+     * 被「没被切槽的地块」盖住；代价是**河面比海面高 0.11**，河口有一级台阶。
+     * 现在水位统一为 0，河面与海面齐平 —— 河面不会被盖住这一条，靠的是
+     * 「河道浅切槽一定比水带宽」（widen 1.25 → 槽半宽 5.5 > 水带半宽 3.7），
+     * 水带始终落在槽内、槽底低于水面。
      */
-    const waterY = size * 0.005;
-    const bankY = 0;   // 基准平面（切槽前的地面）
+    const waterY = waterLevel(size);
 
     // ---- 宽度与岸色带（唯一来源：统一半宽 × 各倍数）----
     const halfWidthW = size * R.width;
@@ -354,7 +332,7 @@
       if (traced.joined) confluences++;
       stems.push({ path: path, joined: traced.joined });
     }
-    if (!stems.length) return empty('no-valid-path');
+    if (!stems.length) return empty('no-valid-path', size);
 
     const out = [];
     for (let r = 0; r < stems.length; r++) {
@@ -364,7 +342,6 @@
         subdiv: R.subdiv,
         halfWidth: halfWidthW,
         waterY: waterY,
-        bankY: bankY,
         bedY: bedY
       });
       if (samples.length < 2) continue;
@@ -576,7 +553,6 @@
           subdiv: R.subdiv,
           halfWidth: halfWidthW,        // 支流与干流同宽（支流也是河）
           waterY: waterY,
-          bankY: bankY,
           bedY: bedY
         });
         if (samples.length < 2) continue;
@@ -609,6 +585,25 @@
     // 支流也是河：索引必须把支流一起算进去。否则支流的湿岸混色、植被/房屋避让、
     // 浅切槽会全部失效（现象就是支流两侧没有河滩色、地表也没被切槽）。
     index = buildIndex(out);
+
+    /**
+     * 给临河格的**邻居**也打一个弱标记 `riverNear`。
+     *
+     * 地表高度是按「点落在哪个格」查的，而格边上的**角点是三个格共享的**，
+     * 其中可能有第三个格并不临河。只按「本格临河」判定浅切槽，这些角点就会漏切
+     * —— 河面在每个拐角处会被顶出一条 2.2 单位高的薄墙（实测：水位统一到 0 之后
+     * 这条断言立刻抓到 209 个角点里的一部分）。
+     * 槽函数 `channelOffset` 在槽外恒为 0，所以多查一圈**不影响形状**，只多付一点性能。
+     */
+    for (let i = 0; i < tiles.length; i++) {
+      const t = tiles[i];
+      if (!(t.riverAdjacency > 0)) continue;
+      for (let d = 0; d < 6; d++) {
+        const n = Hex.neighbor(t, d);
+        const nb = world.tileAt(n.q, n.r);
+        if (nb) nb.riverNear = true;
+      }
+    }
 
     return {
       rivers: out,
@@ -653,5 +648,5 @@
     };
   }
 
-  HL.Rivers = { build: build, DEFAULTS: DEFAULTS };
+  HL.Rivers = { build: build, REQUIRED_KEYS: REQUIRED_KEYS, waterLevel: waterLevel };
 })(window.HexLab = window.HexLab || {});

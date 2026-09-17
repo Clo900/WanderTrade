@@ -73,6 +73,12 @@
           cornerY: [0, 0, 0, 0, 0, 0],
           height: 0,
           shore: 0,
+          /** 水格的「邻格非水」格边掩码（岸线） */
+          shoreEdges: 0,
+          /** 陆格的「邻格是水」格边掩码（岸线镜像；丘陵 dome 在岸线处归零要用） */
+          waterEdges: 0,
+          /** 水格的敞水深度（绝对单位，0 = 陆地） */
+          bedDepth: 0,
           cityId: null,
           roadIds: [],
           bridgeVia: null,
@@ -162,7 +168,12 @@
       bVal[i] = clamp((Rng.fbm2(t.x / luScale + lu.offsetX, t.z / luScale + lu.offsetZ, {
         seed: seed + lu.seedOffset, octaves: lu.octaves, gain: lu.gain
       }) - 0.5) * lu.contrast + 0.5, 0, 1);
-      relVal[i] = clamp((Rng.fbm2(t.x / rfScale + rf.offsetX, t.z / rfScale + rf.offsetZ, {
+      // 起伏通道用**脊状**噪声（而地貌 / 用途两条继续用 fbm）。
+      // 依据（实测）：山格是「起伏通道的高分位集合」，它的**形状**完全由这条通道的
+      // 极大值长什么样决定 —— fbm 的极大值是团块，于是山簇永远是一大坨（只调
+      // ridgeShare 时平均簇宽 3.6→6.1 格都收不窄）；ridged 把 `|n| → 0` 的等值线
+      // 翻成极大值，那是**曲线**，取 top 22% 得到的就是蜿蜒窄带（平均簇宽 2.7 格）。
+      relVal[i] = clamp((Rng.ridgedPerlin2(t.x / rfScale + rf.offsetX, t.z / rfScale + rf.offsetZ, {
         seed: seed + rf.seedOffset, octaves: rf.octaves, gain: rf.gain
       }) - 0.5) * rf.contrast + 0.5, 0, 1);
       t.microNoise = Rng.valueNoise2(t.x / (size * 1.25), t.z / (size * 1.25), seed + 7717);
@@ -237,6 +248,43 @@
     // 所以放开孤峰不会让「零散小包」回来。
     const eligibleInnerCount = reliefIdx.filter(function (i) { return !tileList[i].border; }).length;
 
+    /* ---------------- 演示用大片连续山脉（config: relief.demoMassif）----------------
+     * 放在「按排名切分」之后：手工块的优先级高于比例生成 —— 比例生成不保证任何
+     * 具体位置，而「左下角要有一大片」这种要求只能显式指定。
+     *
+     * ⚠ 只跳过**地图边界水格**（border，海岛轮廓外圈）：改成山会把岛屿轮廓切碎。
+     *   块内的普通水格照改（做成探进海里的山体），这样块内永远是一整片、连成 1 簇。
+     * ⚠ 必须放在水下地表预计算（distToLand / bedDepth）**之前**，否则新山格会带着
+     *   「海底深度」进渲染；`landform` 也要一起从 water 改成 plain，否则地形统计与
+     *   联动语义会自相矛盾（山格却是水地貌）。
+     */
+    const demoMassif = { enabled: false, col: 0, row: 0, cols: 0, rows: 0, keys: [], promoted: 0 };
+    (function applyDemoMassif() {
+      const dm = rf.demoMassif;
+      if (!dm || !dm.enabled) return;
+      demoMassif.enabled = true;
+      demoMassif.col = dm.col;
+      demoMassif.row = dm.row;
+      demoMassif.cols = dm.cols;
+      demoMassif.rows = dm.rows;
+      for (let dr = 0; dr < dm.rows; dr++) {
+        for (let dc = 0; dc < dm.cols; dc++) {
+          const row = dm.row + dr;
+          const col = dm.col + dc;
+          // 偏移坐标（odd-r）→ 轴向：col = q + (r − (r&1))/2
+          const q = col - (row - (row & 1)) / 2;
+          const t = tiles.get(Hex.key(q, row));
+          if (!t || t.border) continue;
+          if (t.terrain !== 'ridge') demoMassif.promoted++;
+          t.terrain = 'ridge';
+          t.landform = 'plain';
+          t.height = 2;
+          t.reliefFrac = 1;
+          demoMassif.keys.push(t.key);
+        }
+      }
+    })();
+
     // 连续平面：兼容字段全部压回 0。
     for (let i = 0; i < tileList.length; i++) {
       const t = tileList[i];
@@ -280,6 +328,46 @@
       t.rimWater = rim;
     }
 
+    /* ---------------- 水下地表（v1.9）：水深是真实几何量 ----------------
+     * 水面是一个**水平面**，水深只由「把水下的地表切下去」实现。水下地表由两项相乘：
+     *
+     *   bedDepth   敞水深度：由「到陆地的格距」决定（贴岸一圈最浅、越往外越深），
+     *              但**不只取本格的值** —— 它要在格心三角网上插值（见 openWaterDepth）。
+     *              理由：相邻水格的敞水深度不同，各用各的就会在共享格边上留下
+     *              「一格一格的水深台阶」；水面半透明之后，那些台阶会读成一圈圈梯田。
+     *   shoreFade  岸坡因子：0 在岸线上、靠近一格之内升到 1（见 shoreFade）。
+     *              岸线 = 邻格非水的那些格边；只在临陆的边上量距离，其余边之外还是水，
+     *              不该把海底抬起来。
+     *
+     * 为什么不用「每格一个碗」（旧写法）：碗底的 0 落在该格的**全部六个角点**上，
+     * 连深海中央的角点也是 0，于是整片海变成一格一个洼的六边形凹凸纹。
+     * 角点只有一种情况该是 0：这个角点**真的踩在岸线上**（三个格里有陆地）。
+     * 旧写法里那个「角点恒 0」的动机原本只是「岸线两侧必须齐平」，但把它推广到
+     * 全部角点就过头了。
+     */
+    const WB = C.water || {};
+    const bedShallow = WB.depthShallow == null ? 0.016 : WB.depthShallow;
+    const bedDeep = WB.depthDeep == null ? 0.09 : WB.depthDeep;
+    const bedRamp = Math.max(1e-6, WB.depthRamp == null ? 2.5 : WB.depthRamp);
+    for (let i = 0; i < tileList.length; i++) {
+      const t = tileList[i];
+      let depthRatio = 0;
+      let shore = 0;
+      if (t.terrain === 'water') {
+        const dl = t.distToLand == null ? 1 : t.distToLand;
+        depthRatio = Math.max(0, Math.min(1, (dl - 1) / bedRamp));
+        for (let d = 0; d < 6; d++) {
+          const n = Hex.neighbor(t, d);
+          const nt = tiles.get(Hex.key(n.q, n.r));
+          if (!nt || nt.terrain !== 'water') shore |= (1 << d);
+        }
+      }
+      t.bedDepth = t.terrain === 'water'
+        ? size * (bedShallow + (bedDeep - bedShallow) * depthRatio)
+        : 0;
+      t.shoreEdges = shore;
+    }
+
     for (let j = 0; j < cityCells.length; j++) {
       const cell = cityCells[j];
       const tile = tiles.get(Hex.key(cell.q, cell.r));
@@ -290,6 +378,26 @@
       tile.cityId = cell.id;
       tile.resource = null;
       cityTiles[cell.id] = tile;
+    }
+
+    /* ---------------- 陆地侧的临水格边 ----------------
+     * 与上面水格的 `shoreEdges` 是**镜像**：水格记「邻格非水」的边，陆格记「邻格是水」的边。
+     * 两个掩码都要有，因为岸线两侧共用同一批顶点：只有两侧都在岸线处归零，「水陆齐平」
+     * 才真的成立。旧版只做水侧，于是**贴着水的丘陵**那条边会被 dome 抬起来
+     * （实测 0.13~0.35 单位，r = 0.94~0.98 的 dome 一直铺到格边），岸线上留下一道小坎。
+     * 放在城市指派**之后**算，免得把已经变成 city 的格子当成陆地。
+     */
+    for (let i = 0; i < tileList.length; i++) {
+      const t = tileList[i];
+      let mask = 0;
+      if (t.terrain !== 'water') {
+        for (let d = 0; d < 6; d++) {
+          const n = Hex.neighbor(t, d);
+          const nt = tiles.get(Hex.key(n.q, n.r));
+          if (!nt || nt.terrain === 'water') mask |= (1 << d);
+        }
+      }
+      t.waterEdges = mask;
     }
 
     const resRules = C.resources;
@@ -335,9 +443,103 @@
     const maxRise = size * C.height.visualPeak;
     const hillBaseAmp = size * 0.18;
     const hillEdgeRadius = 0.76;
+    const hexInradius = size * Hex.SQRT3 / 2;
+    const shoreRamp = Math.max(1e-6, ((C.water && C.water.shoreRamp) == null ? 0.7 : C.water.shoreRamp) * size);
+
+    /**
+     * 敞水深度场：把**格心深度**铺在格心三角网（六边形格心的 Delaunay 三角剖分）上
+     * 做线性插值。角点 k 平分 `CORNER_DIRS[k]` 的两个邻居方向，所以「点落在哪个格心
+     * 三角」= 「离哪个角点方向最近」。
+     *
+     * 这样做出来的场是 (x, z) 的**纯函数**且逐点连续：相邻水格在共享格边上取到同一个
+     * 值，不会有一格一格的水深台阶；同时它只依赖格心值，深海中央自然是平的。
+     */
+    function openWaterDepth(tile, x, z) {
+      const base = tile.bedDepth;
+      if (!(base > 0)) return 0;
+      const ang = Math.atan2(z - tile.z, x - tile.x);
+      let best = 0, bestCos = -Infinity;
+      for (let k = 0; k < 6; k++) {
+        const c = Math.cos(ang - Hex.cornerAngle(k));
+        if (c > bestCos) { bestCos = c; best = k; }
+      }
+      const cd = Hex.CORNER_DIRS[best];
+      const na = neighborCenter(tile, cd[0]);
+      const nb = neighborCenter(tile, cd[1]);
+      const ux = na.x - tile.x, uz = na.z - tile.z;
+      const vx = nb.x - tile.x, vz = nb.z - tile.z;
+      const det = ux * vz - uz * vx;
+      if (!(Math.abs(det) > 1e-9)) return base;
+      const wx = x - tile.x, wz = z - tile.z;
+      let a = (wx * vz - wz * vx) / det;
+      let b = (ux * wz - uz * wx) / det;
+      // 浮点误差可能把权重推到三角外一点点：夹回三角内，保证权重非负、总和为 1
+      if (a < 0) a = 0; else if (a > 1) a = 1;
+      if (b < 0) b = 0; else if (b > 1) b = 1;
+      if (a + b > 1) { const s = a + b; a /= s; b /= s; }
+      return (1 - a - b) * base + a * na.bedDepth + b * nb.bedDepth;
+    }
+
+    /**
+     * 插值用的「格心」：取不到邻格（地图外）时，按六边形格距（√3·size）把位置推出来、
+     * 深度按陆地（0）算。这样地图边缘也不需要一条退化分支，敞水深度场照样连续。
+     */
+    function neighborCenter(tile, d) {
+      const n = Hex.neighbor(tile, d);
+      const nt = tiles.get(Hex.key(n.q, n.r));
+      if (nt) return nt;
+      const dv = Hex.dirVector(d);
+      return {
+        x: tile.x + dv.x * Hex.SQRT3 * size,
+        z: tile.z + dv.z * Hex.SQRT3 * size,
+        bedDepth: 0
+      };
+    }
+
+    /**
+     * 岸坡因子：0 在岸线上、升到 1（一格之内）。只在**临陆的格边**上量距离 ——
+     * 其余格边之外还是水，把它们的距离也算进来会把海底莫名抬高。
+     *
+     * 角点处是自洽的：正六边形的一个顶点恰好由三个两两相邻的格共享，所以只要三格
+     * 里有一个是陆地，另外两个水格**都**有一条岸线格边以该顶点为端点 —— 两侧算出的
+     * 岸坡因子同时为 0，岸线不会一边切下去、一边留在深水里。
+     */
+    /**
+     * 「到掩码里那些格边的距离」→ 0 在格边上、`shoreRamp` 之内升到 1。
+     * 水侧（`shoreEdges`）与陆侧（`waterEdges`）共用这一份算法：两侧必须在同一条
+     * 岸线上同时归零，否则岸线会一边切下去、一边留着一道坎。
+     */
+    function edgeFade(mask, tile, x, z) {
+      if (!mask) return 1;
+      let e = Infinity;
+      for (let d = 0; d < 6; d++) {
+        if (!(mask & (1 << d))) continue;
+        const dv = Hex.dirVector(d);
+        const dist = hexInradius - ((x - tile.x) * dv.x + (z - tile.z) * dv.z);
+        if (dist < e) e = dist;
+      }
+      if (!(e < shoreRamp)) return 1;
+      const u = e > 0 ? e / shoreRamp : 0;
+      return u * u * (3 - 2 * u);
+    }
+    /** 水侧岸坡因子（水格用） */
+    function shoreFade(tile, x, z) { return edgeFade(tile.shoreEdges, tile, x, z); }
 
     function tileHeightAt(tile, x, z) {
-      if (!tile || tile.terrain === 'water' || tile.terrain === 'city') return 0;
+      if (!tile) return 0;
+      // 城市格：保持统一平面（不做任何起伏，也不参与水下沉降）
+      if (tile.terrain === 'city') return 0;
+      /**
+       * 水下地表（v1.9）：水面是**一个水平面**，水深靠「把水下的地表切下去」实现，
+       * 于是「水深」是一个真实存在的几何量 —— 画面深度过渡（render/water-depth.js）
+       * 读的就是它。旧版水格地表恒为 0、与陆地完全共面，深度差为 0，任何「浅水/深水」
+       * 的效果都无数据可依。
+       * 场本身（敞水深度 + 岸坡因子）见上面的 openWaterDepth / shoreFade 与
+       * build() 里的水下地表预计算。
+       */
+      if (tile.terrain === 'water') {
+        return -openWaterDepth(tile, x, z) * shoreFade(tile, x, z);
+      }
       let h = 0;
       // 山体格不参与丘陵 dome（山体是独立模型层，由 render/mountain-layer 摆），
       // 但要参与下面的河流浅切槽：河从山脚切过去时，山脚地表必须跟着凹下去，
@@ -349,20 +551,26 @@
         if (r < 1) {
           const dome = (1 - r * r);
           const n = 0.88 + (tile.microNoise - 0.5) * 0.28;
-          h = Math.max(0, (tile.hillAmp || hillBaseAmp) * dome * n);
+          // ⚠ 临水的丘陵要在**岸线处归零**：dome 的半径（0.76 格）比内切半径
+          // （0.866 格）小，dome 会一直铺到格边 ⇒ 水侧是 0、陆侧却是 0.13~0.35，
+          // 岸线上多出一道小坎（实测 3 处）。乘上陆侧岸坡因子后两侧同时归零。
+          h = Math.max(0, (tile.hillAmp || hillBaseAmp) * dome * n) *
+            edgeFade(tile.waterEdges, tile, x, z);
         }
       }
       // 河流浅切槽：河流层输出「河床相对基准平面切下去多少」channelOffset(x, z)，
       // 这里叠加。要点有四：
-      //   · 只在临河地块（riverAdjacency > 0）查询 —— 否则每个地表顶点都要付一次
-      //     最近河段查询，而绝大多数地块离河很远；
+      //   · 只在临河地块**及其一圈邻居**查询 —— 否则每个地表顶点都要付一次最近河段
+      //     查询，而绝大多数地块离河很远（邻居也要查，理由见下面的 ⚠）；
       //   · 槽的最深处落在格边上（也就是河道中心线），而地表网格在格边两端有共享
       //     角点顶点，于是浅槽能被网格真实解析出来；
       //   · 角点是相邻地块共享的，所以两岸的切槽必然一致，不会在格边裂开；
       //   · 下切处不许高过水面（否则丘陵顶到水面之上会把河盖住）。
       // 注：两岸的「岸」靠颜色表达（河床混色 / 湿岸带），不做抬高的岸唇 ——
       // 格边之外没有顶点承载它，见 river-builder 的 channelOffset 注释。
-      if (tile.riverAdjacency > 0) {
+      // ⚠ 判据是「本格临河 **或** 本格是临河格的邻居」（`riverNear`）：格边角点由
+      //   三个格共享，只按本格判定会在角点上漏切，河面拐角会被顶出一条薄墙。
+      if (tile.riverAdjacency > 0 || tile.riverNear) {
         const rivers = world.rivers;
         if (rivers && typeof rivers.channelOffset === 'function') {
           const off = rivers.channelOffset(x, z);
@@ -385,6 +593,8 @@
       viewBox: snap.viewBox,
       maxRise: maxRise,
       baseY: -size * 0.62,
+      /** 演示用大片连续山脉：解析后的落点与格表（供 HUD / 断言） */
+      demoMassif: demoMassif,
       tiles: tiles,
       tileList: tileList,
       cityTiles: cityTiles,

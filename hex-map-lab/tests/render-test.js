@@ -147,7 +147,7 @@ const PROJECT_FN = `(function(x, y, z){
     const surfaceNames = t.terrain.group.children
       .map(c => c.name)
       .filter(n => n === 'terrain-land' || n === 'terrain-field' || n === 'terrain-flower' ||
-        n === 'terrain-rock' || n === 'terrain-water');
+        n === 'terrain-rock' || n === 'terrain-water' || n === 'terrain-water-bed');
     // 每条边应被切成几段：正六边形边长 = hexSize，段长 = hexSize × segmentLength
     const CW = window.HexLab.Config.value.palette.inkCrayon;
     const segsPerEdge = Math.max(1, Math.round(a.world.hexSize / (a.world.hexSize * CW.segmentLength)));
@@ -195,7 +195,7 @@ const PROJECT_FN = `(function(x, y, z){
       hudHasOverview: document.querySelector('#hud').innerText.includes('道路一览')
     };
   });
-  check('地表分为陆/田/花/岩/水五组', layers.surfaces.length === 5, layers.surfaces.join(', '));
+  check('地表分为陆/田/花/岩/水面/水下地表六组', layers.surfaces.length === 6, layers.surfaces.join(', '));
   check('沙盘底座已生成', layers.board === true);
   check('蜡笔描边已生成（每条边一条连续笔触）',
     layers.inkEdges > 0 && layers.crayon.breaks === 0 &&
@@ -268,6 +268,38 @@ const PROJECT_FN = `(function(x, y, z){
     out.flower = probe(a.layers.terrain.flowerMesh, pick('flower'));
     out.rock = probe(a.layers.terrain.rockMesh, pick('ridge'));
     out.water = probe(a.layers.terrain.waterMesh, pick('water'));
+    out.waterBed = probe(a.layers.terrain.bedMesh, pick('water'));
+    // 水面必须是**一个严格水平面**（整图一个水位），地形起伏全在水下地表里
+    out.waterSurface = (function () {
+      const g = a.layers.terrain.waterMesh.geometry;
+      const p = g.attributes.position.array;
+      let bad = 0, minY = Infinity, maxY = -Infinity;
+      for (let v = 0; v < p.length / 3; v++) {
+        const y = p[v * 3 + 1];
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        if (Math.abs(y - a.layers.terrain.waterLevelY) > 1e-4) bad++;
+      }
+      return { bad: bad, minY: +minY.toFixed(4), maxY: +maxY.toFixed(4), verts: p.length / 3 };
+    })();
+    // 水下地表必须真的被切下去，而且**深浅不一** —— 画面深度过渡读的就是这个几何量。
+    // 从每个水格格心垂直打射线取交点，最浅一格也要低于水面。
+    out.waterBedProbe = (function () {
+      const rc = new T.Raycaster();
+      const dir = new T.Vector3(0, -1, 0);
+      let n = 0, worst = -Infinity, deepest = 0;
+      for (const t of a.world.tileList) {
+        if (t.terrain !== 'water') continue;
+        rc.set(new T.Vector3(t.x, 300, t.z), dir);
+        const hits = rc.intersectObject(a.layers.terrain.bedMesh, false);
+        if (!hits.length) continue;
+        const y = hits[0].point.y;
+        n++;
+        if (y > worst) worst = y;
+        if (y < deepest) deepest = y;
+      }
+      return { n: n, worst: +worst.toFixed(4), deepest: +deepest.toFixed(4) };
+    })();
     // 顶面法线朝上（绕序回归锁定）
     const n = a.layers.terrain.landMesh.geometry.getAttribute('normal');
     let up = 0, down = 0;
@@ -358,6 +390,18 @@ const PROJECT_FN = `(function(x, y, z){
   check('花田顶面可被射线命中', geometry.flower);
   check('山脉顶面可被射线命中', geometry.rock);
   check('水面顶面可被射线命中', geometry.water);
+  check('水下地表可被射线命中（水格不再是「贴着水面的平板」）', geometry.waterBed);
+  check('水面是一个严格水平面（整图单一水位）', geometry.waterSurface.bad === 0,
+    geometry.waterSurface.verts + ' 个顶点全部落在 y=' + geometry.waterSurface.minY +
+    '（起伏 ' + (geometry.waterSurface.maxY - geometry.waterSurface.minY).toExponential(1) + '）');
+  check('水下地表真的被切下去（深度是几何量，不是贴图化妆）',
+    geometry.waterBedProbe.n > 0 && geometry.waterBedProbe.worst < 0,
+    geometry.waterBedProbe.n + ' 个水格：最浅 ' + geometry.waterBedProbe.worst +
+    ' / 最深 ' + geometry.waterBedProbe.deepest);
+  check('水下深浅不一（深度过渡有数据可依）',
+    geometry.waterBedProbe.deepest < geometry.waterBedProbe.worst - 0.05,
+    '最浅 ' + geometry.waterBedProbe.worst + ' → 最深 ' + geometry.waterBedProbe.deepest +
+    '，差 ' + (geometry.waterBedProbe.worst - geometry.waterBedProbe.deepest).toFixed(3));
   check('顶面法线朝上占多数', geometry.normalsUp > geometry.normalsDown,
     'up=' + geometry.normalsUp + ' down=' + geometry.normalsDown);
   check('曲面无缝（共享角点误差为 0）', geometry.seam < 1e-9, '最大差 ' + geometry.seam.toExponential(2));
@@ -382,264 +426,163 @@ const PROJECT_FN = `(function(x, y, z){
     const out = {};
     const occ = H.MountainLayer.occupancy(w);
     const site = H.MountainLayer.plan(w);
+    const field = site.compiled;
 
-    // ---- 山体几何 ----
-    // 顶点**按位置焊接**（红线⑤）：同一个世界坐标只有一个顶点，所以不再有「每片固定
-    // stride」的布局。改成两种定位方式：
-    //   · 位置表（量化位置 → 顶点下标）：验证每片的外圈 / 脊冠环 / 中心线 / 裙边点都在，
-    //     并且同一个位置**只被写了一次**（= 面片必然接合）；
-    //   · 顶点元数据 `vertRole` / `vertTile`（山体层对外提供）：给三角形分组、做绕序检查。
-    const mg = a.layers.mountains.mesh.geometry;
-    const mp = mg.attributes.position.array;
-    const idx = mg.index.array;
-    const role = a.layers.mountains.vertRole;
-    const vTile = a.layers.mountains.vertTile;
-    out.mountainVerts = mg.attributes.position.count;
-    out.mountainTris = idx.length / 3;
-    out.mountainUnits = site.list.length;
-    out.peaks = a.layers.mountains.counts.peaks;
-    out.snowPeaks = a.layers.mountains.counts.snowPeaks;
-    out.lonePeaks = a.layers.mountains.counts.lonePeaks;
-    // K 从配置读，避免测试与配置各写一份（写死会在改 density 时静默读错顶点）
-    const K = H.Config.value.terrain.relief.mountains.crestStations;
-    out.crestStations = K + 1;
-    out.unweldVerts = (12 + 3 * (K + 1) + 12) * site.list.length;
-    out.vertsPerMountain = site.list.length ? out.mountainVerts / site.list.length : 0;
-    out.roleCount = [0, 0, 0, 0];
-    for (let i = 0; i < role.length; i++) out.roleCount[role[i]]++;
+    // ---- 山体几何（v2：簇级噪声场 + 共享三角格网格器 + 多级 LOD）----
+    // 每一级都是**同一个场的不同采样**，所以每一级都必须单独过一遍几何红线：
+    // 焊接 / 顶点高度 = max(场, 地表) / 无翻面 / 无悬空自由边。
+    // 任何一级不合格都算不合格 —— 玩家缩放到那个距离时看到的就是它。
+    const mlayer = a.layers.mountains;
+    out.counts = mlayer.counts;
+    out.units = site.list.length;
+    out.maxHeight = site.maxHeight;
+    out.lodEnabled = mlayer.lod.enabled;
+    out.lodDetails = mlayer.lod.details.slice();
+    out.lod = [];
 
     // 位置键与山体层**同一分辨率**（1/512 ≈ 0.002 单位）：粗于 Float32 的量化误差，
     // 又远小于任何可见缝隙 —— 用 1e-4 之类的细粒度反而会因为边界平局出现假“缺失”。
     function q(v) { return Math.round(v * 512); }
-    const posMap = new Map();
-    let dupPos = 0;
-    for (let i = 0; i < out.mountainVerts; i++) {
-      const kk = q(mp[i * 3]) + ',' + q(mp[i * 3 + 1]) + ',' + q(mp[i * 3 + 2]);
-      if (posMap.has(kk)) dupPos++; else posMap.set(kk, i);
-    }
-    out.dupPos = dupPos;
-    // 查点：在量化格的 ±1 邻域里找 —— 吸收「值正好落在量化边界上」的平局，
-    // 容差 0.002×2 = 0.004 单位，仍远小于任何可见缝隙。
-    const at = (x, y, z) => {
-      const kx = q(x), ky = q(y), kz = q(z);
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dz = -1; dz <= 1; dz++) {
-            const hit = posMap.get((kx + dx) + ',' + (ky + dy) + ',' + (kz + dz));
-            if (hit !== undefined) return hit;
-          }
+
+    /**
+     * 逐块过几何红线（块 = 山簇 × 某一级）。
+     *
+     * ① 顶点分两类各自校验：表面顶点高度 = max(场, 地表)；落地墙顶点高度 = 地表。
+     *    ⚠ 两类不能混着比：墙脚与坡面顶点经常落在同一个 XZ，焊接后只留一个顶点，
+     *      拿它去比 max(场, 地表) 会得到「偏差 = 山体厚度」的假失败（实测最大 2.2）。
+     *    容差不能取 0：顶点按 1/512 单位焊接，0.002 的水平误差乘上坡度就是更大的高度误差。
+     * ② 防塌陷 / 防翻面 / 不越界：高度场不会悬垂，表面法线必须朝上（ny > 0）；
+     *    落地墙是竖直的、法线没有 Y 分量 —— 所以只有「ny 明显为负」才算翻面。
+     * ③ 壳体闭合：用**索引**统计边使用次数。使用 1 次的边 = 网格边界，
+     *    合法边界**只允许贴在**地面上（落地墙的底边）；只要有边悬在空中且只用了一次，
+     *    就是「透空 / 悬空」回来了。
+     */
+    function analyzeChunk(mesh, role, acc) {
+      const g = mesh.geometry;
+      const mp = g.attributes.position.array;
+      const mc = g.attributes.color.array;
+      const idx = g.index.array;
+      const n = g.attributes.position.count;
+      acc.verts += n;
+      acc.tris += idx.length / 3;
+
+      const seen = new Set();
+      for (let i = 0; i < n; i++) {
+        const kk = q(mp[i * 3]) + ',' + q(mp[i * 3 + 1]) + ',' + q(mp[i * 3 + 2]);
+        if (seen.has(kk)) acc.dupPos++; else seen.add(kk);
+        // 顶点色接近雪（线性空间下雪 ≈ (0.89,0.93,0.98)，岩石最亮也就 0.31/0.26/0.21）
+        if (mc[i * 3] > 0.5 && mc[i * 3 + 2] > 0.6) acc.snowVerts++;
+        const x = mp[i * 3], y = mp[i * 3 + 1], z = mp[i * 3 + 2];
+        if (role[i] === 1) {
+          const dev = Math.abs(y - w.heightAt(x, z));
+          if (dev > 0.02) acc.skirtBad++;
+          if (dev > acc.skirtMaxDev) acc.skirtMaxDev = dev;
+          continue;
+        }
+        const want = Math.max(field.fieldAt(x, z), w.heightAt(x, z));
+        const dev = Math.abs(y - want);
+        if (dev > 0.02) acc.surfBad++;
+        if (dev > acc.surfMaxDev) acc.surfMaxDev = dev;
+        const above = y - w.heightAt(x, z);
+        if (above < acc.minAbove) acc.minAbove = above;
+        if (above > acc.maxAbove) acc.maxAbove = above;
+      }
+
+      for (let t = 0; t < idx.length; t += 3) {
+        const ia = idx[t], ib = idx[t + 1], ic = idx[t + 2];
+        if (ia >= n || ib >= n || ic >= n) acc.idxOutOfRange++;
+        const ax = mp[ia * 3], ay = mp[ia * 3 + 1], az = mp[ia * 3 + 2];
+        const bx = mp[ib * 3], by = mp[ib * 3 + 1], bz = mp[ib * 3 + 2];
+        const cx = mp[ic * 3], cy = mp[ic * 3 + 1], cz = mp[ic * 3 + 2];
+        const ux = bx - ax, uy = by - ay, uz = bz - az;
+        const vx = cx - ax, vy = cy - ay, vz = cz - az;
+        const nx = uy * vz - uz * vy;
+        const ny = uz * vx - ux * vz;
+        const nz = ux * vy - uy * vx;
+        const L2 = Math.hypot(nx, ny, nz);
+        if (L2 < 1e-8) acc.degen++;
+        else if (ny / L2 < -0.2) acc.flipped++;
+        if (role[ia] === 1 || role[ib] === 1 || role[ic] === 1) acc.wallTris++;
+        else acc.surfTris++;
+      }
+
+      const useCnt = new Map();
+      for (let t = 0; t < idx.length; t += 3) {
+        for (let e = 0; e < 3; e++) {
+          const u = idx[t + e], v = idx[t + (e + 1) % 3];
+          const key2 = u < v ? u + ':' + v : v + ':' + u;
+          useCnt.set(key2, (useCnt.get(key2) || 0) + 1);
         }
       }
-      return undefined;
-    };
+      for (const entry of useCnt) {
+        if (entry[1] !== 1) continue;
+        acc.freeEdges++;
+        const uv = entry[0].split(':').map(Number);
+        let h = 0;
+        for (let e = 0; e < 2; e++) {
+          const vi = uv[e];
+          h = Math.max(h, mp[vi * 3 + 1] - w.heightAt(mp[vi * 3], mp[vi * 3 + 2]));
+        }
+        if (h > 0.5) { acc.freeInAir++; if (h > acc.freeInAirMaxH) acc.freeInAirMaxH = h; }
+      }
+    }
 
-    let baseMiss = 0, rimMiss = 0, centerMiss = 0, skirtOnGround = 0, skirtUp = 0;
-    let baseYErr = 0, colBad = 0, colMaxErr = 0, colPairs = 0;
-    let outerFootMax = 0, outerFootAt = null;
-    let crestAlong = 0, crestAcross = 0, multiPeakBad = 0, snowVerts = 0, crestAbove = 0;
-    for (let i = 0; i < site.list.length; i++) {
-      const rec = site.list[i];
-      const tile = rec.tile, meta = rec.meta, perp = rec.perp, st = rec.stations;
-      const B = rec.baseY, A = rec.apexH;
-      const surf = (x, z) => Math.max(site.fieldAt(rec, x, z), w.heightAt(x, z));
+    for (let li = 0; li < mlayer.levels.length; li++) {
+      const L = mlayer.levels[li];
+      const acc = {
+        detail: L.detail, step: L.step, chunks: L.chunks.length,
+        verts: 0, tris: 0, surfTris: 0, wallTris: 0, dupPos: 0,
+        surfBad: 0, surfMaxDev: 0, skirtBad: 0, skirtMaxDev: 0,
+        degen: 0, flipped: 0, idxOutOfRange: 0, freeEdges: 0, freeInAir: 0, freeInAirMaxH: 0,
+        minAbove: Infinity, maxAbove: -Infinity, snowVerts: 0,
+        /** 网格器自报的面数（用来交叉验证统计本身没写错） */
+        declaredTris: L.tris
+      };
+      for (let k = 0; k < L.chunks.length; k++) {
+        analyzeChunk(L.chunks[k].mesh, L.chunks[k].vertRole, acc);
+      }
+      out.lod.push(acc);
+    }
 
-      // ① 外圈：位置 = 共享点；高度 = `max(高度场, 地表)`；必须在位置表里（焊接后仍逐点存在）
-      //    「是否在簇外边界」：格边中点看那条边；角点看它所属的**两条**边 ——
-      //    两条都在簇内（由三个山格共享）的角点本来就不该落地。
-      for (let j = 0; j < 12; j++) {
-        let px, pz, inner = false;
-        if (j % 2 === 0) {
-          const d = ((meta.back + j / 2) % 6 + 6) % 6;
+    // 默认视角（正交、距离 1250）下实际渲染的三角形数 —— LOD 的全部意义就在这个比值
+    const vis = a.mountainLod ? a.mountainLod.visibleCounts() : [];
+    let visTris = 0;
+    for (let li = 0; li < mlayer.levels.length; li++) {
+      if (vis[li] > 0) visTris += mlayer.levels[li].tris;
+    }
+    out.visibleCounts = vis;
+    out.visibleTris = visTris;
+    out.finestTris = mlayer.levels.length ? mlayer.levels[0].tris : 0;
+
+    // ---- ④ 轮廓外溢：山脚确实漫到邻格平地上（不再被簇边界切成折线）----
+    let borderProbes = 0, borderSpill = 0, spillMaxHex = 0;
+    for (let ci = 0; ci < field.clusters.length; ci++) {
+      const cl = field.clusters[ci];
+      for (let ti = 0; ti < cl.tiles.length; ti++) {
+        const tile = cl.tiles[ti];
+        const be = tile.mountainCluster.boundaryEdges;
+        for (let d = 0; d < 6; d++) {
+          if (!be[d]) continue;
           const em = H.Hex.edgeMid(tile, d, size);
-          px = em.x; pz = em.z;
-          inner = meta.boundaryEdges ? !meta.boundaryEdges[d] : false;
-        } else {
-          const k = ((5 - (meta.back + (j - 1) / 2)) % 6 + 6) % 6;
-          const cp = H.Hex.cornerPoint(tile, k, size);
-          px = cp.x; pz = cp.z;
-          if (meta.boundaryEdges) {
-            const cd = H.Hex.CORNER_DIRS[k];
-            inner = !meta.boundaryEdges[cd[0]] && !meta.boundaryEdges[cd[1]];
+          let nx = em.x - tile.x, nz = em.z - tile.z;
+          const L = Math.hypot(nx, nz) || 1; nx /= L; nz /= L;
+          borderProbes++;
+          if (cl.field(em.x + nx * size * 0.1, em.z + nz * size * 0.1) > 0) borderSpill++;
+          let out2 = 0;
+          for (let s = 0.25; s <= 60; s += 0.25) {
+            if (cl.field(em.x + nx * s, em.z + nz * s) <= 1e-9) { out2 = s; break; }
+            out2 = s;
           }
+          spillMaxHex = Math.max(spillMaxHex, out2 / size);
         }
-        const wantY = surf(px, pz);
-        const vi = at(px, wantY, pz);
-        if (vi === undefined) baseMiss++;
-        else baseYErr = Math.max(baseYErr, Math.abs(mp[vi * 3 + 1] - wantY));
-        if (!inner) {
-          const gap = wantY - w.heightAt(px, pz);
-          if (gap > outerFootMax) { outerFootMax = gap; outerFootAt = [+px.toFixed(1), +pz.toFixed(1)]; }
-        }
-        // 裙边：位置 = 同 XZ、高度 = 地表；外圈已把 heightAt 取进 max，所以贴地处是
-        // 同一个顶点。这里只要求「地表高度处存在顶点」，并确认外圈**不低于**地表。
-        if (at(px, w.heightAt(px, pz), pz) === undefined) skirtOnGround++;
-        if (wantY < w.heightAt(px, pz) - 1e-6) skirtUp++;
-      }
-
-      // 跨格鞍部：共享格边中点处必须**恰好**有一个顶点，高度 = 该格边的共享高度
-      // （两侧同值 ⇒ 同一个顶点；这正是「连续格连成一个整体」在网格上的形态）
-      for (let d = 0; d < 6; d++) {
-        if (!(rec.edgeH[d] > 0)) continue;
-        colPairs++;
-        const em = H.Hex.edgeMid(tile, d, size);
-        const vi = at(em.x, B + rec.edgeH[d], em.z);
-        if (vi === undefined) colBad++;
-        else if (Math.abs(mp[vi * 3 + 1] - (B + rec.edgeH[d])) > 1e-6) colBad++;
-      }
-
-      // ② 脊冠环 / 中心线：位置与实现同一公式（stations ± perp × halfW）
-      for (let k = 0; k <= K; k++) {
-        const s = st[k], hw = s.halfW;
-        for (const sgn of [1, -1]) {
-          const x = s.x + perp.x * hw * sgn, z = s.z + perp.z * hw * sgn;
-          if (at(x, surf(x, z), z) === undefined) rimMiss++;
-        }
-        const yc = surf(s.x, s.z);
-        if (at(s.x, yc, s.z) === undefined) centerMiss++;
-        const dx = s.x - tile.x, dz = s.z - tile.z;
-        crestAlong = Math.max(crestAlong, Math.abs(dx * rec.axis.x + dz * rec.axis.z) / size);
-        crestAcross = Math.max(crestAcross, Math.abs(dx * perp.x + dz * perp.z) / size);
-        if (yc > tile.surfaceY + 1e-6) crestAbove++;
-        if (yc >= rec.snowY) snowVerts++;
-      }
-      // ③ 多峰：中心线必须出现 ≥ 2 个局部极大
-      let lm = 0;
-      for (let k = 0; k <= K; k++) {
-        const yPrev = k === 0 ? -Infinity : st[k - 1].h;
-        const yNext = k === K ? -Infinity : st[k + 1].h;
-        if (st[k].h > yPrev && st[k].h >= yNext) lm++;
-      }
-      if (lm < 2) multiPeakBad++;
-    }
-    out.baseMiss = baseMiss;
-    out.rimMiss = rimMiss;
-    out.centerMiss = centerMiss;
-    out.skirtOnGround = skirtOnGround;
-    out.skirtUp = skirtUp;
-    out.baseYErr = baseYErr;
-    out.colPairs = colPairs;
-    out.colBad = colBad;
-    out.colMaxErr = colMaxErr;
-    out.outerFootMax = outerFootMax;
-    out.outerFootAt = outerFootAt;
-    out.crestAlong = crestAlong;
-    out.crestAcross = crestAcross;
-    out.multiPeakBad = multiPeakBad;
-    out.snowVerts = snowVerts;
-    out.crestAbove = crestAbove;
-
-    // ---- 跨格连续性：焊接之后，「两侧同高」不再是两个值比相等，而是**根本只有一份** ----
-    // 共享格边中点处两片只写一个顶点，所以连续性就是「同一个顶点」；它是否存在、
-    // 高度是否等于共享格边高度，已经在上面的 colPairs / colBad 里量过了。
-
-    function baseSpanDir(back, k) {
-      return ((back + Math.floor((k + 1) / 2)) % 6 + 6) % 6;
-    }
-
-    let boundarySpans = 0, multiClusterUnits = 0;
-    for (let i = 0; i < site.list.length; i++) {
-      const rec = site.list[i];
-      if (rec.meta.clusterSize > 1) multiClusterUnits++;
-      for (let k = 0; k < 12; k++) {
-        const d = baseSpanDir(rec.meta.back, k);
-        if (!rec.meta.boundaryEdges || rec.meta.boundaryEdges[d]) boundarySpans++;
       }
     }
-    out.boundarySpans = boundarySpans;
-    out.multiClusterUnits = multiClusterUnits;
-    out.expectedWallTris = boundarySpans * 2;
-    out.fullWallTris = site.list.length * 24;
-
-    // ---- 索引拓扑：越界检查（焊接后不能再按「每片固定 stride」数三角形）----
-    let idxOutOfRange = 0;
-    for (let t = 0; t < idx.length; t += 3) {
-      if (idx[t] >= out.mountainVerts || idx[t + 1] >= out.mountainVerts || idx[t + 2] >= out.mountainVerts) idxOutOfRange++;
-    }
-    out.triTotal = idx.length / 3;
-    out.triPerMountain = site.list.length ? out.triTotal / site.list.length : 0;
-    out.idxOutOfRange = idxOutOfRange;
-
-    // ---- 壳面朝向与落地墙分布：闭合不等于正确，绕序反了会在正面渲染时“缺面”----
-    // 顶点焊接后没有「每片索引区间」了，改用顶点元数据 `vertRole` 分组，参考内点取
-    // **离三角形重心最近的山片格心**：法线背离它 = 朝外。
-    let inwardWall = 0, inwardBaseRim = 0, inwardRimCenter = 0, wallTris = 0;
-    function nearestRec(x, z) {
-      const cell = H.Hex.pixelToAxial(x, z, size);
-      let best = null, bd = Infinity;
-      for (let dq = -1; dq <= 1; dq++) for (let dr = -1; dr <= 1; dr++) {
-        const rec = site.byTile[H.Hex.key(cell.q + dq, cell.r + dr)];
-        if (!rec) continue;
-        const dd = (rec.tile.x - x) * (rec.tile.x - x) + (rec.tile.z - z) * (rec.tile.z - z);
-        if (dd < bd) { bd = dd; best = rec; }
-      }
-      return best;
-    }
-    for (let t = 0; t < idx.length; t += 3) {
-      const a = idx[t], b = idx[t + 1], c = idx[t + 2];
-      const cx = (mp[a * 3] + mp[b * 3] + mp[c * 3]) / 3;
-      const cy = (mp[a * 3 + 1] + mp[b * 3 + 1] + mp[c * 3 + 1]) / 3;
-      const cz = (mp[a * 3 + 2] + mp[b * 3 + 2] + mp[c * 3 + 2]) / 3;
-      const rec = nearestRec(cx, cz);
-      if (!rec) continue;
-      const ax = mp[a * 3], ay = mp[a * 3 + 1], az = mp[a * 3 + 2];
-      const bx = mp[b * 3], by = mp[b * 3 + 1], bz = mp[b * 3 + 2];
-      const dx = mp[c * 3], dy = mp[c * 3 + 1], dz = mp[c * 3 + 2];
-      const ux = bx - ax, uy = by - ay, uz = bz - az;
-      const vx = dx - ax, vy = dy - ay, vz = dz - az;
-      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-      const rx = rec.tile.x - cx, ry = (rec.baseY + rec.apexH * 0.35) - cy, rz = rec.tile.z - cz;
-      const bad = (nx * rx + ny * ry + nz * rz) > 1e-6;      // 法线指向参考内点 = 翻面
-      // 分组：落地墙的三角形只由「外圈 / 裙边」两种顶点组成。⚠ 外圈高度取过
-      // `max(高度场, 地表)`，所以贴地处裙边顶点**就是外圈顶点**（焊接），墙会退化成
-      // 三个外圈顶点 —— 所以「三个都是外圈」也要算墙，否则墙会被误判成坡面。
-      const r0 = role[a], r1 = role[b], r2 = role[c];
-      const hasSkirt = r0 === 3 || r1 === 3 || r2 === 3;
-      const allBase = r0 === 0 && r1 === 0 && r2 === 0;
-      const hasCenter = r0 === 2 || r1 === 2 || r2 === 2;
-      if (hasSkirt || allBase) { wallTris++; if (bad) inwardWall++; }
-      else if (hasCenter) { if (bad) inwardRimCenter++; }
-      else { if (bad) inwardBaseRim++; }
-    }
-    out.inwardWall = inwardWall;
-    out.inwardBaseRim = inwardBaseRim;
-    out.inwardRimCenter = inwardRimCenter;
-    out.wallTris = wallTris;
-    out.inwardTotal = inwardWall + inwardBaseRim + inwardRimCenter;
-
-    // ---- 落地裙边（红线④）----
-    // 簇内共享边靠「两侧都取同一个高度场」自然闭合，**不立柱**；只有簇外边界才需要
-    // 一圈同 XZ、高度 = 地表的竖直墙把壳体按到地面上。
-    // ⚠ 外圈高度取过 `max(高度场, heightAt)`，所以裙边顶点与贴地的外圈顶点**是同一个
-    // 顶点**（焊接的结果）：这里只要验证「地表高度处的顶点存在」（上面已统计
-    // `skirtOnGround` 为**缺失数**、`skirtUp` 为「外圈低于地表」的反墙数）。
-    out.skirtNeedsNone = 0;
-
-    // ---- 壳体闭合：用**索引**统计边的使用次数（焊接之后索引就是唯一位置）----
-    // 使用 1 次的边 = 壳体的边界。合法边界**只允许贴在**地面上（落地裙边的底边）；
-    // 只要还有一条边悬在空中且只用了一次，就是「透空 / 悬空」回来了。
-    const useCnt = new Map();
-    for (let t = 0; t < idx.length; t += 3) {
-      for (let e = 0; e < 3; e++) {
-        const u = idx[t + e], v = idx[t + (e + 1) % 3];
-        const key2 = u < v ? u + ':' + v : v + ':' + u;
-        useCnt.set(key2, (useCnt.get(key2) || 0) + 1);
-      }
-    }
-    let freeEdges = 0, freeInAir = 0, freeInAirMaxH = 0;
-    for (const entry of useCnt) {
-      if (entry[1] !== 1) continue;
-      freeEdges++;
-      const uv = entry[0].split(':').map(Number);
-      let h = 0;
-      for (let e = 0; e < 2; e++) {
-        const vi = uv[e];
-        h = Math.max(h, mp[vi * 3 + 1] - w.heightAt(mp[vi * 3], mp[vi * 3 + 2]));
-      }
-      if (h > 1.0) { freeInAir++; if (h > freeInAirMaxH) freeInAirMaxH = h; }
-    }
-    out.freeEdges = freeEdges;
-    out.freeInAir = freeInAir;
-    out.freeInAirMaxH = freeInAirMaxH;
+    out.borderProbes = borderProbes;
+    out.borderSpill = borderSpill;
+    out.spillMaxHex = spillMaxHex;
+    // 外溢上限由配置算，避免测试与实现各写一份
+    const MM = H.Config.value.terrain.relief.mountains;
+    out.spillCapHex = MM.taperOuter + MM.outlineWobble;
 
     // ---- 山体占位：树/花/作物/水洼不能落在山体格内 ----
     const inMountain = (mesh) => {
@@ -724,60 +667,47 @@ const PROJECT_FN = `(function(x, y, z){
     return out;
   });
 
-  check('山体层已生成（顶点按位置焊接：外圈 + 脊冠环 + 中心线 + 裙边）',
-    v15.peaks === v15.mountainUnits && v15.mountainVerts > 0 &&
-    v15.mountainVerts < v15.unweldVerts,
-    v15.peaks + ' 片 / 雪顶 ' + v15.snowPeaks + ' / 孤峰 ' + v15.lonePeaks +
-    ' / 顶点 ' + v15.mountainVerts + '（不焊接会是 ' + v15.unweldVerts + '，省 ' +
-    (v15.unweldVerts - v15.mountainVerts) + ' 个）/ 三角形 ' + v15.mountainTris +
-    ' / 角色分布 外圈' + v15.roleCount[0] + ' 脊冠' + v15.roleCount[1] +
-    ' 中心线' + v15.roleCount[2] + ' 裙边' + v15.roleCount[3]);
-  check('顶点已按位置焊接（同一个世界坐标只写一次 → 面片必然接合）',
-    v15.dupPos === 0,
-    '重复位置 ' + v15.dupPos + ' 个（应为 0；焊接前实测 1212 个）');
-  check('每片的外圈 / 脊冠环 / 中心线顶点齐全（焊接后仍逐点存在）',
-    v15.baseMiss === 0 && v15.rimMiss === 0 && v15.centerMiss === 0,
-    '缺失：外圈 ' + v15.baseMiss + ' / 脊冠环 ' + v15.rimMiss + ' / 中心线 ' + v15.centerMiss);
-  check('外圈高度 = max(高度场, 地表)（山脚不会低于地表 → 地形不会穿出来）',
-    v15.baseYErr < 1e-3 && v15.skirtUp === 0 && v15.skirtOnGround === 0,
-    '高度偏差 ' + v15.baseYErr.toExponential(1) + ' / 低于地表的点 ' + v15.skirtUp +
-    ' / 地表高度处缺顶点 ' + v15.skirtOnGround);
-  check('山脚收进地面（簇外边界处外圈贴着地表，不留台阶）',
-    v15.outerFootMax < 8,
-    '簇外边界处最大离地 ' + v15.outerFootMax.toFixed(2) + ' 单位 @ ' +
-    JSON.stringify(v15.outerFootAt) + '（都是「鞍部降到底」的簇外角点，由落地墙兜住）');
-  check('主脊跨越整格、横向收窄（是脊不是锥）',
-    v15.crestAlong > 0.7 && v15.crestAcross < 0.35,
-    '纵向 ' + v15.crestAlong.toFixed(2) + ' × hexSize（脊端内收后约 0.78）/ 横向 ' +
-    v15.crestAcross.toFixed(2) + ' × hexSize');
-  check('每片剪影为多峰（脊顶中心线局部极大 ≥ 2）', v15.multiPeakBad === 0,
-    '不满 2 个峰的片数 ' + v15.multiPeakBad + ' / ' + v15.mountainUnits);
-  check('跨格鞍部 = 共享格边高度（焊接后两侧**就是同一个顶点**）',
-    v15.colPairs > 0 && v15.colBad === 0,
-    v15.colPairs + ' 条跨格边 / 异常 ' + v15.colBad +
-    ' / 最大高度误差 ' + v15.colMaxErr.toExponential(1));
-  check('山体索引不越界', v15.idxOutOfRange === 0,
-    '越界三角形 ' + v15.idxOutOfRange + ' / ' + v15.triTotal + ' 个');
-  check('落地墙只出现在簇外边界（簇内共享边不立柱）',
-    v15.wallTris === v15.expectedWallTris && v15.wallTris < v15.fullWallTris,
-    '实际 ' + v15.wallTris + ' / 期望 ' + v15.expectedWallTris +
-    '（簇外边界段 ' + v15.boundarySpans + ' × 2；全逐格方案会是 ' + v15.fullWallTris +
-    '）— 连续簇格 ' + v15.multiClusterUnits + ' 个');
-  check('壳体边界只落在贴地的裙边底边上（空中没有敞开的边 → 不悬空/不透空）',
-    v15.freeEdges > 0 && v15.freeInAir === 0,
-    '边界边 ' + v15.freeEdges + ' 条 / 其中悬空 ' + v15.freeInAir +
-    '（最高离地 ' + v15.freeInAirMaxH.toFixed(2) +
-    '；阈值 1.0 单位，留给「河床浅切槽从山脚下方切过」的 0.5 单位落差）');
-  check('山体主体壳面朝外（不会因背面剔除出现缺面）',
-    v15.inwardTotal === 0,
-    '翻面三角形 wall/base-rim/rim-center = ' +
-    [v15.inwardWall, v15.inwardBaseRim, v15.inwardRimCenter].join('/'));
-  check('雪线以上存在雪顶顶点（雪线按每片自身峰高）',
-    v15.snowVerts > 0 && v15.snowPeaks === v15.mountainUnits,
-    '雪顶顶点 ' + v15.snowVerts + ' 个 / 有雪顶的山 ' + v15.snowPeaks + ' 片');
-  check('脊顶整体高于地表（山不是平的）',
-    v15.crestAbove === v15.mountainUnits * v15.crestStations,
-    '脊顶中心线顶点 ' + v15.crestAbove + ' / 期望 ' + (v15.mountainUnits * v15.crestStations));
+  check('山体层已生成（簇级噪声场 + 共享三角格网格器）',
+    v15.counts.peaks === v15.units && v15.lod[0].verts > 0 && v15.lod[0].tris > 0,
+    v15.counts.peaks + ' 格 / 有几何 ' + v15.counts.bodyTiles + ' 格 / 孤峰 ' + v15.counts.lonePeaks +
+    ' / 雪顶 ' + v15.counts.snowPeaks + ' / 山簇 ' + v15.counts.clusters +
+    ' / 最细一级 ' + v15.lod[0].verts + ' 顶点 / ' + v15.lod[0].tris + ' 三角' +
+    '（表面 ' + v15.lod[0].surfTris + ' + 落地墙 ' + v15.lod[0].wallTris + '）' +
+    ' / 最高 ' + v15.maxHeight.toFixed(1) + ' 单位');
+
+  // ---- LOD：每一级都要能单独过几何红线 ----
+  check('山体 LOD 各就各位（每级都有网格、面数逐级递减、网格器自报数与实测一致）',
+    v15.lod.length === v15.lodDetails.length && v15.lod.length >= 2 &&
+    v15.lod.every(function (l, i) {
+      return l.chunks > 0 && l.tris === l.declaredTris && (i === 0 || l.tris < v15.lod[i - 1].tris);
+    }),
+    v15.lod.map(function (l) {
+      return l.detail + '→' + l.tris + '三角/' + l.chunks + '块';
+    }).join(' · ') + '（步长 ' + v15.lod.map(function (l) { return l.step.toFixed(2); }).join(' / ') + '）');
+  check('LOD 逐级闭合：每级的表面顶点都在场上、墙脚在地表、无翻面、无悬空自由边',
+    v15.lod.every(function (l) { return l.dupPos === 0 && l.surfBad === 0 && l.skirtBad === 0; }) &&
+    v15.lod.every(function (l) { return l.flipped === 0 && l.idxOutOfRange === 0; }) &&
+    v15.lod.every(function (l) { return l.freeInAir === 0 && l.minAbove >= -1e-4; }) &&
+    v15.lod.every(function (l) { return l.degen / Math.max(1, l.tris) < 0.02; }),
+    v15.lod.map(function (l) {
+      return l.detail + '级：重复 ' + l.dupPos + '/表面超差 ' + l.surfBad + '/墙脚超差 ' + l.skirtBad +
+        '/翻面 ' + l.flipped + '/越界 ' + l.idxOutOfRange + '/悬空边 ' + l.freeInAir +
+        '/退化 ' + l.degen;
+    }).join(' | '));
+  check('LOD 默认视角下真的省了面（可见三角 ≤ 最细一级的 25%）',
+    v15.visibleTris > 0 && v15.visibleTris <= v15.finestTris * 0.25,
+    '可见 ' + v15.visibleTris + ' / 最细 ' + v15.finestTris + ' 三角（' +
+    (v15.visibleTris / Math.max(1, v15.finestTris) * 100).toFixed(1) + '%）；各级可见块 ' +
+    v15.visibleCounts.join(' / '));
+  check('雪带存在于顶点色里（雪线是渐变，不是硬切）',
+    v15.lod[0].snowVerts > 0 && v15.counts.snowPeaks > 0,
+    '最细一级近雪色顶点 ' + v15.lod[0].snowVerts + ' 个 / 有雪顶的格 ' + v15.counts.snowPeaks);
+  check('山脚越过簇边界（轮廓不再是格边折线）',
+    v15.borderProbes > 0 && v15.borderSpill >= v15.borderProbes * 0.9,
+    v15.borderSpill + ' / ' + v15.borderProbes + ' 条簇边界边外侧仍是山体');
+  check('外溢被限制在 taperOuter + outlineWobble 之内',
+    v15.spillMaxHex <= v15.spillCapHex * 1.05,
+    '最大外溢 ' + v15.spillMaxHex.toFixed(2) + ' 格（上限 ' + v15.spillCapHex.toFixed(2) + ' 格）');
   check('山体占位生效（树木花草水洼不长进山体里）', v15.treeInMountain === 0,
     v15.treeInMountain + ' 个道具落在山体格内（应为 0）');
   check('河流层已生成', v15.rivers > 0 && v15.riverSamples > 0,
@@ -939,18 +869,120 @@ const PROJECT_FN = `(function(x, y, z){
   const shakenOff = Math.hypot(shaken[0] - rigHome[0], shaken[1] - rigHome[1], shaken[2] - rigHome[2]);
   await clickBtn('重置视角');
   // reset() 只改目标状态，靠逐帧阻尼收敛 —— 无头软件渲染帧率低，
-  // 所以不能「等固定时间」，要等到位置真的不再移动为止（最多 5 秒）。
-  let homed = null, prev = null;
+  // 所以不能「等固定时间」，而要一直轮询到**偏差真的回到 1 以内**（最多 5 秒）。
+  // ⚠ 判据不能写成「相邻两次采样位置没变就收工」：软件渲染偶有一段时间不推进帧，
+  //   两次采样看起来一样，于是提前跳出，把「还没收敛」误判成「已到位」。
+  let homed = null, homedOff = Infinity, steps = 0;
+  const trail = [];
   for (let i = 0; i < 25; i++) {
     await sleep(200);
     homed = await page.evaluate(() => window.__hexLab.sceneKit.activeCamera().position.toArray());
-    if (prev && Math.hypot(homed[0] - prev[0], homed[1] - prev[1], homed[2] - prev[2]) < 0.05) break;
-    prev = homed;
+    homedOff = Math.hypot(homed[0] - rigHome[0], homed[1] - rigHome[1], homed[2] - rigHome[2]);
+    steps++;
+    if (i % 4 === 0 || homedOff < 1) trail.push(homedOff.toFixed(1));
+    if (homedOff < 1) break;
   }
-  const homedOff = Math.hypot(homed[0] - rigHome[0], homed[1] - rigHome[1], homed[2] - rigHome[2]);
   check('点「重置视角」后相机回到初始装配（拖拽 / 缩放被撤销）',
     shakenOff > 10 && homedOff < 1,
-    '扰动 ' + shakenOff.toFixed(1) + ' → 复位后偏差 ' + homedOff.toFixed(3));
+    '扰动 ' + shakenOff.toFixed(1) + ' → 复位后偏差 ' + homedOff.toFixed(3) +
+    '（采样 ' + steps + ' 次，收敛轨迹 ' + trail.join(' → ') + '）');
+
+  console.log('\n== 画面深度过渡（水面 ↔ 地面）==');
+  // 水面网格是一个**平面**，它凭什么读出「水有多深」？靠一张半分辨率的深度预通道
+  // （只画地表 + 山体），水面材质在片元里比较「本片元深度」与「该像素处地表深度」。
+  // 这一节先查通道/材质接线，再用**俯视相机**做一次数值对拍：
+  // 射线竖直 ⇒ 深度图在该像素处读到的就是该水格的水下地表，算出来的水深应当
+  // 等于 `-heightAt(格心)`。只查「有没有接线」是不够的 —— 尺度算错（比如每单位
+  // 深度差折算错了）照样能接线成功，但过渡会整片失真。
+  const wd = await page.evaluate(() => {
+    const a = window.__hexLab;
+    const W = window.HexLab.Config.value.water;
+    return {
+      stats: a.waterDepth.stats(),
+      expectFade: W.depthFade * a.world.hexSize,
+      ratio: W.depthResolution,
+      alphaCfg: W.depthAlphaMin
+    };
+  });
+  const s = wd.stats;
+  check('深度预通道已接线（地表 + 山体进通道，水面材质被注入）',
+    s.hooked >= 3 && s.meshes >= 6 && s.rtW > 0,
+    s.meshes + ' 个对象进预通道 / ' + s.hooked + ' 个水面材质注入');
+  check('深度图 = 主画面 × depthResolution（半分辨率）',
+    Math.abs(s.rtW / s.mainW - wd.ratio) < 0.02 && Math.abs(s.rtH / s.mainH - wd.ratio) < 0.02,
+    s.rtW + '×' + s.rtH + ' / 主画面 ' + s.mainW + '×' + s.mainH);
+  check('UV 换算用绘制缓冲尺寸（gl_FragCoord 的单位）',
+    Math.abs(s.texel - 1 / s.mainW) < 1e-9,
+    'texel ' + s.texel.toExponential(3) + ' = 1/' + s.mainW);
+  check('水面材质已转半透明（岸边透出水下地表）',
+    s.alphaMin === wd.alphaCfg && s.alphaMin > 0 && s.alphaMin < 1, 'alphaMin ' + s.alphaMin);
+  check('过渡尺度与配置一致（× hexSize）', Math.abs(s.fade - wd.expectFade) < 1e-6,
+    'fade ' + s.fade.toFixed(3) + ' / 期望 ' + wd.expectFade.toFixed(3));
+  check('每帧都在跑深度预通道', s.frames > 10, s.frames + ' 帧');
+
+  const dprobe = await page.evaluate(() => {
+    const a = window.__hexLab, T = window.THREE, r = a.sceneKit.renderer, wd2 = a.waterDepth;
+    const cam = a.sceneKit.activeCamera();
+    // 深度图「显影」到浮点 RT（8 位读不出这里的量级：水深对应的窗口深度差只有 1e-4 量级）
+    const W = 640, H = 400;
+    const rt = new T.WebGLRenderTarget(W, H, {
+      minFilter: T.NearestFilter, magFilter: T.NearestFilter, type: T.FloatType
+    });
+    const sc = new T.Scene();
+    sc.add(new T.Mesh(new T.PlaneGeometry(2, 2), new T.ShaderMaterial({
+      uniforms: { uMap: { value: wd2.depthTexture } },
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: 'uniform sampler2D uMap; varying vec2 vUv; void main(){ float d = texture2D(uMap, vUv).x; gl_FragColor = vec4(d, d, d, 1.0); }'
+    })));
+    const qcam = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const savePos = cam.position.clone(), saveQ = cam.quaternion.clone(), saveUp = cam.up.clone();
+
+    const waters = a.world.tileList.filter(t => t.terrain === 'water');
+    const sorted = waters.slice().sort((p, q) => a.world.heightAt(p.x, p.z) - a.world.heightAt(q.x, q.z));
+    const rows = [];
+    const probeTile = (t) => {
+      // 俯视：相机在正上方竖直向下（dy = 1，射线竖直，不会被前方地形遮挡）
+      cam.position.set(t.x, 600, t.z);
+      cam.up.set(0, 0, -1);
+      cam.lookAt(t.x, 0, t.z);
+      cam.updateMatrixWorld(true);
+      wd2.update();
+      const surf = new T.Vector3(t.x, a.layers.terrain.waterLevelY, t.z);
+      const ndc = surf.clone().project(cam);
+      const u = Math.min(W - 1, Math.max(0, Math.round((ndc.x * 0.5 + 0.5) * (W - 1))));
+      const v = Math.min(H - 1, Math.max(0, Math.round((ndc.y * 0.5 + 0.5) * (H - 1))));
+      const prev = r.getRenderTarget();
+      r.setRenderTarget(rt);
+      r.render(sc, qcam);
+      const buf = new Float32Array(W * H * 4);
+      r.readRenderTargetPixels(rt, 0, 0, W, H, buf);
+      r.setRenderTarget(prev);
+      const mapZ = buf[(v * W + u) * 4];
+      const winZ = (ndc.z + 1) / 2;
+      rows.push({
+        bed: -a.world.heightAt(t.x, t.z),
+        resolved: (mapZ - winZ) / wd2.uniforms.uDepthPerUnit.value
+      });
+    };
+    probeTile(sorted[0]);
+    probeTile(sorted[sorted.length - 1]);
+
+    cam.position.copy(savePos);
+    cam.quaternion.copy(saveQ);
+    cam.up.copy(saveUp);
+    cam.updateMatrixWorld(true);
+    wd2.update();
+    return { deep: rows[0], shallow: rows[1] };
+  });
+  check('深度通道读出来的水深 = 真实水深（俯视对拍，最深的水格）',
+    dprobe.deep.bed > 1 && Math.abs(dprobe.deep.resolved / dprobe.deep.bed - 1) < 0.35,
+    '真实 ' + dprobe.deep.bed.toFixed(3) + ' / 量到 ' + dprobe.deep.resolved.toFixed(3));
+  check('浅滩的水深同样对得上（水面在近岸处几乎透明）',
+    Math.abs(dprobe.shallow.resolved / dprobe.shallow.bed - 1) < 0.5,
+    '真实 ' + dprobe.shallow.bed.toFixed(3) + ' / 量到 ' + dprobe.shallow.resolved.toFixed(3));
+  check('深浅在同一套尺度下被区分开（过渡真的会变）',
+    dprobe.deep.resolved > dprobe.shallow.resolved + 0.5,
+    dprobe.shallow.resolved.toFixed(3) + ' → ' + dprobe.deep.resolved.toFixed(3));
 
   console.log('\n== 生态状态层 ==');
   const st = await page.evaluate(() => {

@@ -100,6 +100,102 @@
     return norm > 0 ? sum / norm : 0;
   }
 
+  /** Perlin 用的 8 向梯度（四正四斜，斜向已归一到单位长度） */
+  const PERLIN_GRAD = [
+    [1, 0], [-1, 0], [0, 1], [0, -1],
+    [0.70710678, 0.70710678], [-0.70710678, 0.70710678],
+    [0.70710678, -0.70710678], [-0.70710678, -0.70710678]
+  ];
+
+  /**
+   * 二维 Perlin（**梯度**）噪声，返回约 [-1, 1]。
+   *
+   * 与上面的 `valueNoise2` 的区别是本质的：值噪声在整数格点上存的是「值」，
+   * 插值出来的极值**总落在格点上**，大尺度上会读成方块状起伏；梯度噪声在格点
+   * 上存的是「斜率」，等值线是平滑曲线、没有格点偏好 —— 山脊走向、雪线轮廓、
+   * 轮廓溢出这类「要靠自然曲线」的场合必须用它。
+   *
+   * @param {number} x
+   * @param {number} y
+   * @param {number} seed
+   * @returns {number} 约 [-1, 1]（不做 clamp，留给调用方）
+   */
+  function perlin2(x, y, seed) {
+    const xi = Math.floor(x);
+    const yi = Math.floor(y);
+    const xf = x - xi;
+    const yf = y - yi;
+    const u = smooth(xf);
+    const v = smooth(yf);
+
+    function dot(ix, iy, dx, dy) {
+      const g = PERLIN_GRAD[hashInt(ix, iy, seed) & 7];
+      return g[0] * dx + g[1] * dy;
+    }
+    const n00 = dot(xi, yi, xf, yf);
+    const n10 = dot(xi + 1, yi, xf - 1, yf);
+    const n01 = dot(xi, yi + 1, xf, yf - 1);
+    const n11 = dot(xi + 1, yi + 1, xf - 1, yf - 1);
+
+    const a = n00 + (n10 - n00) * u;
+    const b = n01 + (n11 - n01) * u;
+    // 8 向单位梯度下 2D Perlin 的理论幅值约 ±0.707，乘 √2 归一到约 ±1
+    return (a + (b - a) * v) * 1.41421356;
+  }
+
+  /**
+   * Perlin 的分形叠加（fBm），返回约 [-1, 1]。
+   * @param {{seed:number, octaves?:number, frequency?:number, lacunarity?:number, gain?:number}} opts
+   */
+  function perlinFbm2(x, y, opts) {
+    const seed = opts.seed | 0;
+    const octaves = opts.octaves == null ? 4 : opts.octaves;
+    const lacunarity = opts.lacunarity == null ? 2 : opts.lacunarity;
+    const gain = opts.gain == null ? 0.5 : opts.gain;
+
+    let freq = opts.frequency == null ? 1 : opts.frequency;
+    let amp = 1;
+    let sum = 0;
+    let norm = 0;
+    for (let i = 0; i < octaves; i++) {
+      sum += perlin2(x * freq, y * freq, seed + i * 1013) * amp;
+      norm += amp;
+      freq *= lacunarity;
+      amp *= gain;
+    }
+    return norm > 0 ? sum / norm : 0;
+  }
+
+  /**
+   * 脊状分形噪声（ridged multifractal），返回 [0, 1]。
+   *
+   * 把 `|perlin|` 的**谷翻成脊**（`1 - |n|`），再平方锐化后逐层叠加。
+   * 单靠 fBm 叠出来的是「馒头状山包」；山脊 / 山脉那种一条条带锐边的脊线，
+   * 需要的就是这条 —— 它是山脉造型的主噪声。
+   *
+   * @param {{seed:number, octaves?:number, frequency?:number, lacunarity?:number, gain?:number}} opts
+   */
+  function ridgedPerlin2(x, y, opts) {
+    const seed = opts.seed | 0;
+    const octaves = opts.octaves == null ? 4 : opts.octaves;
+    const lacunarity = opts.lacunarity == null ? 2 : opts.lacunarity;
+    const gain = opts.gain == null ? 0.5 : opts.gain;
+
+    let freq = opts.frequency == null ? 1 : opts.frequency;
+    let amp = 1;
+    let sum = 0;
+    let norm = 0;
+    for (let i = 0; i < octaves; i++) {
+      const a = Math.abs(perlin2(x * freq, y * freq, seed + i * 1013));
+      const r = 1 - (a > 1 ? 1 : a);   // |n| → 0 的地方就是脊线
+      sum += r * r * amp;               // 平方锐化：脊更细、更亮
+      norm += amp;
+      freq *= lacunarity;
+      amp *= gain;
+    }
+    return norm > 0 ? sum / norm : 0;
+  }
+
   /**
    * 周期二维值噪声：把整数格点坐标按 period 取模，于是噪声在
    * period × period 的环面上无缝——贴图平铺时左右/上下必然接得上。
@@ -144,5 +240,9 @@
     };
   }
 
-  HL.Rng = { mulberry32, hash2, valueNoise2, valueNoise2Periodic, fbm2, rngAt };
+  HL.Rng = {
+    mulberry32, hash2, hashInt,
+    valueNoise2, valueNoise2Periodic, fbm2, rngAt,
+    perlin2, perlinFbm2, ridgedPerlin2
+  };
 })(window.HexLab = window.HexLab || {});

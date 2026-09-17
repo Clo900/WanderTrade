@@ -41,7 +41,6 @@
           x: lerp(a.x, b.x, 0.25),
           z: lerp(a.z, b.z, 0.25),
           y: lerp(a.y, b.y, 0.25),
-          bank: lerp(a.bank, b.bank, 0.25),
           bed: lerp(a.bed, b.bed, 0.25),
           halfW: lerp(a.halfW, b.halfW, 0.25)
         };
@@ -49,7 +48,6 @@
           x: lerp(a.x, b.x, 0.75),
           z: lerp(a.z, b.z, 0.75),
           y: lerp(a.y, b.y, 0.75),
-          bank: lerp(a.bank, b.bank, 0.75),
           bed: lerp(a.bed, b.bed, 0.75),
           halfW: lerp(a.halfW, b.halfW, 0.75)
         };
@@ -117,15 +115,26 @@
     }
 
     if (!riverCount) {
+      // 字段保持与正常分支一致（调用方不需要到处判空）
       return {
         group: group,
+        waterMesh: null,
+        channelMesh: null,
         counts: { rivers: 0, samples: 0 },
         setVisible: function (v) { group.visible = !!v; },
+        setEnvironment: function () { },
         setTime: function () { }
       };
     }
 
     const crackle = Textures.waterCrackleTexture(world.seed + 3301);
+    /**
+     * ⚠ 水面与中泓**必须各用一个材质**。
+     * 旧版两个 mesh 共用一个 `waterMat`，于是 `setEnvironment` 里
+     * `waterMat.color.setHex(surface); channelMesh.material.color.setHex(channel)`
+     * 第二行改的就是同一个对象 —— 第一行的水面色立刻被覆盖，两条带永远同色，
+     * `palette.river.surface / surfaceDeep` 的区分在环境刷新后完全失效。
+     */
     const waterMat = new THREE.MeshStandardMaterial({
       vertexColors: true, map: crackle, roughness: 0.34, metalness: 0.02
     });
@@ -134,7 +143,10 @@
     waterMesh.receiveShadow = true;
     group.add(waterMesh);
 
-    const channelMesh = new THREE.Mesh(Ribbon.toGeometry(channelBuf, 3), waterMat);
+    const channelMat = new THREE.MeshStandardMaterial({
+      vertexColors: true, map: crackle, roughness: 0.30, metalness: 0.02
+    });
+    const channelMesh = new THREE.Mesh(Ribbon.toGeometry(channelBuf, 3), channelMat);
     channelMesh.name = 'river-channel';
     channelMesh.receiveShadow = true;
     group.add(channelMesh);
@@ -143,14 +155,18 @@
       group: group,
       waterMesh: waterMesh,
       channelMesh: channelMesh,
+      waterMaterial: waterMat,
+      channelMaterial: channelMat,
       counts: { rivers: riverCount, samples: sampleCount },
       setVisible: function (v) { group.visible = !!v; },
       setEnvironment: function (env) {
         if (!env || !env.river) return;
         waterMat.color.setHex(env.river.surface);
-        channelMesh.material.color.setHex(env.river.channel);
+        channelMat.color.setHex(env.river.channel);
         waterMat.roughness = 0.34 - (env.wetness || 0) * 0.08;
         waterMat.metalness = 0.02 + (env.wetness || 0) * 0.04;
+        channelMat.roughness = 0.30 - (env.wetness || 0) * 0.08;
+        channelMat.metalness = 0.02 + (env.wetness || 0) * 0.04;
       },
       /** 水纹顺流向滚动（u 沿带 → 滚 offset.x 就是往下游流） */
       setTime: function (t) {

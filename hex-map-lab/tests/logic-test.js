@@ -20,6 +20,7 @@ const files = [
   'src/world/hex-world.js',
   'src/world/terrain-rules.js',
   'src/world/mountain-cluster.js',
+  'src/world/mountain-field.js',
   'src/world/river-builder.js',
   'src/world/road-builder.js',
   'src/world/city-graph.js',
@@ -27,8 +28,10 @@ const files = [
   'src/render/environment-state.js',
   'src/render/environment-palette.js',
   // 山体层是渲染模块，但 `plan()` 是纯几何规划（不碰 DOM / 纹理），
-  // 放在逻辑测试里跑，山体的两条连续性红线才能不依赖无头浏览器。
-  'src/render/mountain-layer.js'
+  // 放在逻辑测试里跑，山体的连续性红线才能不依赖无头浏览器。
+  // mountain-lod 只做「相机 → 级别」的判定，与几何无关，因此也能在这里验。
+  'src/render/mountain-layer.js',
+  'src/render/mountain-lod.js'
 ];
 for (const f of files) {
   vm.runInThisContext(fs.readFileSync(path.join(LAB, f), 'utf8'), { filename: f });
@@ -106,35 +109,19 @@ check('water 高度恒为 0', w.tileList.filter(t => t.terrain === 'water').ever
 check('陆地高度非负', w.tileList.filter(t => t.terrain !== 'water').every(t => t.surfaceY >= 0));
 check('山脉簇分析已生成', clusterState.clusters.length > 0, clusterState.clusters.length + ' 组');
 check('地块联动语义已生成', !!rules.byTile[w.tileList[0].key] && !!w.tileList[0].terrainRule);
-// 山簇段级语义（spine / endcap / wall / pass）已随「局部定向」重构移除。
-// 现在每格只保留**局部取向**（主轴 fwd/back + 这一侧有没有山邻居），
-// 形状由渲染层按「共享格边高度 + 共享格边中点」生成。
-check('山簇局部取向已生成（主轴 + 前后邻居判定）',
+// 山簇段级语义（spine / endcap / wall / pass）与「每格局部取向」（主轴 / 前后邻居）
+// 都已随 v1.9 的「簇级噪声场」重构移除：形状不在这一层了，派生数据也就没有存在理由。
+// 现在这一层只剩四个字段，且**各有唯一消费者**（删掉任何一个都会有功能消失）：
+check('山簇派生标记只保留被消费的四个字段（boundaryEdges / clusterIndex / isLone / foothill）',
   Object.keys(clusterState.byTile).length > 0 &&
   Object.keys(clusterState.byTile).every(function (k) {
     const m = clusterState.byTile[k];
-    return m.axis && isFinite(m.axis.x) &&
-      typeof m.fwd === 'number' && typeof m.back === 'number' &&
-      m.back === (m.fwd + 3) % 6 &&
-      typeof m.hasFwd === 'boolean' && typeof m.hasBack === 'boolean' &&
+    return m.clusterIndex >= 0 &&
       Array.isArray(m.boundaryEdges) && m.boundaryEdges.length === 6 &&
-      typeof m.clusterIsLone === 'boolean' &&
-      isFinite(m.foothill) && typeof m.isLone === 'boolean';
+      typeof m.isLone === 'boolean' &&
+      isFinite(m.foothill);
   }),
   Object.keys(clusterState.byTile).length + ' 格');
-check('主轴必为六边形邻居方向之一（脊线不斜穿格心）',
-  Object.keys(clusterState.byTile).every(function (k) {
-    const a = clusterState.byTile[k].axis;
-    const ang = Math.atan2(a.z, a.x) * 180 / Math.PI;
-    for (let d = 0; d < 6; d++) {
-      const dir = ((-60 * d) % 360 + 360) % 360;
-      let diff = Math.abs(((ang % 360) + 360) % 360 - dir) % 360;
-      if (diff > 180) diff = 360 - diff;
-      if (diff < 1e-6) return true;
-    }
-    return false;
-  }),
-  '全部 ' + Object.keys(clusterState.byTile).length + ' 格的角差 = 0°');
 check('内湖/内海支流已从候选推进到可生成数据',
   rules.branchCandidates.length === 0 || (rivers.counts.tributaries || 0) > 0,
   '候选 ' + rules.branchCandidates.length + ' 处 / 支流 ' + (rivers.counts.tributaries || 0) + ' 条');
@@ -223,146 +210,504 @@ check('连续山体簇与山地语义对齐',
   Object.keys(w.mountainClusters.byTile).length + ' / ' + (w.stats.byTerrain.ridge || 0));
 
 console.log('\n== 山体：单格成山体 / 连续格成山脉 ==');
-// 两条验收标准对应两组不变量：
-//   单格 → 孤峰存在，且剪影是多峰（局部极大 ≥ 2），不是一根锥子；
-//   连续 → 每对相邻山格在**共享格边**上同高且不落回地面（山体连成一体），
-//          并且主脊端点正好落在该格边中点（缺口恒为 0）。
+// 山体造型全部来自 `world/mountain-field.js` 的**簇级柏林噪声场**，渲染层只采样。
+// v2（2026-09-18）把「整簇一个椭球穹丘」换成「**蜿蜒窄脊带 + 低岩台**」，
+// 原因是实测：椭球在整簇范围铺开 ⇒ 最大簇 34.8×18.2 格而峰高只有 1.30 格
+// （体量比 0.14，参考图 ≈ 1.0），且脊状噪声只做减法（相对峰高只有 ±13% 起伏），
+// 读出来就是一片平台。因此验收标准换成「形态指标」：
+//   ① 场是 (x, z) 的唯一函数（跨格同点必然同值 ⇒ 裂缝在机制上不可能）；
+//   ② 场值恒 ≥ 0，表面 = max(场, 地表)（山脚不低于地形）；
+//   ③ 山脚是一条**越过簇边界**的噪声等值线，外溢量有上限；
+//   ④ 逐簇归一化：maxField === amp ⇒ `peakHeight` 就是「这座山有多高」；
+//   ⑤ 形态：窄脊带（体量比 ≥ 1）、脊线剖面峰谷交替、孤峰有放射脊、脊带外是低岩台。
 const mtn = HL.MountainLayer.plan(w);
-const mbyKey = {};
-for (const t of w.tileList) mbyKey[t.key] = t;
-function localMaxima(arr) {
-  let n = 0;
-  for (let i = 0; i < arr.length; i++) {
-    const prev = i === 0 ? -Infinity : arr[i - 1];
-    const next = i === arr.length - 1 ? -Infinity : arr[i + 1];
-    if (arr[i] > prev && arr[i] >= next) n++;
-  }
-  return n;
-}
-check('山体规划覆盖全部山格（逐格语义仍存在，但连续簇不再按柱体落地）',
-  mtn.list.length === (w.stats.byTerrain.ridge || 0),
-  mtn.list.length + ' / ' + (w.stats.byTerrain.ridge || 0));
-check('单格成山体（孤峰存在，不再被软化清掉）', mtn.lonePeaks > 0,
-  mtn.lonePeaks + ' 片孤峰');
-const peakHist = {};
-for (const r of mtn.list) {
-  const n = localMaxima(r.profile);
-  peakHist[n] = (peakHist[n] || 0) + 1;
-}
-check('每片剪影为多峰（局部极大 ≥ 2，不是锥子）',
-  mtn.list.every(function (r) { return localMaxima(r.profile) >= 2; }),
-  '峰数分布 ' + JSON.stringify(peakHist));
-check('孤峰比整条山脉矮（loneScale 生效）',
-  mtn.list.filter(function (r) { return r.lone; })
-    .every(function (r) { return r.apexH < w.hexSize * 1.38 * 0.85; }),
-  '孤峰最高 ' + Math.max.apply(null, mtn.list.filter(function (r) { return r.lone; })
-    .map(function (r) { return r.apexH; })).toFixed(2) + ' 单位');
+const M = C.terrain.relief.mountains;
+const mfield = mtn.compiled;
 
-let mPairs = 0, mAsym = 0, mZero = 0, mMaxDy = 0;
-for (const r of mtn.list) {
-  for (let d = 0; d < 6; d++) {
-    const n = Hex.neighbor(r.tile, d);
-    const nb = mbyKey[Hex.key(n.q, n.r)];
-    if (!nb || nb.terrain !== 'ridge') continue;
-    const nrec = mtn.byTile[nb.key];
-    if (!nrec) continue;
-    mPairs++;
-    const dy = Math.abs(r.edgeH[d] - nrec.edgeH[(d + 3) % 6]);
-    if (dy > mMaxDy) mMaxDy = dy;
-    if (dy > 1e-9) mAsym++;
-    if (r.edgeH[d] <= 0) mZero++;
-  }
+console.log('\n== 柏林噪声（山体造型的基础件）==');
+// 噪声是山体造型的唯一来源，值得单独锁：值域、确定性、直方图不退化。
+// 「不退化」这条尤其重要 —— 脊状噪声若塌成常数，山脉会变成一块平台。
+let pMin = Infinity, pMax = -Infinity;
+for (let i = 0; i < 6000; i++) {
+  const v = HL.Rng.perlin2(i * 0.137, i * 0.291, 4242);
+  if (v < pMin) pMin = v;
+  if (v > pMax) pMax = v;
 }
-check('共享格边两侧同高（山体连成一体）', mAsym === 0 && mZero === 0,
-  mPairs + ' 对相邻山格 / 不同高 ' + mAsym + ' / 落回地面 ' + mZero +
-  ' / 最大高差 ' + mMaxDy.toExponential(1));
-// ---- 红线③：跨格高度由**簇级共享高度场**给出，不再由「脊端」直接给出 ----
-// 旧版让每片**各自**算高度（外圈读 edgeH/cornerH、中环取「裙高 / 基部高 × 0.88」
-// 的较大者），于是共享格边上只有 12 个采样点恰好对上，中间鼓出唇边 + 环状凹槽，
-// 中环又是一圈近水平的台肩 —— 实拍就读成「六棱台 + 上面扣一个盖，格子之间没连上」。
-// 下面四条断言盯住替换后的不变量：
-//   ① 鞍部（共享格边中点）的场值**恰好**等于 edgeLevel × 两侧平均峰高；
-//   ② 脊端只负责沿脊形状，因此内收在格内（与基部环共享点重合会让扇面自交）；
-//   ③ 山脚收进地面（簇外边界点场值接近 0），否则外圈要立一圈墙；
-//   ④ 跨格方向的坡面不许先降后升（唇边就是「外圈比中环高」）。
-let mFwd = 0, mColBad = 0, mColMaxErr = 0, mInsetBad = 0;
-for (const r of mtn.list) {
-  if (!r.meta.hasFwd) continue;
-  mFwd++;
-  const dir = r.meta.fwd;
-  const em = Hex.edgeMid(r.tile, dir, w.hexSize);
-  const f = mtn.fieldAt(r, em.x, em.z);
-  const err = Math.abs(f - (r.baseY + r.edgeH[dir]));
-  if (err > mColMaxErr) mColMaxErr = err;
-  if (err > 1e-9) mColBad++;
-  const de = Math.hypot(em.x - r.tile.x, em.z - r.tile.z);
-  const df = Math.hypot(r.crestFwd.x - r.tile.x, r.crestFwd.z - r.tile.z);
-  if (!(df < de - 1e-6)) mInsetBad++;
+check('perlin2 值域落在 ±1.3 内且同参数同值（确定性）',
+  pMin > -1.3 && pMax < 1.3 && pMin < -0.5 && pMax > 0.5 &&
+  HL.Rng.perlin2(3.7, 9.1, 4242) === HL.Rng.perlin2(3.7, 9.1, 4242),
+  '实测 ' + pMin.toFixed(3) + ' ~ ' + pMax.toFixed(3));
+let rMin = Infinity, rMax = -Infinity;
+for (let i = 0; i < 6000; i++) {
+  const v = HL.Rng.ridgedPerlin2(i * 0.137, i * 0.291, { seed: 4242, octaves: 3 });
+  if (v < rMin) rMin = v;
+  if (v > rMax) rMax = v;
 }
-check('跨格鞍部 = 高度场在共享格边中点的值（两侧同一个函数）',
-  mFwd > 0 && mColBad === 0,
-  mFwd + ' 片 / 不吻合 ' + mColBad + ' / 最大误差 ' + mColMaxErr.toExponential(1));
-check('脊端内收在格内（不与基部环共享点重合 → 不折鳍）',
-  mInsetBad === 0, mFwd + ' 片中位置异常 ' + mInsetBad);
-let mFootSum = 0, mFootN = 0, mFootMax = 0;
-for (const r of mtn.list) {
-  for (let d = 0; d < 6; d++) {
-    if (r.meta.boundaryEdges && !r.meta.boundaryEdges[d]) continue;
-    const em = Hex.edgeMid(r.tile, d, w.hexSize);
-    const h = mtn.fieldAt(r, em.x, em.z);
-    mFootSum += h; mFootN++; if (h > mFootMax) mFootMax = h;
-  }
-}
-check('山脚收进地面（簇外边界点的场值接近 0）',
-  mFootN > 0 && mFootSum / mFootN < 1.5,
-  '均值 ' + (mFootSum / mFootN).toFixed(2) + ' / 最大 ' + mFootMax.toFixed(2) +
-  ' 单位（' + mFootN + ' 个簇外边界点）');
-let mLipN = 0, mLipMax = 0;
-for (const r of mtn.list) {
-  if (!r.meta.hasFwd && !r.meta.hasBack) continue;
-  const top = r.stations[Math.floor(r.stations.length / 2)];
-  for (const dir of [r.meta.fwd, r.meta.back]) {
-    if (!(r.edgeH[dir] > 0)) continue;
-    const em = Hex.edgeMid(r.tile, dir, w.hexSize);
-    const hs = [];
-    for (let s = 0; s <= 0.7001; s += 0.1) {
-      hs.push(mtn.fieldAt(r, em.x + (top.x - em.x) * s, em.z + (top.z - em.z) * s));
+check('ridgedPerlin2 ∈ [0,1] 且存在真正的脊（max 足够高）',
+  rMin >= 0 && rMax <= 1 && rMax > 0.6, '实测 ' + rMin.toFixed(3) + ' ~ ' + rMax.toFixed(3));
+let fSum = 0, fN = 0;
+for (let i = 0; i < 6000; i++) { fSum += HL.Rng.perlinFbm2(i * 0.137, i * 0.291, { seed: 77, octaves: 2 }); fN++; }
+check('perlinFbm2 是**有符号**的（均值 ≈ 0，与值噪声的 fbm2 不同）',
+  Math.abs(fSum / fN) < 0.08, '均值 ' + (fSum / fN).toFixed(4));
+
+console.log('\n== 山体：簇级噪声场 ==');
+const missingKeys = HL.MountainField.REQUIRED_KEYS.filter(function (k) { return M[k] === undefined; });
+check('配置里山体需要的键都在（缺键会静默变成 NaN）',
+  missingKeys.length === 0,
+  missingKeys.length ? '缺 ' + missingKeys.join(', ') : '共 ' + HL.MountainField.REQUIRED_KEYS.length + ' 个键');
+check('山体规划覆盖全部山格，且每格都长出了山体',
+  mtn.list.length === (w.stats.byTerrain.ridge || 0) && mtn.bodyTiles === mtn.list.length,
+  mtn.list.length + ' 格 / 有几何 ' + mtn.bodyTiles + ' 格 / 最大峰高 ' + mtn.maxHeight.toFixed(2) + ' 单位');
+
+// ---- 红线①：场是 (x, z) 的**唯一函数** ----
+// 同一点只可能有一个高度值 —— 不依赖调用顺序、不依赖「谁在问」（哪一片 / 哪个入口）。
+// 这是「跨格逐点重合、裂缝不可能出现」的全部依据，比逐点比对两侧数据更根本。
+(function () {
+  let worst = 0, tested = 0;
+  const probes = [];
+  for (let i = 0; i < mtn.list.length; i += 7) probes.push(mtn.list[i]);
+  for (let i = 0; i < probes.length; i++) {
+    const r = probes[i];
+    for (let k = 0; k < 6; k++) {
+      const p = Hex.cornerPoint(r.tile, k, w.hexSize);
+      tested++;
+      const a = mtn.fieldAt(r, p.x, p.z);
+      const b = mtn.surfaceAt(p.x, p.z);
+      const c2 = mfield.fieldAt(p.x, p.z);
+      worst = Math.max(worst, Math.abs(a - c2), Math.abs(Math.max(c2, w.heightAt(p.x, p.z)) - b));
     }
-    // 只看「格边 → 第一个脊顶」这一段：过了脊顶本来就要下降，不算唇边
-    let k = 0;
-    while (k + 1 < hs.length && hs[k + 1] >= hs[k]) k++;
-    let drop = 0;
-    for (let i = 1; i <= k; i++) drop = Math.max(drop, hs[i - 1] - hs[i]);
-    if (drop > 0.8) mLipN++;
-    mLipMax = Math.max(mLipMax, drop);
+  }
+  check('同一个世界坐标只有一个高度（与入口 / 顺序无关）',
+    tested > 0 && worst === 0,
+    tested + ' 个共享角点 / 最大差 ' + worst.toExponential(1));
+})();
+
+// ---- 红线②：场值恒 ≥ 0，且表面不低于地表 ----
+(function () {
+  let neg = 0, below = 0, tested = 0, maxH = 0;
+  for (let i = 0; i < w.tileList.length; i++) {
+    const t = w.tileList[i];
+    for (let k = 0; k < 6; k++) {
+      const p = Hex.cornerPoint(t, k, w.hexSize);
+      const f = mfield.fieldAt(p.x, p.z);
+      tested++;
+      if (f < 0) neg++;
+      if (mfield.surfaceAt(p.x, p.z) + 1e-9 < w.heightAt(p.x, p.z)) below++;
+      if (f > maxH) maxH = f;
+    }
+  }
+  check('场值恒 ≥ 0，且表面 = max(场, 地表)（山脚不会低于地形）',
+    neg === 0 && below === 0,
+    tested + ' 个采样点 / 负值 ' + neg + ' / 低于地表 ' + below + ' / 最高 ' + maxH.toFixed(2));
+})();
+
+// ---- 红线③：山脚是一条**越过簇边界**的噪声等值线 ----
+// 旧版山脚严格收在簇边界上，轮廓因此是格边折线（「六边形」观感的来源）。
+// 现在要求两件事同时成立：
+//   · 边界处（含边界外一小段）场值 > 0 —— 山脚确实漫到了邻格平地上；
+//   · 归零距离不超过「外溢半径 + 抖动幅度」—— 溢出必须是可控的、有限的一圈。
+let edgeN = 0, spillN = 0, outSum = 0, outMax = 0, atEdgeZero = 0;
+for (let ci = 0; ci < mfield.clusters.length; ci++) {
+  const cl = mfield.clusters[ci];
+  for (let ti = 0; ti < cl.tiles.length; ti++) {
+    const t = cl.tiles[ti];
+    const be = t.mountainCluster.boundaryEdges;
+    for (let d = 0; d < 6; d++) {
+      if (!be[d]) continue;
+      const em = Hex.edgeMid(t, d, w.hexSize);
+      let nx = em.x - t.x, nz = em.z - t.z;
+      const L = Math.hypot(nx, nz) || 1; nx /= L; nz /= L;
+      edgeN++;
+      if (cl.field(em.x + nx * 0.2, em.z + nz * 0.2) <= 0) atEdgeZero++;
+      else spillN++;
+      let out = 0;
+      for (let s = 0.25; s <= 60; s += 0.25) {
+        if (cl.field(em.x + nx * s, em.z + nz * s) <= 1e-9) { out = s; break; }
+        out = s;
+      }
+      outSum += out;
+      if (out > outMax) outMax = out;
+    }
   }
 }
-check('跨格方向的坡面没有唇边（从格边走到脊顶一路只升不降）',
-  mLipN === 0, '先降后升的片侧 ' + mLipN + ' / 最大下降 ' + mLipMax.toFixed(2) + ' 单位');
-// 鞍部（跨格山坳）必须**远低于**峰顶：这是「山脉」与「台地」的分界。
-// edgeLevel 取 0.55 时实测整簇被抬成一块平台，实拍里就是「平板上戳着几个尖峰」。
-let mColMax = 0, mColSum = 0, mColN = 0;
-for (const r of mtn.list) {
-  for (let d = 0; d < 6; d++) {
-    if (r.edgeH[d] <= 0) continue;
-    const ratio = r.edgeH[d] / Math.max(1e-6, r.apexH);
-    if (ratio > mColMax) mColMax = ratio;
-    mColSum += ratio; mColN++;
-  }
-}
-check('鞍部远低于峰顶（山体是脊不是台地）', mColN > 0 && mColMax <= 0.5,
-  '最大 鞍部/峰高 = ' + mColMax.toFixed(3) + ' / 平均 ' +
-  (mColSum / Math.max(1, mColN)).toFixed(3) + '（' + mColN + ' 条跨格边）');
-check('收峰端低于跨格鞍部（山尾不会反拱）',
-  C.terrain.relief.mountains.taperLevel < C.terrain.relief.mountains.edgeLevel,
-  'taperLevel ' + C.terrain.relief.mountains.taperLevel +
-  ' < edgeLevel ' + C.terrain.relief.mountains.edgeLevel);
-check('雪线按每片自身峰高取（不再依赖全局 maxRise）',
-  mtn.list.every(function (r) {
-    return Math.abs(r.snowY - r.apexY * C.terrain.relief.mountains.snowRatio) < 1e-6 &&
-      r.apexY > r.snowY;
+const capHex = M.taperOuter + M.outlineWobble;
+check('山脚越过簇边界（边界外侧仍是山体 → 轮廓不再是格边折线）',
+  edgeN > 0 && spillN >= edgeN * 0.9,
+  spillN + ' / ' + edgeN + ' 条簇边界边外侧有山体');
+check('外溢是有限的一圈（不超过 taperOuter + outlineWobble）',
+  outMax / w.hexSize <= capHex * 1.05,
+  '归零距离 平均 ' + (outSum / Math.max(1, edgeN) / w.hexSize).toFixed(2) +
+  ' / 最大 ' + (outMax / w.hexSize).toFixed(2) + ' 格（上限 ' + capHex.toFixed(2) + ' 格）');
+
+// ---- 红线④：逐簇归一化 ⇒ peakHeight 就是「这座山有多高」 ----
+// `body = 脊带 × 峰高 × 脊网` 是三个各自 ≤1 的噪声相乘，极大值不落在同一点，
+// 所以裸场的峰顶只有包络的 0.6~0.8（旧版文档里那句「实测峰值只到包络的约 0.74」
+// 就是这么来的，雪线因此吊在够不着的地方）。现在逐簇归一化，把它钉在 amp 上。
+check('逐簇归一化：实测峰高 === 该簇 amp（与噪声参数解耦）',
+  mfield.clusters.length > 0 && mfield.clusters.every(function (c) {
+    return Math.abs(c.maxField - c.amp) < 1e-9 && c.maxField > 0;
   }),
-  'snowY/apexY = ' + C.terrain.relief.mountains.snowRatio + '（' + mtn.snowPeaks + ' 片有雪顶）');
+  mfield.clusters.length + ' 簇 / 峰高 ' +
+  Math.min.apply(null, mfield.clusters.map(function (c) { return c.maxField; })).toFixed(2) + ' ~ ' +
+  Math.max.apply(null, mfield.clusters.map(function (c) { return c.maxField; })).toFixed(2) + ' 单位');
+check('峰高落在配置区间内（孤峰乘 loneScale，≥6 格的簇再乘 heightGrow）',
+  mfield.clusters.every(function (c) {
+    const g = c.heightGrow;
+    const lo = w.hexSize * M.peakHeight[0] * (c.lone ? M.loneScale : 1) * g;
+    const hi = w.hexSize * M.peakHeight[1] * (c.lone ? M.loneScale : 1) * g;
+    return c.amp >= lo - 1e-6 && c.amp <= hi + 1e-6;
+  }),
+  'peakHeight ' + JSON.stringify(M.peakHeight) + ' / loneScale ' + M.loneScale +
+  ' / peakHeightGrow ' + M.peakHeightGrow);
+check('峰高增长只作用于 ≥ 6 格的簇（单格与小簇的峰高完全不变）',
+  mfield.clusters.filter(function (c) { return c.size <= 5; }).every(function (c) { return c.heightGrow === 1; }) &&
+  mfield.clusters.filter(function (c) { return c.size >= 12; }).every(function (c) { return c.heightGrow > 1.15; }),
+  '≤5 格簇 heightGrow 全为 1 / ≥12 格簇最大 ' +
+  Math.max.apply(null, mfield.clusters.map(function (c) { return c.heightGrow; })).toFixed(2));
+
+// ---- 红线⑤：形态指标（窄脊带 / 峰谷交替 / 放射脊 / 低岩台）----
+// 旧版这里只断言「脊线剖面多峰」，但椭球包络把整簇抬到 63% 峰高，
+// 名义上的多峰其实是平台上的小鼓包（体量比实测 0.14）。所以 v2 直接量形态。
+/** 峰顶：脊带中心线上场值最大的那个采样点 */
+function apexOf(c) {
+  let bx = c.centroid.x, bz = c.centroid.z, bh = -1;
+  for (let i = 0; i < c.crestPoints.length; i++) {
+    const p = c.crestPoints[i];
+    const f = c.field(p.x, p.z);
+    if (f > bh) { bh = f; bx = p.x; bz = p.z; }
+  }
+  return { x: bx, z: bz, h: bh };
+}
+/** 半高半径：从峰顶沿**垂直脊带**方向外扫，场值降到 50% 峰高的距离 */
+function halfWidthOf(c, ap) {
+  const px = -c.axis.z, pz = c.axis.x;
+  for (let s = 1; s < 400; s++) {
+    const d = s * 0.5;
+    const f = Math.max(c.field(ap.x + px * d, ap.z + pz * d),
+      c.field(ap.x - px * d, ap.z - pz * d));
+    if (f < ap.h * 0.5) return d;
+  }
+  return 200;
+}
+
+/** 演示块的簇号（手工放的那一大块；形态指标要以**生成出来的**簇为准） */
+const demoIdx = (function () {
+  const t = w.tiles.get(w.demoMassif.keys[0]);
+  const m = t && t.mountainCluster;
+  return m ? m.clusterIndex : -1;
+})();
+
+let bigCluster = null;
+for (let i = 0; i < mfield.clusters.length; i++) {
+  const c = mfield.clusters[i];
+  if (c.index === demoIdx) continue;          // 演示块单列在后面
+  if (!bigCluster || c.size > bigCluster.size) bigCluster = c;
+}
+let bigApex = null, bigHalf = 0;
+if (bigCluster) {
+  bigApex = apexOf(bigCluster);
+  bigHalf = halfWidthOf(bigCluster, bigApex);
+  const aspect = bigApex.h / Math.max(1e-6, bigHalf);
+
+  // 脊线剖面：沿脊带中心线取值，局部极大 ≥ 2 且存在明显鞍部 ⇒ 峰谷真的交替
+  const prof = bigCluster.crestPoints.map(function (p) { return bigCluster.field(p.x, p.z); });
+  const sm = prof.map(function (_, i) {
+    let s = 0, n = 0;
+    for (let k = -2; k <= 2; k++) {
+      const j = i + k;
+      if (j >= 0 && j < prof.length) { s += prof[j]; n++; }
+    }
+    return s / n;
+  });
+  let crestPeaks = 0, deepSaddle = 1;
+  for (let i = 1; i < sm.length - 1; i++) {
+    if (sm[i] > sm[i - 1] && sm[i] >= sm[i + 1] && sm[i] > bigCluster.maxField * 0.45) crestPeaks++;
+    if (sm[i] < sm[i - 1] && sm[i] <= sm[i + 1]) {
+      deepSaddle = Math.min(deepSaddle, sm[i] / Math.max(1e-6, bigCluster.maxField));
+    }
+  }
+  check('山体是窄脊带（体量比 = 峰高 / 半高半径 ≥ 1；旧版椭球实测 0.14）',
+    aspect >= 1.0,
+    '最大生成簇 ' + bigCluster.size + ' 格：峰高 ' + (bigApex.h / w.hexSize).toFixed(2) +
+    ' 格 / 半高半径 ' + (bigHalf / w.hexSize).toFixed(2) + ' 格 → 体量比 ' + aspect.toFixed(2));
+  // 每一簇都不能是「浅圆丘」：体量比的下界放宽到 0.75 是因为 v2 之后**大簇的脊带会
+  // 随簇宽增长**（beltWidthGrow），宽脊带的半高半径本来就大 —— 「不是平台」这条
+  // 由下面的「峰:底 ≥ 2」把关，那一条与脊带宽度无关。
+  check('没有任何一簇退化成浅圆丘（每簇体量比 ≥ 0.75）',
+    mfield.clusters.every(function (c) {
+      const ap = apexOf(c);
+      return ap.h / Math.max(1e-6, halfWidthOf(c, ap)) >= 0.75;
+    }),
+    '最小体量比 ' + Math.min.apply(null, mfield.clusters.map(function (c) {
+      const ap = apexOf(c);
+      return ap.h / Math.max(1e-6, halfWidthOf(c, ap));
+    })).toFixed(2));
+  check('脊线剖面多峰且峰谷交替（不是一座圆丘）',
+    crestPeaks >= 2 && deepSaddle <= 0.8,
+    '脊上局部极大 ' + crestPeaks + ' 个 / 最深鞍部 ' + (deepSaddle * 100).toFixed(0) + '% 峰高');
+}
+
+// ---- 放射脊：单格孤峰必须「等值线成星形」，而不是一圈同心环 ----
+// 做法是把「到脊线的横向距离」按角向噪声调制（config 的 spurAmp / spurLobes）。
+(function () {
+  const lones = mfield.clusters.filter(function (c) { return c.lone; });
+  if (!lones.length) { check('单格孤峰存在（放射脊可测）', false, '没有任何单格簇'); return; }
+  let bi = 0;
+  for (let i = 1; i < lones.length; i++) if (lones[i].maxField > lones[bi].maxField) bi = i;
+  const lc = lones[bi];
+  const ap = apexOf(lc);
+  const hw = halfWidthOf(lc, ap);
+  const N = 96, rr = hw * 0.85;
+  const vals = [];
+  for (let i = 0; i < N; i++) {
+    const th = i / N * Math.PI * 2;
+    vals.push(lc.field(ap.x + Math.cos(th) * rr, ap.z + Math.sin(th) * rr));
+  }
+  let ribs = 0, mn = Infinity, mx = 0;
+  for (let i = 0; i < N; i++) {
+    const a = vals[(i - 1 + N) % N], b = vals[i], c2 = vals[(i + 1) % N];
+    if (b > a && b >= c2) ribs++;
+    if (b < mn) mn = b;
+    if (b > mx) mx = b;
+  }
+  const ringAmp = mx > 0 ? (mx - mn) / mx : 0;
+  check('孤峰有放射脊 / 冲沟（环向起伏，不是同心环）',
+    ribs >= 4 && ringAmp >= 0.20,
+    '最高孤峰 ' + (lc.maxField / w.hexSize).toFixed(2) + ' 格高 / 放射脊 ' + ribs +
+    ' 条 / 环向起伏 ' + (ringAmp * 100).toFixed(0) + '%');
+})();
+
+// ---- 低岩台：每格都有底（岩台），最低的那一格明显低于峰 ----
+// 「岩台 + 峰」是 v2 的两级结构：岩台保证山格本身是一块起伏的岩石高地（而不是悬空的
+// 脊带），又必须足够低 —— 否则就是旧版那种「整簇抬到 63% 峰高」的平台。
+(function () {
+  if (!bigCluster) return;
+  const vals = bigCluster.tiles.map(function (t) { return bigCluster.field(t.x, t.z); });
+  const mn = Math.min.apply(null, vals);
+  const ratio = mn > 0 ? bigCluster.maxField / mn : Infinity;
+  check('脊带之外是低岩台（每格都有底 / 最低格 < 45% 峰高 / 峰:底 ≥ 2）',
+    mn > bigCluster.maxField * 0.02 && mn < bigCluster.maxField * 0.45 && ratio >= 2,
+    '最大簇格心场值 ' + (mn / bigCluster.maxField * 100).toFixed(0) + '% ~ ' +
+    (Math.max.apply(null, vals) / bigCluster.maxField * 100).toFixed(0) + '% 峰高 / 峰:底 ' +
+    ratio.toFixed(2));
+})();
+
+// ---- 山脉分布：收窄成窄带（v2 把起伏通道换成 ridged 的直接目的）----
+// ⚠ **排除演示块**：那一块是手工放的（relief.demoMassif），不属于「按比例生成」的
+// 分布 —— 把它算进来只会让这条断言变成「演示块有多大」的间接度量。
+(function () {
+  const genClusters = mfield.clusters.filter(function (c) { return c.index !== demoIdx; });
+  const demoTiles = w.demoMassif.keys.length;
+  const ridge = (w.stats.byTerrain.ridge || 0) - demoTiles;
+  const land = (w.tileList.length - (w.stats.byTerrain.water || 0)) - demoTiles;
+  const pct = ridge / Math.max(1, land) * 100;
+  const avgWid = genClusters.reduce(function (a, c) { return a + c.extV * 2 / w.hexSize; }, 0) /
+    Math.max(1, genClusters.length);
+  const maxLen = Math.max.apply(null, genClusters.map(function (c) { return c.extU * 2 / w.hexSize; }));
+  check('生成的山脉分布是窄带（平均簇宽 ≤ 3.5 格 / 占陆地 12~22% / 最长簇 ≤ 20 格）',
+    avgWid <= 3.5 && pct >= 12 && pct <= 22 && maxLen <= 20,
+    genClusters.length + ' 簇（已剔除演示块）/ 平均宽 ' + avgWid.toFixed(1) + ' 格 / 最长 ' +
+    maxLen.toFixed(1) + ' 格 / 占陆地 ' + pct.toFixed(1) + '%');
+})();
+
+check('孤峰比整条山脉矮（loneScale 生效）',
+  (function () {
+    const lones = mfield.clusters.filter(function (c) { return c.lone; });
+    const bigs = mfield.clusters.filter(function (c) { return !c.lone; });
+    if (!lones.length || !bigs.length) return false;
+    const lh = Math.max.apply(null, lones.map(function (c) { return c.maxField; }));
+    const bh = Math.max.apply(null, bigs.map(function (c) { return c.maxField; }));
+    return lh < bh;
+  })(),
+  '孤峰最高 ' + Math.max.apply(null, mfield.clusters.filter(function (c) { return c.lone; })
+    .map(function (c) { return c.maxField; })).toFixed(2) + ' 单位 / 山脉最高 ' +
+  Math.max.apply(null, mfield.clusters.filter(function (c) { return !c.lone; })
+    .map(function (c) { return c.maxField; })).toFixed(2) + ' 单位');
+
+check('雪线按本簇实测峰高取（每条山脉都有自己的雪顶）',
+  mtn.list.every(function (r) {
+    return Math.abs(r.snowY - mfield.byIndex[r.clusterIndex].maxField * M.snowRatio) < 1e-6;
+  }) && mtn.snowPeaks > 0 && M.snowRatio < 1,
+  'snowRatio ' + M.snowRatio + '（' + mtn.snowPeaks + ' / ' + mtn.list.length + ' 格在雪线以上）');
+
+console.log('\n== 山体：演示大片山脉 / 山谷 / 脊带宽度 ==');
+// 手工数据也要被锁：演示块是「给策划看一大片山脉长什么样」的唯一保证 ——
+// 哪天被生成逻辑挤掉，必须是断言失败，而不是悄悄少一片山。
+(function () {
+  const dm = w.demoMassif;
+  let notRidge = 0;
+  const owner = {};
+  for (let i = 0; i < dm.keys.length; i++) {
+    const t = w.tiles.get(dm.keys[i]);
+    if (!t || t.terrain !== 'ridge') { notRidge++; continue; }
+    const m = t.mountainCluster;
+    const k = m ? m.clusterIndex : 'none';
+    owner[k] = (owner[k] || 0) + 1;
+  }
+  const ids = Object.keys(owner);
+  const demoCluster = ids.length === 1 ? mfield.byIndex[ids[0]] : null;
+  check('演示大片山脉：一块 ' + dm.cols + '×' + dm.rows + ' 全部成山、且连成 1 簇',
+    !!dm.enabled && dm.keys.length === dm.cols * dm.rows && notRidge === 0 &&
+    ids.length === 1 && owner[ids[0]] === dm.keys.length,
+    'offset(' + dm.col + ',' + dm.row + ') → ' + dm.keys.length + ' 格 / 非山格 ' + notRidge +
+    ' / 分属 ' + ids.length + ' 簇 / 该簇 ' + (owner[ids[0]] || 0) + ' 格 / 新改建 ' + dm.promoted + ' 格');
+  check('演示块读成「大片山脉」：最大簇 + 峰更高 + 脊带更宽',
+    !!demoCluster &&
+    demoCluster.size === Math.max.apply(null, mfield.clusters.map(function (c) { return c.size; })) &&
+    demoCluster.heightGrow > 1.2 && demoCluster.beltHalf > w.hexSize * M.beltHalfWidth * 2.5,
+    demoCluster ? ('簇 ' + demoCluster.size + ' 格 / 峰高 ' + (demoCluster.maxField / w.hexSize).toFixed(2) +
+      ' 格 / 脊带半宽 ' + (demoCluster.beltHalf / w.hexSize).toFixed(2) + ' 格 / heightGrow ' +
+      demoCluster.heightGrow.toFixed(2)) : '找不到演示簇');
+
+  // 脊带宽度：单格仍取下界（形态完全不变），大簇明显更宽
+  const base = w.hexSize * M.beltHalfWidth;
+  const lones = mfield.clusters.filter(function (c) { return c.lone; });
+  check('脊带宽度随簇宽增长（单格取下界；否则大块会读成「薄脊 + 一片岩台」）',
+    lones.length > 0 && lones.every(function (c) { return Math.abs(c.beltHalf - base) < 1e-6; }) &&
+    !!demoCluster && demoCluster.beltHalf > base * 2.5,
+    '单格 ' + (lones.length ? (lones[0].beltHalf / w.hexSize).toFixed(2) : '-') + ' 格（下界 ' +
+    M.beltHalfWidth + '）/ 最大簇 ' +
+    (demoCluster ? (demoCluster.beltHalf / w.hexSize).toFixed(2) : '-') + ' 格');
+})();
+
+// ---- 山谷（山脊对面的一条沟）----
+// 验收方式必须是 **A/B 对拍**：把 rate 关掉再编译一次，在**同一坐标**上比。
+// 单点采样看着简单，但「脊线本身会蜿蜒 + 谷在两端收口」都会让两侧天然不等 ——
+// 实测无谷的簇两侧就能差 2.04 倍，那样根本分不出「谷」和「蜿蜒」。
+(function () {
+  const V = M.valley;
+  const onList = mfield.clusters.filter(function (c) { return c.hasValley; });
+  const savedRate = V.rate;
+  let offField = null, backField = null;
+  try {
+    V.rate = 0;
+    HL.MountainField.clearCache(w);
+    offField = HL.MountainField.compile(w);
+  } finally {
+    // 一定要还原：后面的断言与渲染都依赖「带谷」的那一份配置
+    V.rate = savedRate;
+    HL.MountainField.clearCache(w);
+    backField = HL.MountainField.compile(w);
+  }
+  check('山谷开关是确定性可复现的（关掉再打开，带谷的簇完全一致）',
+    backField.clusters.filter(function (c) { return c.hasValley; }).length === onList.length &&
+    backField.clusters.length === mfield.clusters.length,
+    onList.length + ' / ' + backField.clusters.filter(function (c) { return c.hasValley; }).length +
+    ' 簇带谷（共 ' + mfield.clusters.length + ' 簇，比例配置 ' + V.rate + '）');
+  check('山谷在单格与连续地块上都能出现',
+    onList.some(function (c) { return c.lone; }) && onList.some(function (c) { return !c.lone; }),
+    '单格 ' + onList.filter(function (c) { return c.lone; }).length + ' 簇 / 连续 ' +
+    onList.filter(function (c) { return !c.lone; }).length + ' 簇');
+
+  /**
+   * 谷心线上「压掉多少」。
+   * 谷中心线 = 脊线偏移 `valleySide × beltHalf × offset`；而半宽沿走向有 ±22% 的抖动，
+   * 所以要在抖动范围内扫几个位置、取**最强压制点**（否则会因为采样点偏离谷心而低估）。
+   * 单格簇的脊线退化成一个点，谷的法向是 `∇offV = (−sin az, cos az)`（不是脊带主轴）。
+   */
+  function strongestDrop(c) {
+    const ref = c.lone ? c.centroid
+      : (c.crestPoints[Math.floor(c.crestPoints.length / 2)] || c.centroid);
+    const nx = c.lone ? -Math.sin(c.valleyAz) : c.perp.x;
+    const nz = c.lone ? Math.cos(c.valleyAz) : c.perp.z;
+    let drop = 0, mirror = 0;
+    const steps = [0.78, 0.9, 1.0, 1.12];
+    for (let i = 0; i < steps.length; i++) {
+      const o = c.valleySide * c.beltHalf * V.offset * steps[i];
+      const a = c.field(ref.x + nx * o, ref.z + nz * o);
+      const b = offField.byIndex[c.index].field(ref.x + nx * o, ref.z + nz * o);
+      if (b > 1e-6) drop = Math.max(drop, 1 - a / b);
+      const a2 = c.field(ref.x - nx * o, ref.z - nz * o);
+      const b2 = offField.byIndex[c.index].field(ref.x - nx * o, ref.z - nz * o);
+      if (b2 > 1e-6) mirror = Math.max(mirror, Math.abs(a2 / b2 - 1));
+    }
+    return { drop: drop, mirror: mirror };
+  }
+  let weak = 0, worstMirror = 0, maxDrop = 0;
+  const loneDrops = [];
+  for (let i = 0; i < onList.length; i++) {
+    const r = strongestDrop(onList[i]);
+    if (r.drop < 0.30) weak++;
+    if (r.mirror > worstMirror) worstMirror = r.mirror;
+    if (r.drop > maxDrop) maxDrop = r.drop;
+    if (onList[i].lone) loneDrops.push(r.drop);
+  }
+  check('山谷确实把谷心线压低三成以上（同坐标「有谷 vs 无谷」对比）',
+    onList.length > 0 && weak === 0 && maxDrop >= 0.40,
+    onList.length + ' 簇带谷 / 最强压制 ' + (maxDrop * 100).toFixed(0) +
+    '% / 压制不足 30% 的 ' + weak + ' 簇');
+  check('山谷只作用在谷那一侧（镜像侧的变化只来自归一化微差）',
+    worstMirror <= 0.18,
+    '镜像侧最大偏差 ' + (worstMirror * 100).toFixed(0) + '%');
+  check('单格山峰可以不对称（每片带谷的孤峰两侧都拉开了差距）',
+    loneDrops.length > 0 && loneDrops.every(function (d) { return d >= 0.30; }),
+    '带谷孤峰 ' + loneDrops.length + ' 片 / 最弱压制 ' +
+    (loneDrops.length ? (Math.min.apply(null, loneDrops) * 100).toFixed(0) : '-') + '%');
+})();
+
+console.log('\n== 山体 LOD（按缩放切采样密度）==');
+// 高度场是 (x,z) 的纯函数 ⇒ 每一级只是同一个场的不同采样。因此 LOD 只需要：
+//   ① 级别表自洽（细 → 粗、关掉 LOD 时锁最细一级）；
+//   ② 判据对**正交 / 透视两种相机**都成立（正交是默认档，裸距离判据在它上面是错的）；
+//   ③ 拉远变粗 / 拉近变细，且阈值附近有滞回（不跳级）。
+(function () {
+  const details = HL.MountainLayer.lodDetails(M);
+  check('LOD 级别表是「细 → 粗」且与配置一致',
+    details.length === M.lod.details.length &&
+    details.every(function (d, i) { return d === M.lod.details[i]; }) && details.length >= 2,
+    details.join(' → ') + '（步长 ' + details.map(function (d) {
+      return (w.hexSize / d).toFixed(2);
+    }).join(' / ') + ' 单位）');
+  check('关掉 LOD 时锁在最细一级（config 里 details[0] 的约定）',
+    JSON.stringify(HL.MountainLayer.lodDetails({ lod: { enabled: false, details: [12, 8, 5, 3] } })) === '[12]' &&
+    JSON.stringify(HL.MountainLayer.lodDetails({ lod: { details: [8, 3, 8, 1] } })) === '[8,3]',
+    'enabled:false → [12]；去重去非法 → [8,3]');
+
+  // 每像素世界单位：正交与透视各一条式子，都必须有限、为正
+  const W = HL.MountainLod.worldPerPixel;
+  const ortho = { isOrthographicCamera: true, top: 1, bottom: -1, zoom: 0.1 };
+  const o1 = W(ortho, 900, 500), o2 = W(ortho, 900, 2000);
+  const pers = { isOrthographicCamera: false, fov: 45 };
+  const p1 = W(pers, 900, 1000), p2 = W(pers, 900, 2000);
+  check('LOD 判据：正交与距离无关、透视与距离成正比（同一条像素式子）',
+    o1 > 0 && o1 === o2 && Math.abs(p2 / p1 - 2) < 1e-9,
+    '正交 ' + o1.toFixed(4) + '（500 与 2000 处同值）/ 透视 1000→' + p1.toFixed(4) +
+    '、2000→' + p2.toFixed(4));
+
+  // 用真相机 + 假网格驱动控制器：拉近变细、拉远变粗
+  function makeCtl() {
+    const lv = details.map(function (d) {
+      return { detail: d, chunks: [{ index: 0, mesh: { visible: false }, center: { x: 0, z: 0 } }] };
+    });
+    return HL.MountainLod.create({
+      levels: lv, hexSize: w.hexSize, enabled: true,
+      targetPxPerStep: M.lod.targetPxPerStep, hysteresis: M.lod.hysteresis, updateInterval: 0
+    });
+  }
+  const cam = new THREE.PerspectiveCamera(45, 1.6, 1, 8000);
+  function levelAt(ctl, dist) {
+    cam.position.set(0, 0, dist);
+    cam.lookAt(0, 0, 0);
+    cam.updateMatrixWorld();
+    ctl.update(cam, 900, 1);
+    return ctl.selection()[0];
+  }
+  const ctl = makeCtl();
+  const near = levelAt(ctl, 120), mid = levelAt(ctl, 600), far = levelAt(ctl, 3000);
+  check('LOD：拉近变细、拉远变粗（单调）',
+    near === 0 && mid > near && far > mid && far === details.length - 1,
+    '距离 120→级别 ' + details[near] + ' / 600→' + details[mid] + ' / 3000→' + details[far]);
+
+  // 滞回：在「8 ↔ 5」的自然切换点（几何平均 6.32）附近，从细一侧来和从粗一侧来
+  // 应当**各自保持原级**。起点必须落在切换点两侧：500 → 需求 8.0（8 级），
+  // 800 → 需求 5.0（5 级）；然后都挪到 625（需求 6.37，正好在切换带里）。
+  const a = makeCtl(), b = makeCtl();
+  levelAt(a, 500); levelAt(b, 800);
+  const la = levelAt(a, 625), lb = levelAt(b, 625);
+  check('LOD 滞回：切换带内两个方向各自保持原级（不抖）',
+    details[la] === 8 && details[lb] === 5,
+    '从 500（8 级）靠近 625 → ' + details[la] + '；从 800（5 级）靠近 625 → ' + details[lb]);
+})();
 
 console.log('\n== 地表高度查询（统一平面 + 浅切槽）==');
 // 三个不变量：
@@ -370,24 +715,138 @@ console.log('\n== 地表高度查询（统一平面 + 浅切槽）==');
 //   ② 临河地块只在格边（= 河线）附近被切槽，离开河道立刻回到 0；
 //   ③ 河线处的地表一定低于水面 —— 否则整条水带会被地形盖住，河就「消失」了。
 let carveTouched = 0, carveBad = 0, carveCenterMax = 0;
+// 河沿格边走 ⇒ 河道中心线**就是格边**，格边两端就是角点。所以：
+//   · 角点本身不取：角点由三个格共享，`pixelToAxial` 在它上是平局，可能解析到对岸、
+//     甚至解析到水格上（水格的岸线角点按设计恒为 0，用来保证岸线齐平）；
+//   · 采样点从**角点朝格心**退 6%（≈1.3 单位）。退多了会走出槽（退 6% 时离格边还有
+//     1.1 单位，而槽半宽 4.4 单位，仍在槽里）；退的方向也不能反 —— 从格心往角点退 6%
+//     是退到离角点 20.7 单位的地方，早就出槽了。
 for (const t of w.tileList) {
   if (!(t.riverAdjacency > 0)) continue;
   if (t.terrain === 'water' || t.terrain === 'city') continue;
   for (let k = 0; k < 6; k++) {
     const p = Hex.cornerPoint(t, k, w.hexSize);
-    if (rivers.channelOffset(p.x, p.z) > 0) {
+    const qx = p.x + (t.x - p.x) * 0.06;
+    const qz = p.z + (t.z - p.z) * 0.06;
+    if (rivers.channelOffset(qx, qz) > 0) {
       carveTouched++;
-      if (w.heightAt(p.x, p.z) <= rivers.waterY - 0.015) carveBad++;
+      if (w.heightAt(qx, qz) <= rivers.waterY - 0.015) carveBad++;
     }
   }
   if (t.landform === 'plain') {
     carveCenterMax = Math.max(carveCenterMax, Math.abs(w.heightAt(t.x, t.z)));
   }
 }
-check('浅切槽落在格边上（临河格的边角点被切到水面之下）', carveTouched > 0 && carveBad === carveTouched,
-  carveTouched + ' 个角点在槽内，全部低于水面');
+check('浅切槽落在格边上（临河格的边角点被切到水面之下）',
+  carveTouched > 0 && carveBad === carveTouched,
+  carveTouched + ' 个角点在槽内，低于水面的 ' + carveBad + ' / ' + carveTouched);
+
+// 角点只覆盖格边两端，格边中段是另一处（更长的）受力面：它靠「中环顶点」承载。
+// 从格边中点朝格心退 10%（中环半径 0.5 ≈ 退一半），必须同样被切到水面之下。
+let edgeTouched = 0, edgeBad = 0;
+for (const t of w.tileList) {
+  if (!(t.riverAdjacency > 0)) continue;
+  if (t.terrain === 'water' || t.terrain === 'city') continue;
+  for (let d = 0; d < 6; d++) {
+    const em = Hex.edgeMid(t, d, w.hexSize);
+    if (rivers.channelOffset(em.x, em.z) <= 0) continue;
+    const qx = t.x + (em.x - t.x) * 0.9;
+    const qz = t.z + (em.z - t.z) * 0.9;
+    edgeTouched++;
+    if (w.heightAt(qx, qz) <= rivers.waterY - 0.015) edgeBad++;
+  }
+}
+check('浅切槽覆盖格边中段（不只是两端角点）',
+  edgeTouched > 0 && edgeBad === edgeTouched,
+  edgeTouched + ' 条临河边中段在槽内，低于水面的 ' + edgeBad + ' / ' + edgeTouched);
 check('浅切槽不侵入格心（河道之外地表仍是平的）', carveCenterMax < 1e-9,
   '临河平原格心最大高度 ' + carveCenterMax.toFixed(6));
+
+// ---------- 水下地表：敞水深度场 × 岸坡因子 ----------
+// 水面是一个水平面，水深全靠把水下地表切下去。三条不变量：
+//   ① 岸线（邻格非水的格边）处必须是 0 —— 水陆两侧齐平，岸线才不会裂开；
+//   ② 水/水共享边上跨格差必须是 0 —— 深度场是 (x,z) 的纯函数，
+//      不是「每格各算一份」，否则水面半透明后会出现一圈圈水深台阶；
+//   ③ 越远离岸越深，且最深 = depthDeep × hexSize。
+const bedW = w.tileList.filter(t => t.terrain === 'water');
+let bedShoreBad = 0, bedShoreWorst = 0, bedShoreNoRiver = 0, bedShoreCutMax = 0;
+for (const t of bedW) {
+  for (let d = 0; d < 6; d++) {
+    if (!(t.shoreEdges & (1 << d))) continue;
+    const em = Hex.edgeMid(t, d, w.hexSize);
+    const h = Math.abs(w.heightAt(em.x, em.z));
+    if (h <= 1e-9) continue;
+    bedShoreBad++;
+    if (h > bedShoreWorst) bedShoreWorst = h;
+    // 河口例外：河从岸线切过去时那里本来就该凹下去。判据必须是「这里**确实**有河」，
+    // 不能只看「非 0 且 ≤ 切槽深」—— 那样 shoreFade 一坏（水下地表在岸线不为 0）
+    // 会正好躲在同一个量级里，断言就失去覆盖了。
+    const cut = rivers.channelOffset(em.x, em.z);
+    if (cut > 0) bedShoreCutMax = Math.max(bedShoreCutMax, h);
+    else bedShoreNoRiver++;
+  }
+}
+check('水下地表在岸线处为 0（水陆齐平的例外只有河口切槽）',
+  bedShoreNoRiver === 0 && bedShoreCutMax <= rivers.depth + 1e-6,
+  bedShoreBad + ' 处非 0（全部在河道内）/ 最深 ' + bedShoreWorst.toFixed(3) +
+  '（切槽深 ' + rivers.depth.toFixed(2) + '）/ 河道外非 0 的有 ' + bedShoreNoRiver + ' 处');
+
+let bedSeam = 0, bedSeamPairs = 0;
+for (const t of bedW) {
+  for (let d = 0; d < 6; d++) {
+    const n = Hex.neighbor(t, d);
+    const nt = w.tileAt(n.q, n.r);
+    if (!nt || nt.terrain !== 'water') continue;
+    const em = Hex.edgeMid(t, d, w.hexSize);
+    const dv = Hex.dirVector(d);
+    // 共享边两侧各退 0.02 单位：两个采样点必然解析到**不同的格**，
+    // 于是这就是「两个格各自的场公式在同一个物理边上是否给出同一个值」的直接对照。
+    // （若两边各用各的水深，差值是 0.1 量级；连续的话只差 0.001 量级的梯度项。）
+    const ax = em.x - dv.x * 0.02, az = em.z - dv.z * 0.02;
+    const bx = em.x + dv.x * 0.02, bz = em.z + dv.z * 0.02;
+    if (w.tileAtPixel(ax, az) !== t || w.tileAtPixel(bx, bz) !== nt) continue;
+    bedSeamPairs++;
+    bedSeam = Math.max(bedSeam, Math.abs(w.heightAt(ax, az) - w.heightAt(bx, bz)));
+  }
+}
+check('水/水共享边上深度场连续（没有一格一格的水深台阶）',
+  bedSeamPairs > 100 && bedSeam < 0.02,
+  bedSeamPairs + ' 条共享边，最大跨格差 ' + bedSeam.toFixed(4));
+
+const bedDeepest = -Math.min.apply(null, bedW.map(t => w.heightAt(t.x, t.z)));
+const bedShallowest = -Math.max.apply(null, bedW.map(t => w.heightAt(t.x, t.z)));
+// 敞水深度 = hexSize × [depthShallow + (depthDeep−depthShallow) × clamp((离岸格数−1)/depthRamp)]
+// 注意本图的离岸格数最多只有 3，所以最深一格并没有吃满 depthDeep（k=0.8）——
+// 断言要按这条公式算期望，不能直接拿 depthDeep 当「最深」。
+const bedMaxDist = Math.max.apply(null, bedW.map(t => t.distToLand));
+const bedKMax = Math.max(0, Math.min(1, (bedMaxDist - 1) / C.water.depthRamp));
+const bedExpectDeep = w.hexSize * (C.water.depthShallow +
+  (C.water.depthDeep - C.water.depthShallow) * bedKMax);
+check('最浅一圈水深 = depthShallow × hexSize', Math.abs(bedShallowest - C.water.depthShallow * w.hexSize) < 0.02,
+  '最浅 ' + bedShallowest.toFixed(3) + ' / 期望 ' + (C.water.depthShallow * w.hexSize).toFixed(3));
+check('最深一格水深 = 深度公式 × hexSize（本图最远离岸 ' + bedMaxDist + ' 格）',
+  Math.abs(bedDeepest - bedExpectDeep) < 0.02,
+  '最深 ' + bedDeepest.toFixed(3) + ' / 期望 ' + bedExpectDeep.toFixed(3) +
+  '（吃满 depthDeep 需要离岸 ' + (C.water.depthRamp + 1).toFixed(1) + ' 格）');
+// 每远离岸一格都必须更深 —— 这是「越往外越深」的直接验证，比单看极值更强
+const bedByDist = {};
+for (const t of bedW) {
+  const k = t.distToLand;
+  if (!bedByDist[k]) bedByDist[k] = [];
+  bedByDist[k].push(-w.heightAt(t.x, t.z));
+}
+const bedDists = Object.keys(bedByDist).map(Number).sort((a, b) => a - b);
+let bedMono = true;
+for (let i = 1; i < bedDists.length; i++) {
+  const lo = Math.min.apply(null, bedByDist[bedDists[i - 1]]);
+  const hi = Math.max.apply(null, bedByDist[bedDists[i]]);
+  if (!(hi > lo + 0.05)) bedMono = false;
+}
+check('离岸每远一格水就更深（按 distToLand 分组单调）', bedMono && bedDists.length >= 3,
+  bedDists.map(k => k + '格:' + Math.min.apply(null, bedByDist[k]).toFixed(3)).join(' → '));
+check('所有水格地表都低于水面（不然水面会被地形盖住）',
+  bedW.every(t => w.heightAt(t.x, t.z) < 0), bedW.length + ' 个水格');
+
 
 // 横剖面三件事：河线处低于水面（水在槽里）、半宽处仍在水下（水面两侧都看得见）、
 // 槽外回到基准平面。几何只让水下陷，「两岸」由颜色表达（见 config.river.channel 注）。
