@@ -1,0 +1,345 @@
+/* ============================================================
+ * hex-map-lab / styles.css
+ * ------------------------------------------------------------
+ * 布局：左侧 3D 画布全屏铺满，右侧 HTML 面板叠加（对应方案
+ *       §2「保留 HTML/CSS，与 3D 画布叠加」）。
+ * 主题：深色，避免与地图本体抢视觉。
+ * ============================================================ */
+
+:root {
+  --bg: #f0e6d2;
+  --panel: rgba(26, 20, 14, 0.88);
+  --panel-solid: #1a140e;
+  --line: rgba(255, 240, 214, 0.14);
+  --text: #f6efe2;
+  --muted: #b9a992;
+  --accent: #e8b866;
+  --accent-2: #8fc06a;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.55 "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
+/* 3D 画布容器：铺满；cursor 由交互层动态改写 */
+#canvas-host {
+  position: absolute;
+  inset: 0;
+  cursor: default;
+  touch-action: none;
+}
+#canvas-host.is-dragging { cursor: grabbing; }
+#canvas-host canvas { display: block; width: 100%; height: 100%; }
+
+/* ---------- 右侧 HUD ---------- */
+#hud {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 352px;
+  max-width: 42vw;
+  height: 100%;
+  padding: 14px 14px 56px;
+  overflow-y: auto;
+  background: linear-gradient(180deg, rgba(10, 16, 26, 0.92), rgba(10, 16, 26, 0.78));
+  border-left: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+  scrollbar-width: thin;
+}
+#hud::-webkit-scrollbar { width: 8px; }
+#hud::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 4px; }
+
+.hud-header { margin-bottom: 12px; }
+.hud-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+.hud-sub {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* ---------- 卡片 ---------- */
+.card {
+  margin-bottom: 10px;
+  padding: 10px 11px 11px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.card h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.3px;
+}
+
+/* ---------- 键值表 ---------- */
+.kv > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2.5px 0;
+  border-bottom: 1px dashed rgba(255,255,255,0.06);
+}
+.kv > div:last-child { border-bottom: none; }
+.kv span { color: var(--muted); flex: 0 0 auto; }
+.kv b {
+  font-weight: 600;
+  text-align: right;
+  word-break: break-all;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.muted { color: var(--muted); }
+
+/* ---------- 按钮与开关 ---------- */
+.btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
+.btn {
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn:hover { background: rgba(108,198,255,0.16); border-color: rgba(108,198,255,0.4); }
+.btn.is-active {
+  background: rgba(108,198,255,0.22);
+  border-color: rgba(108,198,255,0.65);
+  color: #eaf6ff;
+}
+
+.toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+.toggle input { accent-color: var(--accent); }
+
+/* ---------- 色块 ---------- */
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid rgba(0,0,0,0.35);
+  vertical-align: -1px;
+  flex: 0 0 auto;
+}
+
+/* ---------- 玩家 ---------- */
+.players .player { margin-bottom: 8px; }
+.players .player:last-child { margin-bottom: 0; }
+.player-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.player-top .muted { margin-left: auto; font-size: 11.5px; }
+.player-bottom {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: #cfe0f5;
+}
+.bar {
+  height: 5px;
+  margin-top: 4px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.bar > i { display: block; height: 100%; transition: width 0.18s linear; }
+
+.note {
+  margin-top: 9px;
+  padding: 7px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+  background: rgba(108,198,255,0.07);
+  border-left: 2px solid rgba(108,198,255,0.5);
+  border-radius: 0 6px 6px 0;
+}
+
+/* ---------- 日志 ---------- */
+.log {
+  max-height: 148px;
+  overflow-y: auto;
+  font-size: 11.5px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  scrollbar-width: thin;
+}
+.log-line {
+  padding: 2px 0;
+  color: #c6d4e6;
+  border-bottom: 1px dashed rgba(255,255,255,0.05);
+}
+.log-line.start { color: #9fd8ff; }
+.log-line.arrive { color: #b7e5a8; }
+.log-line.sys { color: var(--muted); }
+
+/* ---------- 图例 ---------- */
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.legend-group {
+  flex: 0 0 100%;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+}
+.legend-item .muted { font-size: 10.5px; }
+
+/* ---------- 地图状态（生成比例 / 道路分级 / 生态） ---------- */
+.state-block { margin-bottom: 8px; }
+.state-block:last-child { margin-bottom: 0; }
+.state-title {
+  margin-bottom: 3px;
+  font-size: 11px;
+  color: var(--accent);
+  letter-spacing: 0.3px;
+}
+.ratio-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 1.5px 0;
+  font-size: 11.5px;
+  border-bottom: 1px dashed rgba(255, 240, 214, 0.07);
+}
+.ratio-row:last-child { border-bottom: none; }
+.ratio-row > span:first-child { display: inline-flex; align-items: center; gap: 5px; }
+.ratio-row .muted { font-variant-numeric: tabular-nums; }
+
+/* 城市详情里的道路列表 */
+.mini {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1.5px 0 1.5px 6px;
+  font-size: 11.5px;
+  color: #e7dcc8;
+  border-left: 2px solid rgba(232, 184, 102, 0.5);
+  margin-top: 2px;
+}
+
+/* ---------- 道路一览（五档对比） ---------- */
+.road-list { display: flex; flex-direction: column; gap: 7px; }
+.road-item {
+  display: grid;
+  grid-template-columns: 132px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed rgba(255, 240, 214, 0.09);
+}
+.road-item:last-child { border-bottom: none; padding-bottom: 0; }
+/* 预览画布：像素尺寸由 render/road-style.js 按同一份配方绘制 */
+.road-preview {
+  display: block;
+  border-radius: 5px;
+  border: 1px solid rgba(0, 0, 0, 0.45);
+  image-rendering: auto;
+}
+.road-meta { min-width: 0; }
+.road-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.road-name .muted { font-weight: 400; font-size: 10.5px; }
+.road-desc {
+  font-size: 10.5px;
+  line-height: 1.35;
+  word-break: break-all;
+}
+.road-count { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---------- 操作说明 ---------- */
+.help ul { margin: 0; padding-left: 16px; color: var(--muted); font-size: 11.5px; }
+.help li { margin: 2px 0; }
+
+/* ---------- 页脚状态 ---------- */
+.hud-footer {
+  position: fixed;
+  right: 14px;
+  bottom: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 9px;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(10,16,26,0.85);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+}
+
+/* ---------- 水印 ---------- */
+.watermark {
+  position: absolute;
+  left: 12px;
+  bottom: 10px;
+  font-size: 11px;
+  color: rgba(74, 56, 36, 0.72);
+  text-shadow: 0 1px 0 rgba(255, 250, 236, 0.5);
+  pointer-events: none;
+}
+
+/* ---------- 启动失败兜底 ---------- */
+.boot-error {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  max-width: 560px;
+  padding: 18px 20px;
+  background: #2a1420;
+  border: 1px solid #7a2b45;
+  border-radius: 10px;
+  color: #ffd9e3;
+  line-height: 1.7;
+}
+.boot-error .muted { color: #f0bccb; }
+
+@media (max-width: 900px) {
+  #hud { width: 100%; max-width: 100%; height: 46%; top: auto; bottom: 0; border-left: none; border-top: 1px solid var(--line); }
+}

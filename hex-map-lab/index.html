@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>六边形 2.5D 跑商地图 · 实验页（手绘沙盘风）</title>
+<!-- 空 data URI 图标：避免浏览器请求 favicon 产生 404 -->
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!--
+    ============================================================
+    六边形 2.5D 多人跑商地图 —— 独立实验页
+    ------------------------------------------------------------
+    · 本页完全独立：不读写、不修改原项目任何文件；
+    · 无构建、无 ES Module、无外部网络资源（Three.js 已本地 vendor）；
+    · 双击本文件（file://）即可运行。
+    入口只做三件事：装 DOM 骨架、按依赖顺序加载模块、启动 app/main.js。
+    ============================================================
+  -->
+  <div id="app">
+    <!-- 3D 画布容器（同时是交互层的事件目标） -->
+    <div id="canvas-host"></div>
+
+    <!-- HTML 叠加面板：信息 / 开关 / 图例 -->
+    <aside id="hud"></aside>
+
+    <!-- 启动失败时的兜底提示 -->
+    <div id="boot-error" class="boot-error"></div>
+
+    <!-- 左下角水印，明确「实验、独立」属性 -->
+    <div class="watermark">
+      实验页 · 独立于原项目 · 数据快照自 map/world-map.json
+    </div>
+  </div>
+
+  <!-- ---------- 第三方：本地 vendor 的 Three.js（r147 UMD，经典脚本） ---------- -->
+  <script src="vendor/three.min.js"></script>
+
+  <!-- ---------- core：无依赖基础能力 ---------- -->
+  <script src="src/core/event-bus.js"></script>
+  <script src="src/core/rng.js"></script>
+  <script src="src/core/hex.js"></script>
+  <script src="src/core/proximity.js"></script>
+
+  <!-- ---------- config：唯一参数源（地形比例 / 高度 / 配色 / 生态 / 道路 / 河流 / 氛围 / 光照） ---------- -->
+  <script src="src/config/world-config.js"></script>
+
+  <!-- ---------- data：项目地图快照（只读） ---------- -->
+  <script src="src/data/world-snapshot.js"></script>
+
+  <!-- ---------- world：六边形世界 / 河流 / 道路 / 城市图 / 动态状态 ---------- -->
+  <script src="src/world/hex-world.js"></script>
+  <script src="src/world/terrain-rules.js"></script>
+  <script src="src/world/mountain-cluster.js"></script>
+  <script src="src/world/river-builder.js"></script>
+  <script src="src/world/road-builder.js"></script>
+  <script src="src/world/city-graph.js"></script>
+  <script src="src/world/tile-state.js"></script>
+
+  <!-- ---------- render：纹理与各表现层 ---------- -->
+  <script src="src/render/textures.js"></script>
+  <script src="src/render/ribbon.js"></script>
+  <script src="src/render/road-style.js"></script>
+  <script src="src/render/environment-state.js"></script>
+  <script src="src/render/environment-palette.js"></script>
+  <script src="src/render/scene.js"></script>
+  <script src="src/render/terrain-layer.js"></script>
+  <script src="src/render/mountain-layer.js"></script>
+  <script src="src/render/river-layer.js"></script>
+  <script src="src/render/ink-layer.js"></script>
+  <script src="src/render/grid-layer.js"></script>
+  <script src="src/render/road-layer.js"></script>
+  <script src="src/render/props-layer.js"></script>
+  <script src="src/render/village-layer.js"></script>
+  <script src="src/render/city-layer.js"></script>
+  <script src="src/render/player-layer.js"></script>
+  <script src="src/render/ambience-layer.js"></script>
+
+  <!-- ---------- interaction：相机与拾取（只发意图） ---------- -->
+  <script src="src/interaction/camera-control.js"></script>
+  <script src="src/interaction/picker.js"></script>
+
+  <!-- ---------- simulation：权威状态（旅行模拟） ---------- -->
+  <script src="src/simulation/travel-sim.js"></script>
+
+  <!-- ---------- app：HUD 与装配入口（最后加载） ---------- -->
+  <script src="src/app/hud.js"></script>
+  <script src="src/app/main.js"></script>
+</body>
+</html>
