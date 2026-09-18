@@ -296,21 +296,45 @@ html, body {
 .help ul { margin: 0; padding-left: 16px; color: var(--muted); font-size: 11.5px; }
 .help li { margin: 2px 0; }
 
-/* ---------- 页脚状态 ---------- */
+/* ---------- 浮动读数层（FPS + 网格统计）----------
+ * ⚠ 它**不能**放在 `#hud` 里面：`#hud` 上的 `backdrop-filter` 会为
+ *   `position: fixed` 的后代建立包含块 —— 浮条会变成「相对面板定位」，
+ *   left/top 全部失效（实测被 max-width 挤成一条 20px 宽的竖条）。
+ *   所以它有自己的宿主层（#hud-overlay，铺满但 pointer-events:none），
+ *   位置固定在**左上角**：右下角那一带与画布操作区、HUD 面板都挤在一起。 */
+#hud-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
 .hud-footer {
-  position: fixed;
-  right: 14px;
-  bottom: 10px;
+  position: absolute;
+  left: 14px;
+  top: 10px;
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+  max-width: calc(100% - 380px);
   padding: 4px 9px;
   font-size: 11px;
   color: var(--muted);
   background: rgba(10,16,26,0.85);
   border: 1px solid var(--line);
   border-radius: 20px;
+  pointer-events: auto;
 }
+
+/* ---------- 卡片内的小字说明 ---------- */
+.card .hint {
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:disabled:hover { background: rgba(255,255,255,0.06); border-color: var(--line); }
 
 /* ---------- 水印 ---------- */
 .watermark {

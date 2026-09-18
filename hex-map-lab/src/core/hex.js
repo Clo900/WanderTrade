@@ -96,6 +96,21 @@
     return { x: (p.x + q.x) * 0.5, z: (p.z + q.z) * 0.5 };
   }
 
+  /**
+   * 点 (px, pz) 到**线段** (ax, az) → (bx, bz) 的距离。
+   * ------------------------------------------------------------
+   * 只认线段、不认直线：这是「判据必须覆盖整段」的通用工具 ——
+   *   · 道路采样步长与水面片直径同量级 ⇒ 「路上有没有压到水面」必须按段判（road-builder）；
+   *   · 水下深度场要算「到最近陆地格**六边形边**的距离」⇒ 同样是点到线段（hex-world）。
+   * 两处都曾经各写一份，现在共用这一份。
+   */
+  function distToSegment(px, pz, ax, az, bx, bz) {
+    const vx = bx - ax, vz = bz - az;
+    const len2 = vx * vx + vz * vz || 1;
+    const u = Math.max(0, Math.min(1, ((px - ax) * vx + (pz - az) * vz) / len2));
+    return Math.hypot(ax + vx * u - px, az + vz * u - pz);
+  }
+
   /** 无向边的稳定键（两端格子的键排序后拼接），用于「河在哪些边上」这类查询 */
   function edgeKey(a, b) {
     const ka = key(a.q, a.r);
@@ -224,6 +239,7 @@
     edgeCorners,
     dirVector,
     edgeMid,
+    distToSegment,
     edgeKey,
     cornerKey,
     axialToPixel,

@@ -33,9 +33,6 @@
     water: 'water'
   };
 
-  /** 陆地外缘的沙滩亮色混入量 */
-  const SHORE_LIGHTEN = 0.16;
-
   /** 河滩色（砾石/湿泥）的最大混入量：够看出河床，又不至于把地貌本色抹掉 */
   const RIVER_TINT = 0.55;
   /** 山麓碎屑 / 裸地的最大混入量：让山脚不是一块整齐抹开的绿面 */
@@ -54,9 +51,9 @@
   /**
    * 取某个顶点处的「参与混色的地块 + 权重」（地块与权重交替存放）。
    *
-   * 硬约束（不可违背）：同一个物理顶点在相邻地块上算出的颜色必须完全相同，
-   * 否则平地会沿六边形边界露出色阶，地图又变回「一格一格」。这要求集合与权重
-   * **与「谁在问」无关**，于是：
+   * 硬约束（不可违背）：同一个物理顶点在**同一个网格内**的相邻地块上算出的颜色
+   * 必须完全相同，否则平地会沿六边形边界露出色阶，地图又变回「一格一格」。
+   * 这要求集合与权重**与「谁在问」无关**，于是：
    *
    *   · 角点顶点（被 3 格共享）→ 只能是「压在这个角上的这 3 格」，且必须**等权**。
    *     任何非等权（例如自身 1.0 / 邻居 0.85）都会让相邻地块各算一份不同的权重；
@@ -66,30 +63,40 @@
    *     6 邻的平均色渗透（config.palette.blendWeights.center），
    *     色块之间的过渡因此从「只有一圈角点渐变」变成「格心就开始互相渗透」，
    *     这就是「不同地形互相交融」的落点。
+   *
+   * ⚠ **族隔离（v2.5）**：水与陆地**互不参与**对方的基色。在这之前，角点处
+   *   水的 1/3 权重会把相邻陆地的基本色染成蓝色（格心按 `cb/6` 也会掺一点），
+   *   而水格自己又被陆地色污染 —— 而「一片纯水该是什么颜色」本该由**画面深度**
+   *   单独决定。族由「参照地块」决定（`tile.terrain === 'water'`），过滤判据是
+   *   **成员自己的属性**、与「谁在问」无关，所以同族地块算出来仍然完全一致：
+   *   角点 = 同族的等权平均、格心 = 自己 + 同族邻居均分。
+   *   陆地网格与水网格是两套几何、本来就不共享顶点，岸线因此是一条真实的分界。
    */
   function colorGroupAtVertex(world, tile, corner, blendOverride) {
     const bw = Config.value.palette.blendWeights || {};
+    const isWater = tile.terrain === 'water';
+    const sameFamily = function (t) { return (t.terrain === 'water') === isWater; };
 
     if (corner >= 0) {
-      // 角点：自身 + 压在同角的另外两格，等权
+      // 角点：自身 + 压在同角的另外两格中**同族**的那几个，等权
       const out = [tile, 1];
       const dirs = Hex.CORNER_DIRS[corner];
       for (let i = 0; i < 2; i++) {
         const n = Hex.neighbor(tile, dirs[i]);
         const nb = world.tileAt(n.q, n.r);
-        if (nb) out.push(nb, 1);
+        if (nb && sameFamily(nb)) out.push(nb, 1);
       }
       return out;
     }
 
-    // 格心 / 中环：本色占 1-cb，6 邻合计占 cb（按实际存在的邻居数均分）
+    // 格心 / 中环：本色占 1-cb，同族 6 邻合计占 cb（按实际存在的同族邻居数均分）
     const raw = blendOverride == null ? (bw.center == null ? 0.32 : bw.center) : blendOverride;
     const cb = Math.max(0, Math.min(0.9, raw));
     const neighbors = [];
     for (let d = 0; d < 6; d++) {
       const n = Hex.neighbor(tile, d);
       const nb = world.tileAt(n.q, n.r);
-      if (nb) neighbors.push(nb);
+      if (nb && sameFamily(nb)) neighbors.push(nb);
     }
     if (cb <= 0 || !neighbors.length) return [tile, 1];
     const out = [tile, 1 - cb];
@@ -119,7 +126,7 @@
     const riverField = world.rivers;
     const terrainRules = world.terrainRules;
 
-    let br = 0, bg = 0, bb = 0, ar = 0, ag = 0, ab = 0, shore = 0, waterW = 0, wSum = 0;
+    let br = 0, bg = 0, bb = 0, ar = 0, ag = 0, ab = 0, waterW = 0, wSum = 0;
     let transition = 0, foothill = 0;
     for (let i = 0; i < group.length; i += 2) {
       const t = group[i];
@@ -129,7 +136,6 @@
       const a = colorOf(style.alt);
       br += c.r * w; bg += c.g * w; bb += c.b * w;
       ar += a.r * w; ag += a.g * w; ab += a.b * w;
-      shore += (t.shore || 0) * w;
       if (t.terrain === 'water') waterW += w;
       if (terrainRules && terrainRules.byTile[t.key]) {
         transition += terrainRules.byTile[t.key].transitionStrength * w;
@@ -141,23 +147,35 @@
     out.setRGB(br * inv, bg * inv, bb * inv);
     tmpAlt.setRGB(ar * inv, ag * inv, ab * inv);
 
-    // 大尺度色斑：在基色与 alt 色之间游走
-    const patch = Rng.fbm2(px / scale, pz / scale, { seed: seed + 5501, octaves: 3, gain: 0.5 });
-    out.lerp(tmpAlt, Math.max(0, Math.min(1, (patch - 0.42) * 1.6)));
+    // 族隔离（v2.5）之后，「水族顶点」= `waterW > 0`：水族集合里只会有水格。
+    const isWaterVertex = waterW > 0;
 
-    // 手绘颗粒：必须用「平滑噪声」而不是逐顶点哈希。
-    // 逐顶点哈希会让每个顶点的明度独立抖动，三角形一多就在六边形尺度上
-    // 形成刻面噪点，远看又是一片格子；按约 3.5 世界单位的尺度取平滑噪声则
-    // 会连成笔触般的大块纹理。
-    const grain = Rng.valueNoise2(px / (world.hexSize * 0.16), pz / (world.hexSize * 0.16), seed + 733);
-    out.multiplyScalar(0.94 + grain * 0.12);
+    // 大尺度色斑 / 手绘颗粒：**只给陆地**。
+    // 纯水必须「只用基色」：水有多深由几何唯一给出（hex-world 的连续离岸距离场），
+    // 再由画面深度过渡（render/water-depth.js）读出来。顶点色再叠一层斑驳会变成
+    // **水面上深浅不匀的斑块** —— 实测旧版水格格心色亮度极差 30.4%、相邻水格最大差 25%，
+    // 全部来自下面这条 patch 项。
+    // ⚠ 这里**不再有**「沿岸度 → water.foam」那一条（v2.6 删，见 §15.24）：它是「地块自身
+    //   被岸线染色」的残留路径，与 v2.5 的族隔离冲着同一个目标（基本色只由地块自己决定），
+    //   但它按**每格**的水邻居数取权，等于给临水的地块单独上了一层浅蓝色 —— 用户看到的
+    //   「贴着纯水的地块基本色变蓝」里就有它的一份。岸线现在只由水侧的水下地表与泡沫线表达。
+    if (!isWaterVertex) {
+      // 大尺度色斑：在基色与 alt 色之间游走
+      const patch = Rng.fbm2(px / scale, pz / scale, { seed: seed + 5501, octaves: 3, gain: 0.5 });
+      out.lerp(tmpAlt, Math.max(0, Math.min(1, (patch - 0.42) * 1.6)));
 
-    // 高程明暗：高处略亮、洼地略暗，模拟环境光的柔和起伏
+      // 手绘颗粒：必须用「平滑噪声」而不是逐顶点哈希。
+      // 逐顶点哈希会让每个顶点的明度独立抖动，三角形一多就在六边形尺度上
+      // 形成刻面噪点，远看又是一片格子；按约 3.5 世界单位的尺度取平滑噪声则
+      // 会连成笔触般的大块纹理。
+      const grain = Rng.valueNoise2(px / (world.hexSize * 0.16), pz / (world.hexSize * 0.16), seed + 733);
+      out.multiplyScalar(0.94 + grain * 0.12);
+    }
+
+    // 高程明暗：高处略亮、洼地略暗，模拟环境光的柔和起伏。
+    // 水族的 py ≤ 0（水面恒为 0、水下地表更低）⇒ 对水族是个常数，不会引入逐格差异。
     const norm = world.maxRise > 0 ? Math.max(0, Math.min(1, py / world.maxRise)) : 0;
     out.multiplyScalar(0.93 + norm * 0.14);
-
-    // 岸线：陆地一侧的沙滩提亮（用加权后的沿岸度）
-    if (shore > 0) out.lerp(colorOf(P.water.foam), SHORE_LIGHTEN * shore * inv);
 
     // 河滩：河线附近的地表向砾石/湿泥色靠拢。
     // 只靠一条蓝色水带读不出「这是一条河」——水面必须配上湿岸；
@@ -170,11 +188,31 @@
       if (infl > 0) out.lerp(colorOf(P.river.bedTint), (RIVER_TINT * 0.78) * infl);
       if (wet > 0) out.lerp(colorOf(P.water.foam), 0.08 * wet);
       if (flood > 0) out.multiplyScalar(0.985 - flood * 0.03);
+      // 河源水体（泉眼 / 小湖）的湿岸：**只画在水面边缘那一圈**。
+      // 碗半径比水面片大（见 config.river.sourceSpring：碗是地形尺度、水面是美术
+      // 尺度），所以不能整碗都染湿 —— 那会把周围好几格的地都涂成泥。判据取
+      // 「离**水面片边缘**多远」（`d - water.radius`），水面边缘最湿、往外
+      // `wetBand × 碗半径` 渐干，碗内（水面之下，看不见）保持最湿。
+      if (typeof riverField.springAt === 'function') {
+        const sp = riverField.springAt(px, pz);
+        if (sp) {
+          const s = sp.spring;
+          const band = Math.max(1e-3, (Config.value.river.sourceSpring.wetBand == null
+            ? 0.30 : Config.value.river.sourceSpring.wetBand) * s.radius);
+          const wet = Math.max(0, Math.min(1, 1 - (sp.d - s.waterRadius) / band));
+          if (wet > 0) {
+            out.lerp(colorOf(P.river.bedTint), RIVER_TINT * (0.30 + 0.60 * wet) * wet);
+            out.lerp(colorOf(P.water.foam), 0.12 * wet * wet);
+          }
+        }
+      }
     }
 
     // 山麓与交界过渡：不再完全依赖 props 道具补画面，地表自身就带一点坡脚碎屑与色相变化。
-    if (foothill > 0 && waterW <= 0) out.lerp(colorOf(P.rock.mid), FOOTHILL_TINT * foothill * inv);
-    if (transition > 0 && waterW <= 0) out.lerp(tmpAlt, 0.16 * transition * inv);
+    // ⚠ 只给陆地：水面不吃山麓碎屑与交界过渡，保持纯水色（`isWaterVertex` 由族里
+    //   是否含水格决定，与「谁在问」无关）。
+    if (foothill > 0 && !isWaterVertex) out.lerp(colorOf(P.rock.mid), FOOTHILL_TINT * foothill * inv);
+    if (transition > 0 && !isWaterVertex) out.lerp(tmpAlt, 0.16 * transition * inv);
 
     // 浅水带不再由顶点色表达（v1.9）。旧版在这里按 `distToLand / 3.2` 把水面朝
     // `water.shallow / water.foam` 提亮，看上去是在做「近岸浅、远处深」，
@@ -310,6 +348,12 @@
       // 不与任何邻居共享，因此可以自由加微起伏（格内不再是一块平板），
       // 也不会碰到「同一物理顶点颜色/法线一致」这条硬约束。
       // 有了这一圈，坡面从「格心→角点」一段折线变成两段，山体才有腰。
+      // ⚠ **只有陆地才加这层微起伏**（v2.5）：`innerRelief × maxRise` 实测 1.25 单位，
+      //   而水深只有 0.35 ~ 1.48 —— 给水下地表加振幅比水深还大的起伏，会有 272/948 个
+      //   中环顶点被抬到**水面之上**（最高 +0.997）：海底在整片水面上穿出一圈圈
+      //   硬边的格子斑块，深度过渡也读到一堆逐格噪声（这就是「水面上奇怪的色块」）。
+      //   海底的形状交给连续离岸距离场，它本来就该是平滑的。
+      const isWaterTile = groupName === 'water';
       const midStart = positions.length / 3;
       for (let k = 0; k < 6; k++) {
         const ang = Hex.cornerAngle(k);
@@ -317,7 +361,7 @@
         const mz = tile.z + Math.sin(ang) * size * innerR;
         let my = world.heightAt(mx, mz);
         if (flat != null) my = flat;
-        else if (innerRelief > 0) {
+        else if (innerRelief > 0 && !isWaterTile) {
           const n = Rng.valueNoise2(mx / (size * 1.2), mz / (size * 1.2), world.seed + 6613);
           my += innerRelief * world.maxRise * (n - 0.5) * 2;
         }
@@ -458,25 +502,7 @@
     const group = new THREE.Group();
     group.name = 'terrain';
 
-    // ---------- 1) 岸线标记（供顶点色使用，一处计算多处复用）----------
-    for (let i = 0; i < world.tileList.length; i++) {
-      const t = world.tileList[i];
-      let landNeighbors = 0;
-      let waterNeighbors = 0;
-      for (let d = 0; d < 6; d++) {
-        const n = Hex.neighbor(t, d);
-        const nt = world.tileAt(n.q, n.r);
-        if (!nt) continue;
-        if (nt.terrain === 'water') waterNeighbors++; else landNeighbors++;
-      }
-      if (t.terrain === 'water') {
-        t.shore = Math.min(1, landNeighbors / 6);
-      } else {
-        t.shore = Math.min(1, waterNeighbors / 6);
-      }
-    }
-
-    // ---------- 2) 沙盘底座 ----------
+    // ---------- 1) 沙盘底座 ----------
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let i = 0; i < world.tileList.length; i++) {
       const t = world.tileList[i];
@@ -510,7 +536,7 @@
     boardInk.name = 'sandbox-board-ink';
     group.add(boardInk);
 
-    // ---------- 3) 各类地表 ----------
+    // ---------- 2) 各类地表 ----------
     const mottle = Textures.grasslandTexture(world.seed);
     const forestFloor = Textures.forestFloorTexture(world.seed + 173);
     const stripes = Textures.fieldStripesTexture(world.seed);
@@ -545,13 +571,15 @@
       vertexColors: true, map: cliff, roughness: 1, metalness: 0
     }));
     // ---------- 水面 / 水下地表（两件事必须拆开）----------
-    //   · **水下地表（bed）** = 水格的地表。`world.heightAt` 用「敞水深度场 ×
-    //     岸坡因子」把它切下去（见 hex-world 的 openWaterDepth / shoreFade）：
+    //   · **水下地表（bed）** = 水格的地表。`world.heightAt` 用「连续离岸距离场 ×
+    //     岸坡因子」把它切下去（见 hex-world 的 waterBedDepth / shoreFade）：
     //     深度是 (x,z) 的纯函数且跨格连续，水深就是它相对水面的落差。
-    //   · **水面** = 一个**水平面**，高度只由 `config.water.level` 决定。
+    //   · **水面** = 一个**水平面**，高度只由全图统一水位决定。
     // 旧版把两者合在同一个网格里（水格的「地表」就是水面），于是「水深」这个概念
     // 在数据上根本不存在，深度过渡也就无从谈起。
-    const waterLevelY = size * ((C.water && C.water.level) || 0);
+    // ⚠ 水位只有**一个来源**：river-builder 的 `waterLevel()`（= size × config.water.level），
+    //   河 / 湖 / 海 / 泉 / 山体的「水面之上/之下」判据全部读它，不各自重抄一遍公式。
+    const waterLevelY = HL.Rivers.waterLevel(size);
     const bedMesh = new THREE.Mesh(buildGroupGeometry(world, 'water'), new THREE.MeshStandardMaterial({
       vertexColors: true, map: crackle, roughness: 0.55, metalness: 0.01
     }));
@@ -578,7 +606,7 @@
     skirtMesh.receiveShadow = true;
     group.add(skirtMesh);
 
-    // ---------- 4) 选中高亮 ----------
+    // ---------- 3) 选中高亮 ----------
     const outline = new THREE.Line(
       buildOutlineGeometry(size * 1.005),
       new THREE.LineBasicMaterial({ color: 0xfff0c0, transparent: true, opacity: 0.95 })
@@ -653,6 +681,11 @@
     build: build,
     classNameOf: classNameOf,
     outlineClassOf: outlineClassOf,
-    CLASS_OF: CLASS_OF
+    CLASS_OF: CLASS_OF,
+    // 两个纯函数（不碰纹理 / DOM）单独导出，供逻辑断言读：
+    // 「陆地基本色不被水色污染」「同一角点在三格上算出同一个颜色」这两条红线
+    // 因此可以在没有浏览器的前提下逐点对拍。
+    colorGroupAtVertex: colorGroupAtVertex,
+    vertexColor: vertexColor
   };
 })(window.HexLab = window.HexLab || {});

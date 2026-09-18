@@ -110,6 +110,7 @@
       { name: 'showInk', label: '墨线描边', on: true },
       { name: 'showMountains', label: '山体（峰+雪）', on: true },
       { name: 'showRivers', label: '河流（沿格边）', on: true },
+      { name: 'showSprings', label: '泉眼 / 小湖', on: true },
       { name: 'showRoads', label: '道路（五档）', on: true },
       { name: 'showRoadLabels', label: '里程标签', on: false },
       { name: 'showProps', label: '植被道具', on: true },
@@ -139,6 +140,25 @@
     }
     viewCard.appendChild(layerBox);
     root.appendChild(viewCard);
+
+    // ---------- 山脉重掷（策划用：换一片山看效果）----------
+    const reliefCard = el('section', 'card');
+    reliefCard.appendChild(el('h4', null, '山脉重掷'));
+    const reliefStatus = el('div', 'note', '山脉种子：--');
+    reliefCard.appendChild(reliefStatus);
+    const reliefRow = el('div', 'btn-row');
+    const btnReroll = el('button', 'btn', '重掷山脉');
+    btnReroll.type = 'button';
+    btnReroll.addEventListener('click', function () { Bus.emit('ui:action', { name: 'rerollMountains' }); });
+    const btnReliefReset = el('button', 'btn', '还原默认');
+    btnReliefReset.type = 'button';
+    btnReliefReset.addEventListener('click', function () { Bus.emit('ui:action', { name: 'resetMountains' }); });
+    reliefRow.appendChild(btnReroll);
+    reliefRow.appendChild(btnReliefReset);
+    reliefCard.appendChild(reliefRow);
+    reliefCard.appendChild(el('div', 'hint',
+      '只换山脉通道种子：水 / 草 / 田 / 林 / 花的占比不变，山格分布与山体形态改变（河流与道路随之重算）。'));
+    root.appendChild(reliefCard);
 
     // ---------- 环境 ----------
     const envCard = el('section', 'card');
@@ -309,13 +329,16 @@
       '</ul>';
     root.appendChild(helpCard);
 
-    // ---------- 页脚 ----------
+    // ---------- 页脚（FPS + 网格统计）----------
+    // ⚠ 挂到**独立的浮动层**（opts.overlay）而不是 HUD 面板里：
+    //   HUD 面板有 backdrop-filter，会给 fixed 后代建立包含块，浮条会被定位到
+    //   面板内部（实测 left/top 失效、宽度被挤成一条）。没有宿主时退回面板内。
     const footer = el('div', 'hud-footer');
     const fpsEl = el('span', 'fps', '-- FPS');
     const countEl = el('span', 'count', '');
     footer.appendChild(fpsEl);
     footer.appendChild(countEl);
-    root.appendChild(footer);
+    (opts.overlay || root).appendChild(footer);
 
     function redrawRoadPreviews(state) {
       if (!world || !HL.RoadStyle) return;
@@ -382,6 +405,20 @@
       setCount: function (text) { countEl.textContent = text; },
       setEnvironment: function (state) { syncEnvironmentControls(state); },
 
+      /**
+       * 山脉重掷面板。种子号必须显示出来：它是确定性序列（不是 Math.random），
+       * 策划看到喜欢的分布时，把这个号记下来就能复现同一个世界。
+       */
+      setRelief: function (info) {
+        if (!info) return;
+        const parts = [];
+        parts.push('山脉种子：' + info.seed + (info.isDefault ? '（默认）' : ''));
+        parts.push('山格 ' + info.ridgeTiles + ' 格 / 山簇 ' + info.clusters + ' 组');
+        if (info.roll) parts.push('第 ' + info.roll + ' 次重掷');
+        reliefStatus.textContent = parts.join(' · ');
+        btnReliefReset.disabled = !!info.isDefault;
+      },
+
       setTile: function (tile, world, state) {
         if (!tile) {
           selBody.innerHTML = '<div class="muted">点击地块或城市查看详情</div>';
@@ -419,7 +456,6 @@
         if (tile.terrain === 'ridge') {
           html += '<div><span>山脊位置</span><b>' + ((tile.reliefFrac || 0) * 100).toFixed(0) + '%（100 = 峰顶）</b></div>';
         }
-        html += '<div><span>沿岸度</span><b>' + (tile.shore * 100).toFixed(0) + '%</b></div>';
         selBody.innerHTML = html;
       },
 

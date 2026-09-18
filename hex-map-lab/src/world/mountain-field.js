@@ -37,6 +37,20 @@
   function smoothstep01(t) { return t <= 0 ? 0 : (t >= 1 ? 1 : t * t * (3 - 2 * t)); }
 
   /**
+   * 文本 → 32 位**数字**哈希（FNV-1a，与 `MountainSystem.hashText` 同算法）。
+   * ⚠ 必须返回数字：`Rng.hashInt` 内部是 `x | 0`，直接传字符串会压成 0，
+   *   于是所有簇共用同一个哈希（`rate` 判定退化成「全有或全无」）。
+   */
+  function hashText(text) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return h >>> 0;
+  }
+
+  /**
    * 场需要的配置键。**只列名字、不列默认值** —— 值只在 world-config 里存一份
    * （旧版把整份参数在代码里又抄了一遍，改一处漏一处）。logic-test 会断言
    * 这些键都存在，缺键立刻失败而不是静默变成 NaN。
@@ -125,12 +139,16 @@
 
     const hit = cache.get(world);
     if (hit && hit.settings === M && hit.hexSize === size && hit.seed === seed &&
-        hit.tileCount === world.tileList.length) {
+        hit.reliefSeed === world.reliefSeed &&
+        hit.tileCount === world.tileList.length &&
+        hit.overrideRevision === ((world.terrainOverrides && world.terrainOverrides.revision) || 'none') &&
+        hit.riverRevision === ((world.rivers && world.rivers.revision) || 'none')) {
       return hit.value;
     }
 
     const clusterState = world.mountainClusters ||
       (HL.MountainCluster ? HL.MountainCluster.analyze(world) : null);
+    const mountainSystem = world.mountainSystem || null;
     const metaList = (clusterState && clusterState.clusters) || [];
 
     const inner = size * M.taperInner;
@@ -205,7 +223,9 @@
       }
 
       const lone = meta.size === 1;
+      const plan = mountainSystem && mountainSystem.plan ? mountainSystem.plan(meta) : null;
       const loneFactor = lone ? M.loneScale : 1;
+      const planScale = plan ? Math.max(0, plan.heightScale || 1) * Math.max(0, plan.styleScale || 1) : 1;
 
       // 脊带半宽：下界 = `beltHalfWidth`，但**簇一宽就跟着宽** ——
       // 否则 20 格的大块会读成「一条薄脊 + 一大片岩台」，而不是「一大片山脉」。
@@ -214,15 +234,29 @@
 
       // 山谷：是否出现由「簇号 + 种子」的哈希决定 ——
       // 确定性、与遍历顺序无关、同一颗种子必然复现同一批带谷的簇。
-      const valOn = valleyOn && valleyRate > 0 &&
-        Rng.hash2(ci, 71, seed + SALT.valley) < valleyRate;
-      const valSide = Rng.hash2(ci, 73, seed + SALT.valley) < 0.5 ? -1 : 1;
-      const valAz = Rng.hash2(ci, 79, seed + SALT.valley) * Math.PI * 2;
+      //
+      // ⚠ 判定必须是**三态**：`'on'` / `'off'` 是策划的显式决定，`'auto'` 与缺省
+      //   都是「没指定」，必须交回下面的 `rate` 哈希判定。曾经把
+      //   `plan.valley === 'off' ? false : (plan.valley === 'on')` 的结果直接当三态用，
+      //   于是 `'auto'` 也算出 `false` —— 与「显式关闭」不可区分，`rate` 分支永远走不到，
+      //   结果默认世界里 17 簇一个谷都没有。
+      //
+      // ⚠ `stableHash` 必须是**数字**：`Rng.hashInt` 内部是 `x | 0`，把 cluster id 这样的
+      //   字符串压成 0，所有簇就共用同一个哈希 —— `rate 0.55` 会退化成「全有或全无」。
+      const stableHash = plan && plan.seed != null ? plan.seed
+        : (meta.seed != null ? meta.seed : hashText(String(meta.id != null ? meta.id : ci)));
+      const valExplicit = plan && (plan.valley === 'on' || plan.valley === 'off') ? plan.valley : null;
+      const valOn = valExplicit === 'off' ? false
+        : (valExplicit === 'on' ? true
+          : (valleyOn && valleyRate > 0 &&
+            Rng.hash2(stableHash, 71, seed + SALT.valley) < valleyRate));
+      const valSide = Rng.hash2(stableHash, 73, seed + SALT.valley) < 0.5 ? -1 : 1;
+      const valAz = Rng.hash2(stableHash, 79, seed + SALT.valley) * Math.PI * 2;
       const valCos = Math.cos(valAz), valSin = Math.sin(valAz);
 
       // 噪声取样偏移：不同簇错开，免得各簇的脊线长成一模一样的图案
-      const offX = Rng.hash2(ci, 11, seed + SALT.offset) * 137;
-      const offZ = Rng.hash2(ci, 13, seed + SALT.offset + 3) * 137;
+      const offX = Rng.hash2(stableHash, 11, seed + SALT.offset) * 137;
+      const offZ = Rng.hash2(stableHash, 13, seed + SALT.offset + 3) * 137;
 
       // 簇级包络：**按簇心取一次**。它管「这一条山脉整体高、那一条整体矮」，
       // 簇内的「峰—鞍—峰」交给 summitScale（两个参数角色必须分清）。
@@ -231,7 +265,7 @@
       // 大片山脉的峰更高：簇越大、累计抬升越多。只对 ≥ 6 格的簇生效，
       // 所以单格孤峰与小簇的峰高完全不变（见 config 的 peakHeightGrow）。
       const heightGrow = 1 + peakHeightGrow * clamp((meta.size - 5) / 12, 0, 1);
-      const amp = size * lerp(ph[0], ph[1], clamp(envN, 0, 1)) * loneFactor * heightGrow;
+      const amp = size * lerp(ph[0], ph[1], clamp(envN, 0, 1)) * loneFactor * heightGrow * planScale;
 
       // 脊带中心线：横向蜿蜒。单格簇收到 **0**（中心线退化成格心一个点），
       // 于是放射脊以格心为圆心 —— 这正是参考图 1 里那种「单峰 + 放射沟」的形状。
@@ -404,6 +438,8 @@
 
       clusters.push({
         index: ci,
+        id: meta.id,
+        plan: plan,
         meta: meta,
         tiles: tiles,
         centroid: { x: cx, z: cz },
@@ -495,9 +531,41 @@
       return best;
     }
 
-    /** 山体表面高度：不低于地表（山脚因此不会让地形穿出来 / 变成反墙） */
+    /**
+     * 山体表面 = 地表的钳制 + 水流侵蚀的连续混合：`max(地表, 场按侵蚀权重退回地表)`。
+     *
+     * **唯一公式**：数据查询（`surfaceAt`）与渲染层建网格（`surfaceFrom`）都调它。
+     * 两边各写一份是这个项目栽过的坑 —— 「上游函数修好了、下游产物照旧」（§15.21）。
+     */
+    function blendSurface(mountain, ground, erosion) {
+      return Math.max(ground, lerp(mountain, ground, clamp(erosion, 0, 1)));
+    }
+
+    /** 该点的水流侵蚀权重（没有河流时恒 0） */
+    function erosionAt(x, z) {
+      const rivers = world.rivers;
+      return rivers && typeof rivers.mountainErosion === 'function'
+        ? rivers.mountainErosion(x, z) : 0;
+    }
+
+    /**
+     * 山体表面：默认不低于地表；指定峡谷 / 隘口处则按河段中心线切回已挖好的地表。
+     * 这样水带、地表河槽和山壳使用同一条线，`max(field, ground)` 不会再把峡谷盖回去。
+     */
     function surfaceAt(x, z) {
-      return Math.max(fieldAt(x, z), world.heightAt(x, z));
+      return blendSurface(fieldAt(x, z), world.heightAt(x, z), erosionAt(x, z));
+    }
+
+    /**
+     * 用**调用方自己那份裸场**算表面高度（本簇的 `cluster.field`）。
+     *
+     * 存在的理由只有一个：建网格时采样点是万级，而 `surfaceAt` 每点要做 25 次邻域
+     * 查询（实测慢 7.7×，山体层从 ~0.6s 涨到 ~2.7s）。公式与 `surfaceAt` 完全相同，
+     * 差别只在簇边界处——`fieldAt` 取邻域最大值，本簇裸场取自己那一份，
+     * 实测偏差 ≤ 0.02（渲染测试里有断言盯着这个上限）。
+     */
+    function surfaceFrom(mountain, x, z) {
+      return blendSurface(mountain, world.heightAt(x, z), erosionAt(x, z));
     }
 
     const value = {
@@ -505,10 +573,19 @@
       clusters: clusters,
       byIndex: byIndex,
       fieldAt: fieldAt,
-      surfaceAt: surfaceAt
+      surfaceAt: surfaceAt,
+      /** 与 `surfaceAt` 同一个混合公式，但接受调用方自己那份裸场（建网格用） */
+      surfaceFrom: surfaceFrom,
+      blendSurface: blendSurface,
+      erosionAt: erosionAt
     };
     cache.set(world, { settings: M, hexSize: size, seed: seed,
-      tileCount: world.tileList.length, value: value });
+      // 山脉种子必须进 key：它一变，山格集合与山形都变（重掷山脉就是换它）。
+      reliefSeed: world.reliefSeed,
+      tileCount: world.tileList.length,
+      overrideRevision: (world.terrainOverrides && world.terrainOverrides.revision) || 'none',
+      riverRevision: (world.rivers && world.rivers.revision) || 'none',
+      value: value });
     return value;
   }
 

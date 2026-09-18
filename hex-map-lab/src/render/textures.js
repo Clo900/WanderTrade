@@ -349,6 +349,46 @@
     return toTexture(canvas);
   }
 
+  /**
+   * 泉眼 / 小湖的**涟漪**贴图。
+   *
+   * v 轴 = 到碗心的归一化半径（0 = 碗心，1 = 碗口），u 轴 = 方位角。
+   * 水面片按极坐标铺 UV，所以「沿 v 滚动 offset」就是一串向外扩散的波纹 ——
+   * 与河流 / 海面滚动 `crackle` 的做法同构，不需要写着色器。
+   *
+   * ⚠ 图案必须在 v 上**周期**（环数与慢调制都取整数周期）：滑动到 1 会回绕到 0，
+   *   不周期就会在碗口看到一道跳变。
+   * ⚠ 环间距不做「近心密、远心疏」：那会破坏周期性。用方位向的相位抖动代替，
+   *   免得读成一个规整的靶心。
+   * ⚠ 幅度要**轻**：这张贴图是乘在基色上的，第一版（环数 7、幅度 ±33/255 ≈ 13%、
+   *   基准 222）在泉眼上直接读成一个同心圆靶心，而且把水整体压暗 13%。现在
+   *   环数 4、幅度 ±13（≈5%）、基准 240 —— 只是水面上一层很浅的动感。
+   */
+  function rippleTexture(seed) {
+    const N = 256;
+    const canvas = makeCanvas(N, N);
+    const ctx = canvas.getContext('2d');
+    const rnd = Rng.mulberry32((seed || 8123) | 0);
+    const img = ctx.createImageData(N, N);
+    const d = img.data;
+    const ph0 = rnd() * Math.PI * 2, ph1 = rnd() * Math.PI * 2;
+    for (let y = 0; y < N; y++) {
+      const v = y / N;                       // 0 = 碗心，1 = 碗口
+      for (let x = 0; x < N; x++) {
+        const ang = (x / N) * Math.PI * 2;
+        const wob = Math.sin(ang * 3 + ph0) * 0.55 + Math.sin(ang * 5 + ph1) * 0.3;
+        const ring = Math.sin(v * Math.PI * 2 * 4 + wob);      // 4 圈：整周期
+        const slow = 0.5 + 0.5 * Math.sin(v * Math.PI * 2 * 2 + ph1);  // 2 圈：整周期
+        const a = ring * (0.16 + 0.14 * slow);
+        const g = Math.max(0, Math.min(255, Math.round(240 + a * 44)));
+        const i = (y * N + x) * 4;
+        d[i] = g; d[i + 1] = g; d[i + 2] = g; d[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return toTexture(canvas);
+  }
+
   /* ============================================================
    * 植被与道具（带墨线轮廓的 billboard）
    * ============================================================ */
@@ -1039,6 +1079,8 @@
     fieldStripesTexture: fieldStripesTexture,
     flowerSpeckleTexture: flowerSpeckleTexture,
     waterCrackleTexture: waterCrackleTexture,
+    /** 泉眼 / 小湖的涟漪贴图（v 轴 = 归一化半径） */
+    rippleTexture: rippleTexture,
     /** 地表贴图的 UV 换算与农田行距（保证贴图与道具对齐的唯一来源） */
     SURFACE_TILE_PX: SURFACE_TILE_PX,
     SURFACE_TEX_HEX: SURFACE_TEX_HEX,

@@ -90,6 +90,22 @@
     // 跨河判定要读河流层（河走在两格之间，落在河道里的格本身仍是陆地）
     const rivers = world.rivers || null;
     const deepWater = deepWaterThreshold();
+    /**
+     * 这一段有没有压在河源水面上。
+     * ⚠ 判据是**线段**到碗心的距离，不是采样点到碗心的距离：道路采样步长约 7 单位，
+     *   与水面片直径同量级，只看采样点会漏判 —— 实测某条路最近采样点离湖心 10.78，
+     *   而线段最近只有 10.24（水面半径 9.82），路面确实压在水边（视觉上扎进湖里）。
+     * 点到线段距离用共享的 `Hex.distToSegment`（水下深度场也用同一份，不再各写一份）。
+     */
+    function springCrossSegment(a, b) {
+      if (!rivers || typeof rivers.springAt !== 'function') return false;
+      const list = rivers.springs || [];
+      for (let k = 0; k < list.length; k++) {
+        const sp = list[k];
+        if (Hex.distToSegment(sp.x, sp.z, a.x, a.z, b.x, b.z) < sp.waterRadius * 1.06) return true;
+      }
+      return false;
+    }
     const raw = [];
 
     for (let i = 0; i <= count; i++) {
@@ -99,6 +115,7 @@
       const rd = rivers ? rivers.nearest(p.x, p.z) : Infinity;   // 带符号：负 = 在河道里
       let kind = 'ground';
       let ground = 0;   // 该点地表高度（不含路面抬升）；桥墩与栈桥墩的柱高按它算
+      let springCross = false;   // 这一段桥是为了跨过河源水体的水面（不是跨河）
       if (tile) {
         ground = world.heightAt(p.x, p.z);
         if (tile.terrain === 'water') {
@@ -112,7 +129,7 @@
       }
       raw.push({
         x: p.x, z: p.z, y: ground + lift, ground: ground,
-        t: t, kind: kind, riverDist: rd,
+        t: t, kind: kind, riverDist: rd, springCross: springCross,
         tileKey: tile ? Hex.key(tile.q, tile.r) : null, tile: tile
       });
     }
@@ -131,6 +148,15 @@
         const inRiver = a < 0 || (b != null && b < 0);
         const crosses = b != null && ((a < 0) !== (b < 0));
         if (inRiver || crosses) raw[i].kind = 'bridge';
+      }
+      // 河源水面的跨段同样按「线段压在圆上」补判（理由见 springCrossSegment）。
+      // 两端各自标记：一段压在圆上时，两个端点的路面都要抬起来，否则会留下半截下沉。
+      for (let i = 1; i < raw.length; i++) {
+        const p = raw[i - 1], q = raw[i];
+        if (p.kind !== 'ground' && q.kind !== 'ground') continue;
+        if (!springCrossSegment(p, q)) continue;
+        if (p.kind === 'ground') { p.kind = 'bridge'; p.springCross = true; }
+        if (q.kind === 'ground') { q.kind = 'bridge'; q.springCross = true; }
       }
     }
 
@@ -182,7 +208,7 @@
       const raised = s.kind === 'bridge' || s.kind === 'trestle';
       samples.push({
         x: s.x, y: raised ? deckY[i] : smoothed[i], z: s.z, ground: s.ground,
-        t: s.t, kind: s.kind, tileKey: s.tileKey, tile: s.tile
+        t: s.t, kind: s.kind, springCross: s.springCross, tileKey: s.tileKey, tile: s.tile
       });
     }
 
@@ -251,6 +277,10 @@
           const sm = sampled.samples[s];
           if (sm.kind !== 'bridge' && sm.kind !== 'trestle') continue;
           if (!sm.tile || sm.tile.cityId) continue;
+          // ⚠ 只为跨过河源水面而抬起的桥段**不**标记 bridgeVia：标记是**按格**的，
+          //   而水面只占那一格的一角 —— 标了会让整格（包括格内其余地面）都不长植被。
+          //   那里的道具避让由 `springAt`（水面片半径）负责，精度比按格高。
+          if (sm.springCross) continue;
           if (sm.tile.terrain === 'water') continue;
           if (sm.kind === 'trestle') sm.tile.trestleVia = road.id;
           else sm.tile.bridgeVia = road.id;

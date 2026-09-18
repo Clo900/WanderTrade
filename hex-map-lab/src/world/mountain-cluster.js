@@ -5,6 +5,17 @@
 
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+  function stableId(world, members) {
+    const keys = members.map(function (tile) { return tile.key; }).sort();
+    let h = 2166136261 >>> 0;
+    const text = String(world.seed || 0) + '|' + keys.join('|');
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return 'ridge-system-' + ('00000000' + h.toString(16)).slice(-8);
+  }
+
   /**
    * 山簇分析
    * ============================================================
@@ -73,7 +84,10 @@
     // 这里同时承担了原来 `hex-world.stats.reliefClusters` 的统计职责。
     // id 在排序之后才编，保证 id 序号与数组下标一致。
     clusters.sort(function (a, b) { return b.size - a.size; });
-    for (let i = 0; i < clusters.length; i++) clusters[i].id = 'ridge-cluster-' + i;
+    for (let i = 0; i < clusters.length; i++) {
+      clusters[i].id = stableId(world, clusters[i].tiles);
+      clusters[i].systemId = clusters[i].id;
+    }
 
     // ---- 2. 每格的派生标记 ----
     // ⚠ v1.9 起这里**只剩四个字段**，因为山体形状整体搬进了
@@ -98,10 +112,17 @@
         const boundaryEdges = [];
         for (let d = 0; d < 6; d++) boundaryEdges[d] = dirs.indexOf(d) < 0;
 
+        const system = world.mountainSystem;
         const meta = {
           clusterIndex: ci,
+          clusterId: cluster.id,
+          systemId: cluster.systemId,
           boundaryEdges: boundaryEdges,
           isLone: dirs.length === 0,
+          mountainGorge: !!(system && system.isGorge(tile)),
+          mountainPass: !!(system && system.isPass(tile)),
+          blocked: !!(system && system.isBlocked(tile)),
+          dryValley: !!(system && system.isDryValley(tile)),
           /**
            * 山脚碎石坡与地表过渡色的依据：这片周围有多少个山脉邻居。
            */

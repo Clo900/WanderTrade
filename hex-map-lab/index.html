@@ -26,6 +26,11 @@
     <!-- HTML 叠加面板：信息 / 开关 / 图例 -->
     <aside id="hud"></aside>
 
+    <!-- 浮动读数层（FPS + 网格统计）。⚠ 必须是 #hud 的**兄弟节点**而不是子节点：
+         #hud 上有 backdrop-filter，它会给 position: fixed 的后代建立包含块，
+         浮条会被定位到面板内部而不是视口。 -->
+    <div id="hud-overlay"></div>
+
     <!-- 启动失败时的兜底提示 -->
     <div id="boot-error" class="boot-error"></div>
 
@@ -51,6 +56,8 @@
   <script src="src/data/world-snapshot.js"></script>
 
   <!-- ---------- world：六边形世界 / 河流 / 道路 / 城市图 / 动态状态 ---------- -->
+  <script src="src/world/terrain-overrides.js"></script>
+  <script src="src/world/mountain-system.js"></script>
   <script src="src/world/hex-world.js"></script>
   <script src="src/world/terrain-rules.js"></script>
   <script src="src/world/mountain-cluster.js"></script>
@@ -59,9 +66,11 @@
   <script src="src/world/road-builder.js"></script>
   <script src="src/world/city-graph.js"></script>
   <script src="src/world/tile-state.js"></script>
+  <script src="src/world/world-rebuild.js"></script>
 
   <!-- ---------- render：纹理与各表现层 ---------- -->
   <script src="src/render/textures.js"></script>
+  <script src="src/render/resource-dispose.js"></script>
   <script src="src/render/ribbon.js"></script>
   <script src="src/render/road-style.js"></script>
   <script src="src/render/environment-state.js"></script>
@@ -71,6 +80,7 @@
   <script src="src/render/mountain-layer.js"></script>
   <script src="src/render/mountain-lod.js"></script>
   <script src="src/render/river-layer.js"></script>
+  <script src="src/render/spring-layer.js"></script>
   <script src="src/render/water-depth.js"></script>
   <script src="src/render/ink-layer.js"></script>
   <script src="src/render/grid-layer.js"></script>

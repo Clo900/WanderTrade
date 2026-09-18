@@ -26,6 +26,14 @@
 
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
   function lerp(a, b, t) { return a + (b - a) * t; }
+  function hashText(text) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return ('00000000' + h.toString(16)).slice(-8);
+  }
 
   /**
    * 河道需要的配置键。**只列名字、不列默认值** —— 值只在 world-config 里存一份。
@@ -38,7 +46,7 @@
   const REQUIRED_KEYS = [
     'maxRivers', 'sourceSpacing', 'maxSteps', 'minLength', 'width', 'subdiv',
     'renderSmoothing', 'meander', 'wetScale', 'bankScale', 'floodScale',
-    'propsClearanceScale', 'channel', 'tributary'
+    'propsClearanceScale', 'channel', 'gorge', 'pass', 'routeBias', 'tributary'
   ];
 
   function settings() {
@@ -62,6 +70,9 @@
       wetness: function () { return 0; },
       floodplain: function () { return 0; },
       channelOffset: function () { return 0; },
+      mountainErosion: function () { return 0; },
+      nearestSegment: function () { return null; },
+      revision: 'empty',
       branchCandidates: [],
       propsClearance: 0,
       halfWidth: 0,
@@ -158,6 +169,22 @@
   }
 
   /** 河源评分：离海远 + 邻接山地/丘陵；贴水顶点与城市格不出河源 */
+  function passageMode(a, b) {
+    const seen = [];
+    const all = (a.tiles || []).concat((b && b.tiles) || []);
+    for (let i = 0; i < all.length; i++) {
+      const tile = all[i];
+      if (seen.indexOf(tile) >= 0) continue;
+      seen.push(tile);
+      if (tile.blocked) return 'blocked';
+      if (tile.mountainGorge) return 'mountainGorge';
+      if (tile.mountainPass) return 'mountainPass';
+      if (tile.dryValley) return 'dryValley';
+      if (tile.waterfall) return 'waterfall';
+    }
+    return 'auto';
+  }
+
   function sourceScore(v) {
     let ridge = 0, hill = 0;
     for (let i = 0; i < v.tiles.length; i++) {
@@ -183,6 +210,7 @@
    *   若也按 isSea 收尾会刚走一条棱就停住（湖岸顶点本身就贴水）
    */
   function tracePath(graph, startIdx, maxSteps, field, claimed, stopAtSea) {
+    // 沿给定的下降势能场寻路，同时避开城市并支持汇入既有水道。
     const verts = graph.verts;
     const path = [];
     const visited = new Set();
@@ -195,12 +223,22 @@
       if (stopAtSea && step > 0 && isSea(v)) break;
       let best = -1;
       let bestVal = Infinity;
+      const curVal = field(cur);
       for (let n = 0; n < v.nb.length; n++) {
         const ni = v.nb[n];
         if (visited.has(ni)) continue;
         if (touchesCity(verts[ni])) continue;      // 河绕开城市广场
+        const mode = passageMode(v, verts[ni]);
+        if (mode === 'blocked') continue;
         const val = field(ni);
-        if (val < bestVal) { bestVal = val; best = ni; }
+        // 势能仍是硬约束：模式只在同一下降候选之间做取舍，不能把河导进死路。
+        if (!(val < curVal || (claimed && claimed.has(ni)))) continue;
+        const routeBias = settings().routeBias || {};
+        const bias = mode === 'mountainGorge' ? (routeBias.mountainGorge || 0) :
+          (mode === 'mountainPass' ? (routeBias.mountainPass || 0) :
+            (mode === 'dryValley' ? (routeBias.dryValley || 0) : 0));
+        const ranked = val + bias;
+        if (ranked < bestVal) { bestVal = ranked; best = ni; }
       }
       if (best < 0) break;
       if (claimed && claimed.has(best)) { path.push(best); joined = true; break; }
@@ -223,8 +261,9 @@
     if (n < 2) return samples;
     for (let i = 0; i + 1 < n; i++) {
       const a = verts[path[i]];
-      const b = verts[path[i + 1]];
-      const lastSeg = i + 2 === n;
+        const b = verts[path[i + 1]];
+        const mode = passageMode(a, b);
+        const lastSeg = i + 2 === n;
       for (let s = 0; s < sub + (lastSeg ? 1 : 0); s++) {
         const u = s / sub;
         samples.push({
@@ -232,7 +271,8 @@
           z: lerp(a.z, b.z, u),
           y: opt.waterY,                    // 水平水面：整条河一个高度（= 全图水位）
           bed: opt.bedY,                    // 浅切槽底（断言「水在槽里」用）
-          halfW: opt.halfWidth
+          halfW: opt.halfWidth,
+          mode: mode
         });
       }
     }
@@ -289,6 +329,7 @@
     for (let i = 0; i < tiles.length; i++) {
       tiles[i].riverAdjacency = 0;
       tiles[i].riverIds = [];
+      tiles[i].riverNear = false;
     }
 
     const graph = buildGraph(world);
@@ -363,7 +404,9 @@
         length: length,
         joined: stems[r].joined,
         reachesSea: isSea(mouthV),
-        source: { x: verts[path[0]].x, z: verts[path[0]].z, tile: verts[path[0]].tiles[0] || null },
+        source: { x: verts[path[0]].x, z: verts[path[0]].z, tile: verts[path[0]].tiles[0] || null,
+          /** 河源顶点压着的**全部**格（最多 3 个）：河源水体要在这几格里选位置 */
+          tiles: (verts[path[0]].tiles || []).slice() },
         mouth: { x: mouthV.x, z: mouthV.z, tile: mouthTile }
       });
     }
@@ -382,7 +425,10 @@
       for (let r = 0; r < list.length; r++) {
         const s = list[r].samples;
         for (let i = 0; i + 1 < s.length; i++) {
-          segs.push({ x0: s[i].x, z0: s[i].z, x1: s[i + 1].x, z1: s[i + 1].z, w: s[i].halfW });
+          segs.push({
+            x0: s[i].x, z0: s[i].z, x1: s[i + 1].x, z1: s[i + 1].z,
+            w: s[i].halfW, mode: s[i].mode || 'auto'
+          });
         }
       }
       const cell = size * 2;
@@ -408,6 +454,7 @@
         const gz = Math.floor(z / cell);
         let bestD = Infinity;
         let bestW = 0;
+        let bestMode = 'auto';
         for (let ox = -1; ox <= 1; ox++) {
           for (let oz = -1; oz <= 1; oz++) {
             const bucket = grid.get((gx + ox) + '|' + (gz + oz));
@@ -420,11 +467,11 @@
               let t = ((x - s.x0) * dx + (z - s.z0) * dz) / len2;
               t = t < 0 ? 0 : (t > 1 ? 1 : t);
               const d = Math.hypot(x - (s.x0 + dx * t), z - (s.z0 + dz * t));
-              if (d < bestD) { bestD = d; bestW = s.w; }
+              if (d < bestD) { bestD = d; bestW = s.w; bestMode = s.mode; }
             }
           }
         }
-        return bestD === Infinity ? null : { d: bestD, w: bestW };
+        return bestD === Infinity ? null : { d: bestD, w: bestW, mode: bestMode };
       }
 
       return {
@@ -454,6 +501,41 @@
       const r = s.d / (s.w * R.channel.widen || 1);
       if (!(r < 1)) return 0;
       return channelDepthW * (1 - r * r);
+    }
+
+    /**
+     * 山体侵蚀权重（0 = 不影响山壳，1 = 在河心完全露出地表河槽）。
+     *
+     * 这里刻意返回的是「归一化切除权重」而非一份独立高度：MountainField
+     * 已经是连续山壳的唯一高度源，若河流另行猜一个绝对峡谷深度，山越高峡谷
+     * 越可能重新被山壳盖住。消费方用该权重把山壳连续地混合回 world.heightAt，
+     * 因而河面、地表槽与山体峡谷永远同用当前河段中心线。
+     */
+    function mountainErosion(x, z) {
+      const s = index.nearestSeg(x, z);
+      if (!s) return 0;
+      const G = R.gorge || {};
+      const P = R.pass || {};
+      let shape = null;
+      if (s.mode === 'mountainGorge' || s.mode === 'waterfall') shape = G;
+      else if (s.mode === 'mountainPass') shape = P;
+      else return 0;
+
+      const widen = Math.max(1.000001, shape.widen || 1);
+      const width = s.w * widen;
+      const t = s.d / width;
+      if (!(t < 1)) return 0;
+      const core = clamp(shape.depth == null ? 1 : shape.depth, 0, 1);
+      // ⚠ 核心区（t ≤ 1/widen，即**整条水带宽度**）必须**平**，只在带外收束。
+      //   旧写法 `depth × (1 − t²)` 是从河心向外单调下降的凸组合：即使 depth = 1，
+      //   水带边缘处也只剩 `1 − 1/widen²`（widen 3.1 时 ≈ 0.90），而混合是凸组合
+      //   —— 残余的 `(1 − e) × 山壳` 一旦高于水面，水带边缘照样被岩石压住。
+      //   表现为「河在山里只剩一条细线」，甚至一截露一截埋。
+      // ⚠ 河面恒为 y = 0、平原也在 0 附近，所以**任何**高于 0 的残余山壳都会把水藏住：
+      //   `depth < 1` 只能当作「抬高河床的浅滩」实验，开不出能过水的口子。
+      const inner = 1 / widen;
+      const u = t <= inner ? 0 : (t - inner) / (1 - inner);
+      return clamp(core * (1 - u * u), 0, 1);
     }
 
     // ---------- 支流：内湖/内海派生细水系 ----------
@@ -575,7 +657,9 @@
           reachesSea: false,
           isTributary: true,
           sourceType: 'inner-water',
-          source: { x: verts[path[0]].x, z: verts[path[0]].z, tile: tile },
+          source: { x: verts[path[0]].x, z: verts[path[0]].z, tile: tile,
+            /** 河源顶点压着的**全部**格（最多 3 个）：河源水体要在这几格里选位置 */
+            tiles: (verts[path[0]].tiles || []).slice() },
           mouth: { x: mouthV.x, z: mouthV.z, tile: mouthV.tiles[0] || null }
         });
         tributaries.push(riverId);
@@ -605,6 +689,105 @@
       }
     }
 
+    // ---------- 河源水体（泉眼 / 小湖）----------
+    /**
+     * 河源是河网里最该「有源头」的地方：之前它是一条和别处同宽的水带凭空开始。
+     * 做法是在河源**顶点**附近刻一个「格内碗」（由 `world.heightAt` 叠加，见
+     * hex-world），全图统一水位的水面覆盖上去，于是河源成为一个泉眼或小湖。
+     *
+     * 三条硬约束，全部来自现有不变量：
+     *   ① **只碰一个共享角点**：碗心从顶点朝格心退 `pullback`，碗半径保证够不到
+     *      相邻的两个角点（它们离碗心约 0.93 格；实测余量 0.21 格）。
+     *   ② **共角的三格都要记这份下切**（`tile.springRefs`）：角点是三格共享的，
+     *      只给一格算，同一物理角点就会算出两个高度 ⇒ 裂缝（与 `riverNear` 同理）。
+     *   ③ **避开山格与水格**：山格上会被山壳盖住、水格上无从谈起。共角三格都
+     *      不可用（例如河源三面是山）就不放，计入 `springSkipped`。
+     *
+     * 形态由**上游地形**定：共角处有山格 → 山泉（水面片小、碗浅）；全是平地 →
+     * 小湖。比「按河流等级硬指定」更符合读图直觉，也保证两种形态都会真的出现。
+     *
+     * ⚠ 「碗」与「水面片」是两个尺度（config 里 `basin` 与各形态的 `water`）：
+     *   碗由**地表网格的分辨率**下限决定（每格 13 个顶点，碗太小解析不出来，
+     *   水面片外圈会被地表顶穿），水面片才是美术尺寸。两者的关系见 config 注释。
+     */
+    const springs = [];
+    const SS = R.sourceSpring || {};
+    let springSkipped = 0;
+    if (SS.enabled !== false) {
+      for (let i = 0; i < out.length; i++) {
+        const river = out[i];
+        const src = river.source;
+        const trio = (src && src.tiles) || [];
+        if (!trio.length) { springSkipped++; continue; }
+        // 源头本身压着水格（支流从内湖 / 内海出发）：那里已经有水，不再叠一个泉。
+        let touchesWater = false;
+        for (let k = 0; k < trio.length; k++) {
+          if (!trio[k] || trio[k].terrain === 'water') { touchesWater = true; break; }
+        }
+        if (touchesWater) { springSkipped++; continue; }
+        // 候选：这三格里能承载水体的（山格会被山壳盖住，城格是城市广场）
+        const cands = trio.filter(function (t) {
+          return t && t.terrain !== 'city' && t.terrain !== 'ridge';
+        });
+        if (!cands.length) { springSkipped++; continue; }
+        // 选「最开阔」的那格（邻接山格最少；并列时按 key 稳定排序）
+        const ridgeScore = function (t) {
+          let n = 0;
+          for (let d = 0; d < 6; d++) {
+            const nb = world.tileAt(Hex.neighbor(t, d).q, Hex.neighbor(t, d).r);
+            if (nb && nb.terrain === 'ridge') n++;
+          }
+          return n;
+        };
+        cands.sort(function (a, b) {
+          const sa = ridgeScore(a), sb = ridgeScore(b);
+          return sa !== sb ? sa - sb : (a.key < b.key ? -1 : 1);
+        });
+        const owner = cands[0];
+        let hasRidge = false;
+        for (let k = 0; k < trio.length; k++) {
+          if (trio[k] && trio[k].terrain === 'ridge') { hasRidge = true; break; }
+        }
+        const form = hasRidge ? (SS.spring || {}) : (SS.lake || {});
+        // 碗半径（两种形态共用）：由地表网格分辨率定的下限，见 config 注释
+        const radius = Math.max(1, size * (SS.basin == null ? 0.72 : SS.basin));
+        const depth = Math.max(size * 0.01, size * (form.depth == null ? 0.16 : form.depth));
+        // 水面片：比碗小一圈（边缘沉在碗壁里）；比例逐形态给（湖大、泉小）
+        const waterRatio = Math.max(0.05, Math.min(1, form.water == null ? 0.62 : form.water));
+        // 碗心：从河源顶点朝本格格心退一点，让碗尽量落在开阔的那一侧。
+        // ⚠ 不能退太多 —— 水面片必须仍然盖住河源顶点，否则河与湖之间会露出一段干地。
+        let dx = owner.x - src.x, dz = owner.z - src.z;
+        const dl = Math.hypot(dx, dz) || 1;
+        const pull = size * (SS.pullback == null ? 0.16 : SS.pullback);
+        const spring = {
+          kind: hasRidge ? 'spring' : 'lake',
+          riverId: river.id,
+          tileKey: owner.key,
+          tile: owner,
+          x: src.x + dx / dl * pull,
+          z: src.z + dz / dl * pull,
+          /** 河源顶点本身（断言用：水面片必须盖住它） */
+          sourceX: src.x,
+          sourceZ: src.z,
+          /** 碗半径 / 碗深：地表下陷的范围与深度（`world.heightAt` 用） */
+          radius: radius,
+          depth: depth,
+          /** 水面片半径（美术尺寸）与它对碗半径的比例（湿岸带 / 避让都要用） */
+          waterRadius: radius * waterRatio,
+          waterRatio: waterRatio,
+          seed: (world.seed + 7919 * (i + 1)) >>> 0
+        };
+        for (let k = 0; k < trio.length; k++) {
+          const t = trio[k];
+          if (!t) continue;
+          if (!t.springRefs) t.springRefs = [];
+          t.springRefs.push(spring);
+        }
+        owner.spring = spring;
+        springs.push(spring);
+      }
+    }
+
     return {
       rivers: out,
       counts: {
@@ -612,9 +795,13 @@
         tributaries: tributaries.length,
         longest: longest,
         confluences: confluences,
-        samples: sampleCount
+        samples: sampleCount,
+        springs: springs.length,
+        springSkipped: springSkipped
       },
       nearest: function (x, z) { return index.nearest(x, z); },
+      /** 最近的权威河段；渲染、地表槽、山体峡谷都从此中心线派生。 */
+      nearestSegment: function (x, z) { return index.nearestSeg(x, z); },
       /** 河床 / 岸边混色强度（0 = 出了影响圈）；半径 = 水带半宽 × bankScale */
       influence: function (x, z) {
         const d = index.nearest(x, z);
@@ -638,6 +825,43 @@
       },
       /** 河床相对基准平面切下去多少（正 = 下切，交给 world.heightAt 叠加） */
       channelOffset: channelOffset,
+      /** 指定峡谷 / 隘口对山壳的切除权重（0~1）。 */
+      mountainErosion: mountainErosion,
+      /** 河源水体（泉眼 / 小湖）：碗心 / 半径 / 碗深，供表现层与断言读 */
+      springs: springs,
+      /**
+       * 最近的河源水体。返回 `{ spring, r, t, d }`：
+       *   · `d` = 到碗心的**绝对距离**（世界单位）—— 需要「离水面片多远」的调用方
+       *     用它配 `spring.waterRadius`，不必再各写一遍 hypot；
+       *   · `r` = d / 碗半径（0 = 碗心，1 = 碗口），`t = 1 - r`。
+       * `scale` 把「问的范围」放大（例如排除探针时要连整个碗一起躲开）。
+       * 范围外返回 null。
+       *
+       * ⚠ 归一化用的是**碗半径**（地形下陷范围），不是水面片：`heightAt` 的下切
+       *   支撑正好是碗半径，任何「按高度判断」的调用方（测试的排除探针、湿岸配色）
+       *   都必须跟它对齐，否则会把「碗内、水面外」的地面当成没被碰过。
+       */
+      springAt: function (x, z, scale) {
+        const k = scale == null ? 1 : scale;
+        let best = null, bestR = Infinity, bestD = 0;
+        for (let i = 0; i < springs.length; i++) {
+          const sp = springs[i];
+          const d = Math.hypot(x - sp.x, z - sp.z);
+          const r = d / sp.radius;
+          if (r < k && r < bestR) { bestR = r; best = sp; bestD = d; }
+        }
+        return best ? { spring: best, r: bestR, t: Math.max(0, 1 - bestR), d: bestD } : null;
+      },
+      // 本轮 world 构建生成的河网稳定指纹；MountainField 用它识别重建后的峡谷。
+      // ⚠ 河源水体也要进指纹：它直接改 `heightAt`（碗），而山壳的 `surfaceAt` 读地表 ——
+      //   漏掉它就会出现「改了泉/湖尺寸、山脚那圈却还是旧的」这类缓存静默。
+      revision: hashText(String(world.seed) + ':' + out.map(function (river) {
+        return river.id + ':' + river.samples.map(function (sample) {
+          return [sample.x.toFixed(4), sample.z.toFixed(4), sample.halfW.toFixed(4), sample.mode || 'auto'].join(',');
+        }).join(';');
+      }).join('|') + '|springs:' + springs.map(function (s) {
+        return [s.kind, s.x.toFixed(3), s.z.toFixed(3), s.radius.toFixed(3), s.depth.toFixed(3)].join(',');
+      }).join(';')),
       branchCandidates: branchCandidates,
       /** 植被 / 房屋离水边的避让距离 = 水带半宽 × propsClearanceScale */
       propsClearance: propsClear,

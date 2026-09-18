@@ -84,10 +84,22 @@
       return proximity.nearestDistance(x, z) < clearance;
     }
 
-    /** 河面与河滩上不种东西（河线已经挖成河谷，落进去会半沉在水里） */
+    /** 河网（河线避让 + 河源水潭避让） */
     const rivers = world.rivers || null;
+    /**
+     * 水面、河滩与河源水潭上不种东西（这些地方已经被下切成水，落进去会半沉）。
+     * ⚠ 河源水潭（泉眼 / 小湖）**不在河线的避让半径内** —— 它是格内的一个碗，
+     *   与河源顶点隔着 0.3~0.6 格，只按 `nearest()` 判会把树种进水里。
+     *   ⚠ 判据要按**水面片**半径，不是碗半径：碗比水面大一圈（见 config 的
+     *   `basin` 说明），按碗避让会在泉边空出一大片没有道具的地。
+     */
     function blockedByRiver(x, z) {
-      return rivers ? rivers.nearest(x, z) < rivers.propsClearance : false;
+      if (rivers && rivers.nearest(x, z) < rivers.propsClearance) return true;
+      if (rivers && typeof rivers.springAt === 'function') {
+        const sp = rivers.springAt(x, z);
+        if (sp && sp.d < sp.spring.waterRadius * 1.15) return true;
+      }
+      return false;
     }
 
     // ---- 山体占位规则 ----
@@ -369,6 +381,36 @@
     }
     const featureCount = propTotal() - beforeFeature;
 
+    // ---------- 河源水体沿岸（泉眼 / 小湖）----------
+    // 水面里不种东西（`blockedByRiver` 按水面片半径 1.15 倍避让），但**水边那一圈**
+    // 恰恰是最该有东西的地方：碎石滚在泉边、湿生灌木贴着岸，泉眼才不会读成一个
+    // 凭空出现的蓝点。半径从 `waterRadius` 起算（不是碗半径 —— 碗比水面大一圈，
+    // 按碗算会把石头撒到离水很远的地方）。
+    //
+    // ⚠ 这一遍放在「次生特征」之后：`transitionCount / featureCount` 是按
+    //   `propTotal()` 的增量算的，插在中间会把泉边的石头记进特征数里。
+    const springList = (rivers && rivers.springs) || [];
+    let springPropCount = 0;
+    for (let i = 0; i < springList.length; i++) {
+      const sp = springList[i];
+      const growth = 0.95;                  // 水边永远比别处湿、也永远比别处旺
+      const rockCount = 3 + Math.floor(Rng.hash2(i * 7 + 1, i * 13 + 5, seed + 4603) * 3);
+      for (let n = 0; n < rockCount; n++) {
+        const a = Rng.hash2(i * 17 + n, i * 5 + n * 3, seed + 4607) * Math.PI * 2;
+        const rr = sp.waterRadius * (1.20 + Rng.hash2(i + n * 11, i * 3 + n, seed + 4609) * 0.35);
+        if (scatter('rock', sp.x + Math.cos(a) * rr, sp.z + Math.sin(a) * rr,
+          Rng.hash2(i * 23 + n, i + n * 7, seed + 4611), growth)) springPropCount++;
+      }
+      // 小湖岸边比泉眼多一点植被（水面大，岸线也长）
+      const bushCount = sp.kind === 'lake' ? 2 : 1;
+      for (let n = 0; n < bushCount; n++) {
+        const a = Rng.hash2(i * 29 + n, i * 31 + n, seed + 4613) * Math.PI * 2;
+        const rr = sp.waterRadius * (1.22 + Rng.hash2(i + n, i * 19 + n, seed + 4617) * 0.30);
+        if (scatter('bush', sp.x + Math.cos(a) * rr, sp.z + Math.sin(a) * rr,
+          Rng.hash2(i * 37 + n, i + n * 13, seed + 4619), growth)) springPropCount++;
+      }
+    }
+
     // ---------- 构建实例网格 ----------
     const group = new THREE.Group();
     group.name = 'props';
@@ -519,6 +561,8 @@
         puddle: buckets.puddle.length,
         transition: transitionCount,
         feature: featureCount,
+        /** 泉眼 / 小湖碗口那一圈的道具（碎石 + 湿生灌木） */
+        spring: springPropCount,
         total: treeCount + buckets.rock.length + buckets.puddle.length
       },
       setVisible: function (v) { group.visible = !!v; },

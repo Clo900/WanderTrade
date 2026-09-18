@@ -9,7 +9,9 @@
  *  ① **高度只有一个来源**：`H(x,z)` 只依赖世界坐标。同一个世界坐标只有一个值
  *     ⇒ 相邻格、跨格、跨簇一律同高，裂缝在机制上不可能出现。
  *
- *  ② **山脚不低于地表**：表面高度取 `max(场, world.heightAt)`。
+ *  ② **山脚不低于地表**：表面高度一律走 `MountainField.surfaceAt`，即
+ *     `max(地表, 场按水流侵蚀权重插值回地表)`。⚠ 不要再写 `max(场, 地表)` ——
+ *     那是「山壳盖住一切」，会把穿山河段已经开好的切口重新盖回去（见 §15.21）。
  *
  *  ③ **壳体只落在轮廓线上**：场值归零的那条等值线就是山脚接触线，沿线立竖直墙
  *     落到地表。自由边（只被一个三角形使用的边）因此只剩「贴地的墙底边」，
@@ -43,9 +45,6 @@
 
   /** 顶点角色（供断言用）：0 = 山体表面，1 = 落地墙 */
   const ROLE_SURF = 0, ROLE_SKIRT = 1;
-
-  /** 「这一片单元算不算山体」的场值阈值（绝对单位） */
-  const GROUND_EPS = 0.02;
 
   /** 位置键：1/512 单位（≈0.002）量化 —— 比任何可见缝隙都小，又容得下 float 误差 */
   function vkey(x, y, z) {
@@ -167,9 +166,9 @@
       clusterCount: compiled.clusters.length,
       settings: M,
       compiled: compiled,
-      /** 唯一高度入口（不含地表钳制）：所有断言与几何都从这里取 */
-      fieldAt: function (rec, x, z) { return compiled.fieldAt(x, z); },
-      /** 山体表面高度（含 `max(场, 地表)`） */
+      /** 唯一高度入口（不含地表钳制、不含侵蚀）：所有断言与几何都从这里取 */
+      fieldAt: function (x, z) { return compiled.fieldAt(x, z); },
+      /** 山体表面高度（含 `max(场, 地表)` 与穿山侵蚀） */
       surfaceAt: function (x, z) { return compiled.surfaceAt(x, z); }
     };
   }
@@ -195,9 +194,14 @@
       },
       /** 地块 → 山体记录（没有则为 null） */
       of: function (tile) { return tile ? (site.byTile[Hex.key(tile.q, tile.r)] || null) : null; },
-      /** 山体在这里盖了多厚（0 = 没盖住，可以直接放东西） */
+      /**
+       * 山体在这里盖了多厚（0 = 没盖住，可以直接放东西）。
+       * ⚠ 用 `surfaceAt` 而不是裸场值：穿山河段的山壳被切回地表，那里厚度为 0 ——
+       *   碎石 / 植被的避让判据必须与**网格实际画出来的形状**同源，否则山口里会
+       *   浮着一层本该被切掉的碎石。
+       */
       thickness: function (x, z) {
-        return Math.max(0, field.fieldAt(x, z) - world.heightAt(x, z));
+        return Math.max(0, field.surfaceAt(x, z) - world.heightAt(x, z));
       },
       /** 山体表面高度（含地表钳制） */
       heightAt: function (x, z) { return field.surfaceAt(x, z); }
@@ -252,28 +256,59 @@
     const nz = Math.max(1, Math.ceil((maxZ - minZ) / step));
     const gw = nx + 1, gh = nz + 1;
 
-    // ---- 采样：场值 H 与表面高度 Y = max(H, 地表) ----
+    // ---- 采样：裸场值 H（只供冲沟判据）、山体表面 Y、相对地表的厚度 T ----
+    // ⚠ 表面高度必须走 `surfaceAt`（含河道侵蚀）。旧写法
+    //   `Ys[k] = Math.max(h, world.heightAt(x, z))` 是「山壳盖住一切」：数据层的
+    //   穿山兼容（river.mountainErosion / MountainField.surfaceAt）早就做好了，
+    //   网格这一层没接，于是页面上「河钻进山就没了」—— 山壳横断面 171 个里
+    //   169 个被岩石完全压住。见 §15.21。
     const Hs = new Float32Array(gw * gh);
     const Ys = new Float32Array(gw * gh);
+    const Ts = new Float32Array(gw * gh);
     for (let j = 0; j < gh; j++) {
       const z = minZ + j * step;
       for (let i = 0; i < gw; i++) {
         const x = minX + i * step;
-        const h = cluster.field(x, z);
         const k = j * gw + i;
+        const h = cluster.field(x, z);
         Hs[k] = h;
-        Ys[k] = Math.max(h, world.heightAt(x, z));
+        // 走 `compiled.surfaceFrom`：与 `surfaceAt` **同一个混合公式**，但用本簇裸场，
+        // 省掉每点 25 次邻域查询（实测 surfaceAt 慢 7.7×，山体层会从 ~0.6s 涨到 ~2.7s）。
+        let y = ctx.surfaceFrom(h, x, z);
+        const g = world.heightAt(x, z);
+        // ⚠ **看不见的山体就当它不存在**（v2.6）：下面两类采样点一律按「表面 = 地表」算 ⇒
+        //   厚度 0 ⇒ 不进存活判据。一条原则治两个毛病：
+        //   ① `g < 水位`：地表低于水面的点（水格 / 河槽）。旧写法表面恒取 `max(场, 地表)`，
+        //      而水格的地表是**水下床**（负值）⇒ 临海的簇把表面抬到 0 以上，在**海面上铺出
+        //      一块块方格石板**（实测水格上 181/3950 个采样点高于水面，最高 8.46 单位）。
+        //      只钳到水面之下也不行：那会在浅水里留一层岩石皮（水是半透明的，照样看得见）。
+        //   ② `厚度 < 阈值`：场在簇包围盒里的尾巴很平，不到可见阈值的点铺成一圈**贴地薄壳**，
+        //      按 `max(场, 地表)` 盖住邻格的草地/农田却用着岩壁贴图 ⇒ 远看就是「每座山外面
+        //      一块更暗的方形面片，山格正在正中间」。顺带把水面边界上那批**零高度的落地墙**
+        //      一起消掉（墙顶与墙脚焊成同一个索引 ⇒ 三角形自动退化掉，不会留薄片）。
+        if (g < ctx.waterLevel || y - g < ctx.liveEps) y = g;
+        Ys[k] = y;
+        Ts[k] = y - g;   // 走上面这条之后只剩「可见厚度」，不再是「趋近 0 的浮点噪声」
       }
     }
 
-    // ---- 哪些单元要发：四角里只要有一个「高于地表到值得一提」就发 ----
+    // ---- 哪些单元要发：只有「山壳相对地表的厚度」**值得一看**才发 ----
+    // ⚠ 判据必须是**厚度**，不能再用裸场值：穿山河段的核心区侵蚀到 1，表面正好
+    //   落回地表（厚度 0）—— 那里若仍发三角形，就会与地表网格完全共面 → 闪面
+    //   （z-fighting）。厚度≈0 的单元干脆不发，那块地交给地表网格与水带。
+    // ⚠ 阈值还必须是**可见量级**（`footMin`，默认 0.03 格 ≈ 0.66 单位），不能是「趋近 0」：
+    //   场在簇包围盒里的尾巴很平，于是每座山外面都铺着一圈**厚度 0.2~0.5 单位的贴地薄壳**
+    //   （实测覆盖 ≈179 格当量、最厚 4.88 单位、其中 72.8% 薄于 0.5 单位）。这层壳按
+    //   `max(场, 地表)` 盖住邻格的草地/农田，用的却是岩壁贴图与平面法线 ⇒ 远看就是
+    //   「每座山外面一块更暗的方形面片，山格正在正中间」。抬阈值只吃掉这层壳，山脚那条
+    //   ≥ 阈值的**真实坡脚**照旧越过簇边界（「山脚越过簇边界」是**数据层**的判据，不受影响）。
     const live = new Uint8Array(nx * nz);
     let liveCount = 0;
     for (let j = 0; j < nz; j++) {
       for (let i = 0; i < nx; i++) {
-        const h00 = Hs[j * gw + i], h10 = Hs[j * gw + i + 1];
-        const h01 = Hs[(j + 1) * gw + i], h11 = Hs[(j + 1) * gw + i + 1];
-        if (h00 > GROUND_EPS || h10 > GROUND_EPS || h01 > GROUND_EPS || h11 > GROUND_EPS) {
+        const t00 = Ts[j * gw + i], t10 = Ts[j * gw + i + 1];
+        const t01 = Ts[(j + 1) * gw + i], t11 = Ts[(j + 1) * gw + i + 1];
+        if (t00 > ctx.liveEps || t10 > ctx.liveEps || t01 > ctx.liveEps || t11 > ctx.liveEps) {
           live[j * nx + i] = 1; liveCount++;
         }
       }
@@ -298,14 +333,17 @@
       return clamp(-curv / (0.12 * refH), 0, 1);
     }
 
-    /** 写顶点（按位置焊接），返回索引 */
-    function pushVertex(x, y, z, role, crev) {
+    /**
+     * 写顶点（按位置焊接），返回索引。
+     * `thick` = 该点处山壳相对地表的厚度（顶点色判「山脚」用，见 colorAt）。
+     */
+    function pushVertex(x, y, z, role, crev, thick) {
       const key = vkey(x, y, z);
       const hit = vertIndex.get(key);
       if (hit !== undefined) return hit;
       const idx = positions.length / 3;
       positions.push(x, y, z);
-      ctx.colorAt(out, cluster, x, y, z, refH, crev);
+      ctx.colorAt(out, cluster, x, y, z, refH, crev, thick);
       colors.push(out.r, out.g, out.b);
       uvs.push(x / ctx.uvPeriod, y / ctx.uvPeriod);
       vertIndex.set(key, idx);
@@ -360,10 +398,10 @@
         const x0 = minX + i * step, z0 = minZ + j * step;
         const c00 = creviceAt(i, j), c10 = creviceAt(i + 1, j);
         const c01 = creviceAt(i, j + 1), c11 = creviceAt(i + 1, j + 1);
-        const i00 = pushVertex(x0, Ys[j * gw + i], z0, ROLE_SURF, c00);
-        const i10 = pushVertex(x0 + step, Ys[j * gw + i + 1], z0, ROLE_SURF, c10);
-        const i01 = pushVertex(x0, Ys[(j + 1) * gw + i], z0 + step, ROLE_SURF, c01);
-        const i11 = pushVertex(x0 + step, Ys[(j + 1) * gw + i + 1], z0 + step, ROLE_SURF, c11);
+        const i00 = pushVertex(x0, Ys[j * gw + i], z0, ROLE_SURF, c00, Ts[j * gw + i]);
+        const i10 = pushVertex(x0 + step, Ys[j * gw + i + 1], z0, ROLE_SURF, c10, Ts[j * gw + i + 1]);
+        const i01 = pushVertex(x0, Ys[(j + 1) * gw + i], z0 + step, ROLE_SURF, c01, Ts[(j + 1) * gw + i]);
+        const i11 = pushVertex(x0 + step, Ys[(j + 1) * gw + i + 1], z0 + step, ROLE_SURF, c11, Ts[(j + 1) * gw + i + 1]);
 
         if (((i + j) & 1) === 0) {
           pushUpTri(i00, i01, i11);
@@ -402,12 +440,16 @@
           // 两侧都贴地（墙高为 0）→ 整块退化，直接跳过（省顶点也省三角形）
           if (topA - gA <= 1e-4 && topB - gB <= 1e-4) continue;
 
-          const iA = pushVertex(sd.ax, topA, sd.az, ROLE_SURF, 0);
-          const iB = pushVertex(sd.bx, topB, sd.bz, ROLE_SURF, 0);
-          const iGA = pushVertex(sd.ax, gA, sd.az, ROLE_SKIRT, 0);
-          const iGB = pushVertex(sd.bx, gB, sd.bz, ROLE_SKIRT, 0);
-          pushOutwardTri(iA, iB, iGB, ccx, ccy, ccz);
-          pushOutwardTri(iA, iGB, iGA, ccx, ccy, ccz);
+          const iA = pushVertex(sd.ax, topA, sd.az, ROLE_SURF, 0, topA - gA);
+          const iB = pushVertex(sd.bx, topB, sd.bz, ROLE_SURF, 0, topB - gB);
+          const iGA = pushVertex(sd.ax, gA, sd.az, ROLE_SKIRT, 0, 0);
+          const iGB = pushVertex(sd.bx, gB, sd.bz, ROLE_SKIRT, 0, 0);
+          // ⚠ 只在顶点**真的焊成同一个**（索引相同）时才丢掉那一半 —— 用阈值判
+          //   「贴地」会误判：贴地处 `surfaceAt` 与 `world.heightAt` 可能差 1e-4 级的
+          //   浮点噪声（焊接键是 1/512，不相等），这时那一半虽然是近零高度的薄片，
+          //   却正是**覆盖表面边**的那一片；丢掉它就留下一条悬空边（实测 5 级 2 条）。
+          if (iB !== iGB) pushOutwardTri(iA, iB, iGB, ccx, ccy, ccz);
+          if (iA !== iGA) pushOutwardTri(iA, iGB, iGA, ccx, ccy, ccz);
         }
       }
     }
@@ -490,10 +532,13 @@
      * · 冲沟：`crev`（由采样网格的凹凸算出，见 buildChunk）把岩色往暗处压；
      * · 雪：雪线由「本簇参考峰高 × snowRatio」定，用**沿主轴拉伸**的 Perlin
      *   调制（雪因此是顺坡的条带），雪线上下 `snowFade` 内平滑过渡；
-     * · 山脚：高度低于 `footBlend × 参考峰高` 时，按 smoothstep 往脚下地块的
-     *   地表色混合 —— 接触线处颜色与地面完全同色，山体与邻格在颜色上咬合。
+     * · 山脚：**山壳相对地表的厚度**低于 `footBlend × 参考峰高` 时，按 smoothstep
+     *   往脚下地块的地表色混合 —— 接触线处颜色与地面完全同色，山体与邻格在颜色上咬合。
+     *   ⚠ 判据必须是**厚度**而不是绝对高度 y：穿山河段的山壳被切回地表，那里 y 很小
+     *     但**不是山脚** —— 用 y 判会把整条峡谷壁染成地表色。未侵蚀处两者几乎一致
+     *     （平原地表 ≈ 0 ⇒ 厚度 ≈ y）。
      */
-    function colorAt(out, cluster, x, y, z, refH, crev) {
+    function colorAt(out, cluster, x, y, z, refH, crev, thick) {
       const t = clamp(y / Math.max(1e-6, refH), 0, 1);
 
       const jitter = (Rng.hash2(x * 3 | 0, z * 3 | 0, seed + 3) - 0.5) * 0.10;
@@ -515,7 +560,7 @@
         out.lerp(tmpColor, s);
       }
 
-      const foot = 1 - smoothstep01(y / Math.max(1e-6, footBlend * refH));
+      const foot = 1 - smoothstep01(thick / Math.max(1e-6, footBlend * refH));
       if (foot > 0) out.lerp(groundColor(x, z), foot);
       return out;
     }
@@ -523,6 +568,19 @@
     const ctx = {
       world: world, size: size, uvPeriod: size * 0.9,
       taperOuter: M.taperOuter, outlineWobble: M.outlineWobble,
+      /**
+       * 全图统一水位：**不在这里重抄 `size × water.level`** —— 直接问 river-builder 的
+       * `waterLevel()`（河 / 湖 / 海 / 泉水面都读它）。「水面之上/之下」这条判据必须与
+       * 它们同源，否则山体、水面、水下地表三者会各按各的水位算。
+       */
+      waterLevel: HL.Rivers && HL.Rivers.waterLevel ? HL.Rivers.waterLevel(size) : 0,
+      /**
+       * 「这一片单元算不算山体」的厚度阈值（绝对单位）：`footMin` 以**格**为单位，
+       * 见 config.terrain.relief.mountains.footMin 的注释（为什么不能趋近 0）。
+       */
+      liveEps: size * (M.footMin == null ? 0.03 : M.footMin),
+      /** 表面高度唯一入口（含穿山侵蚀）——建网格时直接调它，不在这里重抄公式 */
+      surfaceFrom: function (mountain, x, z) { return compiled.surfaceFrom(mountain, x, z); },
       colorAt: colorAt
     };
 
