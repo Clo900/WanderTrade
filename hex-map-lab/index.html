@@ -58,6 +58,7 @@
   <!-- ---------- world：六边形世界 / 河流 / 道路 / 城市图 / 动态状态 ---------- -->
   <script src="src/world/terrain-overrides.js"></script>
   <script src="src/world/mountain-system.js"></script>
+  <script src="src/world/height-field.js"></script>
   <script src="src/world/hex-world.js"></script>
   <script src="src/world/terrain-rules.js"></script>
   <script src="src/world/mountain-cluster.js"></script>
@@ -75,13 +76,21 @@
   <script src="src/render/road-style.js"></script>
   <script src="src/render/environment-state.js"></script>
   <script src="src/render/environment-palette.js"></script>
+  <script src="src/render/ground-material.js"></script>
+  <!-- 水体两块必须在各图层之前：water-depth 提供深度预通道与共享 GLSL，
+       water-material 提供水面材质（create() 会直接读 HL.WaterDepth 的共享 uniform） -->
+  <script src="src/render/water-depth.js"></script>
+  <script src="src/render/water-material.js"></script>
   <script src="src/render/scene.js"></script>
   <script src="src/render/terrain-layer.js"></script>
   <script src="src/render/mountain-layer.js"></script>
   <script src="src/render/mountain-lod.js"></script>
   <script src="src/render/river-layer.js"></script>
   <script src="src/render/spring-layer.js"></script>
-  <script src="src/render/water-depth.js"></script>
+  <!-- 统一水面（v2.8）：把海（借 terrain-layer 的格内曲面追加器）+ 河 + 泉
+       拼进同一份几何、用同一份材质。必须在 terrain-layer / river-layer /
+       spring-layer 之后（它调用这三者的导出） -->
+  <script src="src/render/water-surface.js"></script>
   <script src="src/render/ink-layer.js"></script>
   <script src="src/render/grid-layer.js"></script>
   <script src="src/render/road-layer.js"></script>

@@ -47,6 +47,8 @@
     const src = copy(raw);
     const mountain = copy(src.mountain);
     const waterway = copy(src.waterway);
+    // 仅供渲染层读取：绝不参与 terrain / waterway / 高程等世界生成判断。
+    const waterVisual = copy(src.waterVisual || src.waterStyle);
     const out = {};
 
     if (src.terrain != null) out.terrain = String(src.terrain);
@@ -82,6 +84,21 @@
         radius: numberOr(waterway.radius, undefined),
         depth: numberOr(waterway.depth, undefined),
         width: numberOr(waterway.width, undefined)
+      });
+    }
+    if (Object.keys(waterVisual).length) {
+      /**
+       * 白名单必须**与水面材质的 uniform 同名**（v2.7）：这些量最终要能一对一地
+       * 写进 `render/water-material.js` 的 uniforms，写在这里的名字如果对不上，
+       * 编辑器里改了半天也只是存下来、永远不会生效。
+       * 只允许表现量：波幅 / 泡沫 / 色带 / 高光 / 吸收 / 边缘压深 / 色偏。
+       */
+      out.waterVisual = {};
+      ['waveAmplitude', 'foamWidth', 'foamNoise', 'shorelineMotion',
+        'bandSteps', 'bandSoftness', 'highlightSteps', 'specular',
+        'absorption', 'aoStrength', 'edgeDarken', 'tint'].forEach(function (key) {
+        if (waterVisual[key] != null) out.waterVisual[key] = key === 'tint'
+          ? waterVisual[key] : numberOr(waterVisual[key], undefined);
       });
     }
     return out;

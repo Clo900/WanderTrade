@@ -127,6 +127,12 @@
       duskFactor: dusk,
       nightFactor: night,
       scene: scene,
+      /**
+       * ⚠ 这批 `terrain.*` 是「配置色 **向季节 tint 混色**」之后的结果，服务道路预览底色
+       * （render/road-style.js）等消费者。**不要**拿它当统一地表的底色：
+       * 夏季预设的 tint 是 0xffffff ⇒ 等于把草地朝白混 28%，整张地图会被冲淡。
+       * 地表底色取自配置调色板本身（见 terrain-layer 的 SURFACE_SLOTS / surfaceBaseColors）。
+       */
       terrain: {
         land: role(P.terrain.grass.color, { season: 'grass', brightness: 1.06 }),
         forest: role(P.terrain.forest.color, { season: 'tree', brightness: 1.02 }),
@@ -138,12 +144,20 @@
         board: role(P.board.color, { warm: true, nightCool: false, brightness: 1.0 }),
         boardEdge: role(P.board.edge, { warm: false, brightness: 0.9 })
       },
+      water: (function () {
+        function waterProfile(type) {
+          const base = P.water[type] || P.water;
+          return {
+            surface: role(base.shallow, { season: 'water', brightness: 1.03, warm: false, wetDarken: -0.08 }),
+            shallow: role(base.shallow, { season: 'water', brightness: 1.03, warm: false, wetDarken: -0.08 }),
+            deep: role(base.deep, { season: 'water', brightness: 0.92, warm: false })
+          };
+        }
+        const sea = waterProfile('sea');
+        return { surface: sea.surface, sea: sea, river: waterProfile('river'), spring: waterProfile('spring') };
+      })(),
       mountain: {
         body: role(P.mountain.rockMid, { season: 'rock', brightness: 1.0, wetDarken: 0.08 })
-      },
-      river: {
-        surface: role(P.river.surface, { season: 'water', brightness: 1.06, warm: false, wetDarken: -0.06 }),
-        channel: role(P.river.surfaceDeep, { season: 'water', brightness: 0.95, warm: false })
       },
       road: {
         surface: role(P.road.trade.color, { warm: true, brightness: 1.0, wetDarken: 0.16 }),
@@ -171,7 +185,7 @@
         flower: role(P.flower.petals[0], { season: 'flower', brightness: 1.06 }),
         crop: role(P.crop.line[0], { season: 'field', brightness: 1.03 }),
         rock: role(P.rock.mid, { season: 'rock', brightness: 0.98 }),
-        puddle: role(P.river.surface, { season: 'water', brightness: 1.08, warm: false })
+        puddle: role(P.water.shallow, { season: 'water', brightness: 1.08, warm: false })
       },
       ambience: {
         cloud: role(P.cloud.color, { warm: false, brightness: lerp(0.85, 1.0, day) }),

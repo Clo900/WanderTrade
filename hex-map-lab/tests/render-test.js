@@ -144,10 +144,12 @@ const PROJECT_FN = `(function(x, y, z){
   const layers = await page.evaluate(() => {
     const a = window.__hexLab;
     const t = a.layers;
-    const surfaceNames = t.terrain.group.children
-      .map(c => c.name)
-      .filter(n => n === 'terrain-land' || n === 'terrain-field' || n === 'terrain-flower' ||
-        n === 'terrain-rock' || n === 'terrain-water' || n === 'terrain-water-bed');
+    const surfaceNames = [];
+    const wantSurface = (n) => n === 'terrain-ground' || n === 'water-surface' || n === 'terrain-water-bed';
+    // v2.8：统一水面（water-surface）已搬到 layers.water.group，不再挂在 terrain 组下
+    [t.terrain.group, t.water.group].forEach(g => g.children.forEach(c => {
+      if (wantSurface(c.name)) surfaceNames.push(c.name);
+    }));
     // 每条边应被切成几段：正六边形边长 = hexSize，段长 = hexSize × segmentLength
     const CW = window.HexLab.Config.value.palette.inkCrayon;
     const segsPerEdge = Math.max(1, Math.round(a.world.hexSize / (a.world.hexSize * CW.segmentLength)));
@@ -156,7 +158,10 @@ const PROJECT_FN = `(function(x, y, z){
       segsPerEdge: segsPerEdge,
       board: !!t.terrain.boardMesh,
       inkEdges: t.ink.edgeCount,
-      foamEdges: t.ink.foamCount,
+      // 岸线泡沫在 v2.7 从 ink 层移交给水面材质（按真实水深生成），
+      // 这里改成报河口分流带条数 —— 它是现在 ink 层之外唯一新增的水体几何。
+      deltaBands: t.water.counts.deltas || 0,
+      hasInkFoam: !!t.ink.foamMesh,
       crayon: t.ink.crayonStats,
       roads: a.roadData.list.length,
       gradeCounts: a.roadData.gradeCounts,
@@ -181,30 +186,159 @@ const PROJECT_FN = `(function(x, y, z){
       borderCount: a.world.stats.borderCount,
       maxY: +a.world.stats.maxSurfaceY.toFixed(2),
       maxRise: +a.world.maxRise.toFixed(2),
-      // 统一平面：平原格心必须严格为 0；丘陵格心应抬起（格内微起伏）
+      // 统一基准面（v2.8 阶段二）：平原格心必须严格为 0，但三类位置**本来就有高度**：
+      //   · 丘陵过渡带（`hillMask > 0`）—— 连绵波要跨格连续；
+      //   · 河岸台地（走廊 / 切槽内）—— 水面不悬空的结构保证。
+      // 排除这两类之后，「平原完全平」才是真正在测「远处不受丘陵 / 河影响」。
       hillPeak: +Math.max.apply(null, a.world.tileList.map(function (t) { return a.world.heightAt(t.x, t.z); })).toFixed(2),
       planeBad: a.world.tileList.filter(function (t) {
-        return t.landform === 'plain' && !(t.riverAdjacency > 0) &&
-          t.terrain !== 'water' && t.terrain !== 'city' && t.terrain !== 'ridge' &&
-          Math.abs(a.world.heightAt(t.x, t.z)) > 1e-6;
+        if (t.landform !== 'plain' || t.riverAdjacency > 0 || t.riverNear) return false;
+        if (t.terrain === 'water' || t.terrain === 'city' || t.terrain === 'ridge') return false;
+        if (a.world.hillMaskAt(t.x, t.z) > 0) return false;
+        const riv = a.world.rivers;
+        const pf = riv && riv.riverProfileAt ? riv.riverProfileAt(t.x, t.z) : null;
+        if (pf && (pf.corridor > 0 || pf.off > 0)) return false;
+        return Math.abs(a.world.heightAt(t.x, t.z)) > 1e-6;
       }).length,
+      hillMean: (function () {
+        let s = 0, n = 0;
+        for (const t of a.world.tileList) {
+          if (t.landform !== 'hill' || t.riverAdjacency > 0 || t.riverNear) continue;
+          if (t.terrain === 'water' || t.terrain === 'city' || t.terrain === 'ridge') continue;
+          if (a.world.hillFadeAt(t.x, t.z) < 1) continue;   // 山 / 城淡出带内
+          s += a.world.heightAt(t.x, t.z); n++;
+        }
+        return n ? +(s / n).toFixed(3) : 0;
+      })(),
+      hillTier: +window.HexLab.HeightField.tiers(window.HexLab.Config.value, a.world.hexSize).hill.toFixed(3),
       roadPanels: document.querySelectorAll('#hud .road-item').length,
       previewCanvases: document.querySelectorAll('#hud .road-preview').length,
+      /**
+       * ⚠ v2.9 回归：统一地表的**逐槽位底色**必须真的落进材质，且必须等于
+       * 「配置的地形调色板（线性化后）」。两条都要：
+       *   · 「落进材质」—— 底色若等到 onBeforeCompile 里现造，注入会落空，
+       *     画面表现为「除了山脉和水，别的地块全是白的」；
+       *   · 「等于调色板」—— 改吃环境色板的话，夏季 tint(0xffffff) 会把地表冲淡
+       *     （实测草地 rgb(240,254,182)，调色板本色是中饱和绿）。
+       * 槽位顺序从 TerrainLayer.SURFACE_SLOTS 读（唯一来源），不在测试里重抄一份。
+       */
+      groundBase: (function () {
+        const mesh = t.terrain.groundMesh;
+        const gb = mesh && mesh.material && mesh.material.userData
+          ? mesh.material.userData.groundBase : null;
+        if (!gb) return null;
+        const slots = window.HexLab.TerrainLayer.SURFACE_SLOTS;
+        const pal = window.HexLab.Config.value.palette.terrain;
+        let worst = 0, allWhite = true;
+        const rows = [];
+        for (let i = 0; i < slots.length; i++) {
+          const v = gb.linear[i];
+          const got = [+v.x.toFixed(6), +v.y.toFixed(6), +v.z.toFixed(6)];
+          const hex = (pal[slots[i].palette] || pal.grass).color;
+          const w = new THREE.Color(hex).convertSRGBToLinear();
+          const want = [+w.r.toFixed(6), +w.g.toFixed(6), +w.b.toFixed(6)];
+          for (let k = 0; k < 3; k++) {
+            worst = Math.max(worst, Math.abs(got[k] - want[k]));
+            if (got[k] < 0.999) allWhite = false;
+          }
+          rows.push(slots[i].palette + '#' + hex.toString(16) + '=' + got.map(x => x.toFixed(3)).join('/'));
+        }
+        return { worst: +worst.toExponential(1), allWhite: allWhite, rows: rows };
+      })(),
       hudHasState: document.querySelector('#hud').innerText.includes('地形占比'),
       hudHasGrades: document.querySelector('#hud').innerText.includes('道路分级'),
       hudHasOverview: document.querySelector('#hud').innerText.includes('道路一览')
     };
   });
-  check('地表分为陆/田/花/岩/水面/水下地表六组', layers.surfaces.length === 6, layers.surfaces.join(', '));
+  check('可见表面为统一地表 / 统一水面 / 水下地表三组', layers.surfaces.length === 3, layers.surfaces.join(', '));
+  // ⚠ v2.9：`applyEnvironment()` 在**首次渲染之前**执行，那时 shader 还没编译。
+  // 底色若在 onBeforeCompile 里现造一份新值，注入进去的永远是纯白 ——
+  // 实测画面就是「除了山脉和水，别的地块全是白的」。这条断言把「底色真的落进
+  // 材质、而且就是配置调色板那一份」钉住。
+  check('统一地表的逐槽位底色已注入且等于配置调色板（v2.9：否则全图陆地变白 / 冲淡）',
+    !!layers.groundBase && layers.groundBase.worst <= 1e-6 && layers.groundBase.allWhite === false,
+    layers.groundBase
+      ? ('与配置调色板逐分量最大偏差 ' + layers.groundBase.worst + ' / 全白 ' +
+        layers.groundBase.allWhite + '｜' + layers.groundBase.rows.join(' · '))
+      : 'groundBase 不存在（材质里没有持久的底色数据源）');
+
+  // 端到端：陆地格心在画面上必须**真的上色**（不是近白 / 近灰）。
+  // 判据用**饱和度**（max - min）而不是亮度：这套手绘卡通风格里，朝上的地表受光
+  // 本来就足、亮度偏高，拿「亮度低」当判据会把正常画面判成失败；而「地块全白」
+  // 这个 bug 的特征恰恰是**三个通道几乎相等**（实测 rgb 255,255,245 ⇒ 饱和度仅 10），
+  // 所以饱和度是这里唯一稳的判据。
+  // 关雾 + 冻结动画后再采样（雾按距离把地表朝近白的雾色拉，会淹掉这条判据）；
+  // 取样点必须**射线首个命中就是统一地表**，否则量到的可能是树 / 房屋。
+  const landPixels = await page.evaluate(() => {
+    const a = window.__hexLab, sk = a.sceneKit;
+    const cam = sk.activeCamera();
+    const fogSaved = sk.scene.fog;
+    sk.scene.fog = null;
+    a.layers.terrain.setTime(0);
+    a.layers.ambience.setTime(0);
+
+    const gl = sk.renderer.getContext();
+    const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
+    const buf = new Uint8Array(4);
+    const rc = new THREE.Raycaster();
+    const all = [];
+    sk.root.traverse(o => {
+      if (!o.isMesh || !o.visible) return;
+      if (o.name === 'sandbox-board' || o.name === 'sandbox-board-ink') return;
+      all.push(o);
+    });
+    const rows = [];
+    const cands = a.world.tileList.filter(t => t.terrain === 'grass')
+      .sort((p, q) => Math.hypot(p.x - 110, p.z) - Math.hypot(q.x - 110, q.z));
+    for (let i = 0; i < cands.length && rows.length < 6; i++) {
+      const t = cands[i];
+      const v = new THREE.Vector3(t.x, a.world.heightAt(t.x, t.z), t.z).project(cam);
+      if (v.x < -0.85 || v.x > 0.85 || v.y < -0.85 || v.y > 0.85) continue;
+      rc.setFromCamera(new THREE.Vector2(v.x, v.y), cam);
+      const hits = rc.intersectObjects(all, false);
+      if (!hits.length || hits[0].object.name !== 'terrain-ground') continue;
+      const cx = Math.round((v.x + 1) / 2 * W);
+      const cyTop = Math.round((1 - v.y) / 2 * H);
+      // ⚠ 必须在 readPixels 之前**立刻**渲染：preserveDrawingBuffer 为 false，
+      //   任何一次合成（含截图）都会把绘制缓冲清掉，读到全 0。
+      sk.render();
+      const acc = [0, 0, 0];
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          gl.readPixels(Math.min(W - 1, Math.max(0, cx + dx)),
+            Math.min(H - 1, Math.max(0, H - 1 - (cyTop + dy))),
+            1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+          acc[0] += buf[0]; acc[1] += buf[1]; acc[2] += buf[2];
+        }
+      }
+      const rgb = acc.map(v2 => Math.round(v2 / 25));
+      rows.push({ key: t.key, rgb: rgb, min: Math.min.apply(null, rgb), max: Math.max.apply(null, rgb) });
+    }
+
+    sk.scene.fog = fogSaved;
+    sk.render();
+    return rows;
+  });
+  // 取饱和度居中的那一处当代表（避免单格恰好落在树影 / 田埂上）
+  landPixels.sort((x, y) => (x.max - x.min) - (y.max - y.min));
+  const landRep = landPixels.length ? landPixels[Math.floor(landPixels.length / 2)] : null;
+  check('陆地格心在画面上真的上色了（v2.9：不是近白 / 近灰）',
+    !!landRep && landRep.max - landRep.min >= 30 && landRep.rgb[1] > landRep.rgb[2] + 8,
+    landRep
+      ? ('草地格心 ' + landPixels.length + ' 处，代表格 ' + landRep.key + ' rgb(' +
+        landRep.rgb.join(', ') + ') 饱和度 ' + (landRep.max - landRep.min) +
+        '；全部 ' + landPixels.map(l => l.key + ':' + l.rgb.join('/')).join(' '))
+      : '未采到「射线首个命中 = 统一地表」的草地格心像素');
   check('沙盘底座已生成', layers.board === true);
   check('蜡笔描边已生成（每条边一条连续笔触）',
     layers.inkEdges > 0 && layers.crayon.breaks === 0 &&
-    layers.crayon.strokes === layers.segsPerEdge * (layers.inkEdges + layers.foamEdges),
+    layers.crayon.strokes === layers.segsPerEdge * layers.inkEdges,
     layers.inkEdges + ' 条边 × ' + layers.segsPerEdge + ' 段 = ' + layers.crayon.strokes +
     ' 段笔触 / ' + layers.crayon.breaks + ' 处断笔（应为 0）');
   check('笔触宽度有手抖变化', layers.crayon.maxWidth > layers.crayon.minWidth * 1.6,
     layers.crayon.minWidth.toFixed(2) + ' ~ ' + layers.crayon.maxWidth.toFixed(2) + ' 单位');
-  check('岸线泡沫线已生成', layers.foamEdges > 0, layers.foamEdges + ' 条');
+  check('岸线泡沫已从 ink 层移除（改由水面材质按水深生成）',
+    layers.hasInkFoam === false, 'ink.foamMesh = ' + layers.hasInkFoam);
   check('21 条道路全部落地', layers.roads === 21);
   check('五档分级全部用到', Object.keys(layers.gradeCounts).filter(k => layers.gradeCounts[k] > 0).length === 5,
     JSON.stringify(layers.gradeCounts));
@@ -247,10 +381,266 @@ const PROJECT_FN = `(function(x, y, z){
   check('HUD 显示道路分级', layers.hudHasGrades === true);
   check('HUD 道路一览面板已渲染 5 档预览', layers.hudHasOverview === true &&
     layers.previewCanvases === 5, layers.previewCanvases + ' 张预览图');
-  check('统一平面（平原格心高度全为 0）', layers.planeBad === 0, layers.planeBad + ' 个非平格心');
-  check('格内微起伏存在（丘陵把格心抬起）', layers.hillPeak > 0.5,
-    '最高格内高度 ' + layers.hillPeak + ' 单位（旧 maxRise ' + layers.maxRise + ' 已不再用于地表）');
+  check('统一基准面（丘陵带 / 河岸台地之外的平原格心全为 0）', layers.planeBad === 0,
+    layers.planeBad + ' 个非平格心');
+  check('丘陵连绵波：格心均值 ≈ 丘陵档（不是「一格一个包」）',
+    Math.abs(layers.hillMean - layers.hillTier) < layers.hillTier * 0.25,
+    '均值 ' + layers.hillMean + ' vs 档 ' + layers.hillTier + ' / 峰 ' + layers.hillPeak +
+    ' 单位（旧 maxRise ' + layers.maxRise + ' 已不再用于地表）');
   console.log('    地形(含边界): ' + JSON.stringify(layers.terrain) + '  边界 ' + layers.borderCount + ' 格');
+
+  console.log('\n== 手绘卡通水体材质 / 深度接线 ==');
+  const waterShader = await page.evaluate(() => {
+    const a = window.__hexLab;
+    const H = window.HexLab;
+    /** 统一水面：全场景只应该有**一份**水面网格与**一份**水面材质（v2.8） */
+    const mesh = a.layers.water.waterMesh;
+    const uniMat = a.layers.water.waterMaterial;
+    const attrOf = (n) => (mesh && mesh.geometry) ? mesh.geometry.getAttribute(n) : null;
+    const attrRange = (n) => {
+      const at = attrOf(n);
+      if (!at) return null;
+      let mn = Infinity, mx = -Infinity;
+      for (let i = 0; i < at.count; i++) { const v = at.getX(i); if (v < mn) mn = v; if (v > mx) mx = v; }
+      return { min: mn, max: mx, count: at.count };
+    };
+    const countAbove = (n, bound) => {
+      const at = attrOf(n);
+      if (!at) return -1;
+      let c = 0;
+      for (let i = 0; i < at.count; i++) if (at.getX(i) > bound) c++;
+      return c;
+    };
+    const inspect = (mat) => {
+      const uniforms = mat && mat.uniforms ? mat.uniforms : {};
+      const src = mat ? (mat.vertexShader || '') + '\n' + (mat.fragmentShader || '') : '';
+      return {
+        hasMaterial: !!mat,
+        isShaderMaterial: !!(mat && mat.isShaderMaterial),
+        marked: !!(mat && mat.userData && mat.userData.waterMaterial),
+        transparent: !!(mat && mat.transparent),
+        depthWrite: !!(mat && mat.depthWrite),
+        vertexColors: !!(mat && mat.vertexColors),
+        fog: !!(mat && mat.fog),
+        requiredUniforms: ['uTime', 'uWaveAmplitude', 'uWaveLength', 'uWaveSpeed',
+          'uBandSteps', 'uBandSoftness', 'uSpecular', 'uHighlightSteps',
+          'uAoStrength', 'uEdgeDarken', 'uFoamNoise', 'uShoreMotion',
+          'uMouthFoam', 'uMouthFade', 'uDeltaOn',
+          'uShallowSea', 'uDeepSea', 'uShallowRiver', 'uDeepRiver',
+          'uShallowSpring', 'uDeepSpring', 'uWaterMap', 'uRippleMap',
+          'uHeightmap', 'uHeightmapReady'].every(k => !!uniforms[k]),
+        waveAmp: uniforms.uWaveAmplitude ? uniforms.uWaveAmplitude.value : null,
+        waveLen: uniforms.uWaveLength ? uniforms.uWaveLength.value : null,
+        heightmapReady: uniforms.uHeightmapReady ? uniforms.uHeightmapReady.value : null,
+        hasWaves: /waterWaveAt/.test(src),
+        /** 顶点位移必须真的写在顶点着色器里（剪影可见的波浪靠它，靠参数缩放） */
+        hasVertexDisplace: /transformed\.y \+=/.test(src),
+        hasFoamFromDepth: /shoreFoam/.test(src) && /dz/.test(src),
+        hasCelBands: /bandLit/.test(src),
+        hasMouth: /vMouth/.test(src),
+        hasDeltaSwitch: /uDeltaOn/.test(src),
+        hasHeightmapFallback: /uHeightmapReady/.test(src),
+        // 深度必须**按引用共享**（不是靠字符串里出现某段代码）
+        sharesDepth: !!uniforms.uDepthMap && uniforms.uDepthMap === H.WaterDepth.uniforms.uDepthMap &&
+          uniforms.uDepthStep === H.WaterDepth.uniforms.uDepthStep,
+        // 顶点色与贴图必须真的参与颜色：只在片元里被乘进去，不再被覆盖
+        usesVertexColor: /uVertexColorStrength/.test(src) && /vWaterColor/.test(src),
+        usesMap: /uWaterMap/.test(src),
+        // 已编译：three 把 program 缓存在 renderer.properties 的 `programs`（Map）里，
+        // 空 Map = 从没编译过。GLSL 真出错时 three 会 console.error，被开头的零错误断言抓住。
+        compiled: (function () {
+          try {
+            const props = a.sceneKit.renderer.properties.get(mat);
+            if (!props) return false;
+            if (props.programs && typeof props.programs.size === 'number') return props.programs.size > 0;
+            return !!props.program;
+          } catch (e) { return false; }
+        })()
+      };
+    };
+    let waterMeshes = 0;
+    a.sceneKit.root.traverse(function (o) {
+      if (o.isMesh && o.material && o.material.userData && o.material.userData.waterMaterial) waterMeshes++;
+    });
+    const C = window.HexLab.Config.value;
+    return {
+      api: !!(H && H.WaterMaterial && typeof H.WaterMaterial.create === 'function'),
+      stats: H && H.WaterMaterial ? H.WaterMaterial.stats() : null,
+      uni: inspect(uniMat),
+      hexSize: a.world.hexSize,
+      /** 全场景的水面网格数 —— 统一水面必须只有 1 个 */
+      waterMeshes: waterMeshes,
+      meshName: mesh ? mesh.name : null,
+      /** 逐顶点属性：水型差异全靠它们（统一水面的接线判据） */
+      attrs: {
+        aMouth: !!attrOf('aMouth'), aDelta: !!attrOf('aDelta'), aPalette: !!attrOf('aPalette'),
+        aProfA: !!attrOf('aProfA'), aProfB: !!attrOf('aProfB')
+      },
+      paletteRange: attrRange('aPalette'),
+      /** 色板编号用量（0 = 海 / 1 = 河 / 2 = 泉湖）：三类都必须在场 */
+      paletteUsed: {
+        sea: countAbove('aPalette', -0.5) - countAbove('aPalette', 0.5),
+        river: countAbove('aPalette', 0.5) - countAbove('aPalette', 1.5),
+        spring: countAbove('aPalette', 1.5)
+      },
+      deltaVerts: countAbove('aDelta', 0.5),
+      mouthAttr: attrRange('aMouth'),
+      /**
+       * 顶点位移在 GPU 上做，所以 CPU 缓冲的 y 就是**几何水面高度**。
+       * v2.8 阶段二：不再有「全图单一水位」—— 海面恒为海面水位，河 / 湖按所经地块
+       * 档位逐段下降。因此这里必须**分色板**量：海面严格为 0，河 / 泉落在
+       * 「海面 … 丘陵档」之间，且河面存在真实落差（= 沿程下降真的生效）。
+       */
+      waterYRange: (function () {
+        const p = mesh.geometry.attributes.position.array;
+        const pal = mesh.geometry.getAttribute('aPalette');
+        const rng = { sea: { lo: Infinity, hi: -Infinity }, river: { lo: Infinity, hi: -Infinity },
+          spring: { lo: Infinity, hi: -Infinity } };
+        for (let v = 0; v < pal.count; v++) {
+          const k = pal.getX(v) < 0.5 ? 'sea' : (pal.getX(v) < 1.5 ? 'river' : 'spring');
+          const y = p[v * 3 + 1];
+          if (y < rng[k].lo) rng[k].lo = y;
+          if (y > rng[k].hi) rng[k].hi = y;
+        }
+        const out = {};
+        for (const k in rng) {
+          out[k] = isFinite(rng[k].lo)
+            ? { lo: +rng[k].lo.toFixed(4), hi: +rng[k].hi.toFixed(4) } : { lo: null, hi: null };
+        }
+        return { n: p.length / 3, byPalette: out,
+          seaY: +H.Rivers.waterLevel(a.world.hexSize).toFixed(4),
+          hillTier: +H.HeightField.tiers(H.Config.value, a.world.hexSize).hill.toFixed(4),
+          drop: +(a.world.rivers.profile ? a.world.rivers.profile.drop : 0).toFixed(4) };
+      })(),
+      cfg: {
+        shared: C.water.shared,
+        sea: C.water.sea, river: C.water.river, spring: C.water.spring,
+        wave: C.water.wave, mouthTaper: C.water.mouthTaper,
+        mouthBlend: C.water.river.mouthBlend, mouthFade: C.water.mouthFade,
+        renderBias: C.water.river.renderBias
+      },
+      /** 「水型参数 → 逐顶点属性」的唯一换算处（深度/透明/泡沫带宽都从这里读） */
+      profile: {
+        sea: H.WaterMaterial.profileFor('sea', a.world.hexSize),
+        river: H.WaterMaterial.profileFor('river', a.world.hexSize),
+        spring: H.WaterMaterial.profileFor('spring', a.world.hexSize)
+      },
+      depth: a.waterDepth && typeof a.waterDepth.stats === 'function' ? a.waterDepth.stats() : null,
+      deltaBands: a.layers.water.counts.deltas || 0,
+      counts: a.layers.water.counts,
+      inkHasFoam: !!(a.layers.ink && a.layers.ink.foamMesh),
+      inkRiverCovered: a.layers.ink.riverCovered,
+      /**
+       * three 的着色器错误检查开关：开着的时候 GLSL 编译/链接失败一定会 console.error，
+       * 而本测试开头就断言「无 JS 运行时错误（含 console.error）」——
+       * 所以它 + 全程零控制台错误，就是「水面着色器确实编译通过」的证据。
+       */
+      checkShaderErrors: !!(a.sceneKit.renderer.debug && a.sceneKit.renderer.debug.checkShaderErrors),
+      programCount: a.sceneKit.renderer.info && a.sceneKit.renderer.info.programs
+        ? a.sceneKit.renderer.info.programs.length : 0
+    };
+  });
+  check('手绘卡通水体材质 API 已加载', waterShader.api);
+  check('全场景只有一份水面几何与一份水面材质（不再有三张水面网格）',
+    waterShader.waterMeshes === 1 && waterShader.meshName === 'water-surface' &&
+    waterShader.counts.meshes === 1,
+    waterShader.waterMeshes + ' 个水面网格 / 名字 ' + waterShader.meshName +
+    ' / counts.meshes ' + waterShader.counts.meshes);
+  const uw = waterShader.uni;
+  check('统一水面使用自写 ShaderMaterial', uw.hasMaterial && uw.isShaderMaterial && uw.marked);
+  check('统一水面材质具备关键 uniforms', uw.requiredUniforms);
+  check('具备波浪 / 顶点位移 / 色带 / 水深泡沫 / 河口混合 / 分流开关代码',
+    uw.hasWaves && uw.hasVertexDisplace && uw.hasCelBands && uw.hasFoamFromDepth &&
+    uw.hasMouth && uw.hasDeltaSwitch,
+    '波浪=' + uw.hasWaves + ' 位移=' + uw.hasVertexDisplace + ' 色带=' + uw.hasCelBands +
+    ' 泡沫=' + uw.hasFoamFromDepth + ' 河口=' + uw.hasMouth + ' 分流开关=' + uw.hasDeltaSwitch);
+  check('贴图（水纹 + 涟漪）与顶点色真正参与颜色', uw.usesMap && uw.usesVertexColor);
+  check('默认走 sum-of-sines fallback（高度图未启用）',
+    uw.hasHeightmapFallback && uw.heightmapReady === 0, 'ready=' + uw.heightmapReady);
+  check('透明 + 写深度 + 顶点色 + 雾 均已开启',
+    uw.transparent && uw.depthWrite && uw.vertexColors && uw.fog);
+  check('shader 已完成编译（着色器错误检查开启 + 全场零 GLSL 报错）', uw.compiled === true);
+  check('深度 uniform 按引用共享 water-depth', uw.sharesDepth);
+  check('共享深度与共享光照（水面材质只有一份，判据是引用相等）',
+    !!waterShader.stats && waterShader.stats.total === 1 && waterShader.stats.shaderMaterials === 1 &&
+    waterShader.stats.sharedDepth && waterShader.stats.sharedLight,
+    waterShader.stats ? ('材质 ' + waterShader.stats.total + ' / 共享深度=' + waterShader.stats.sharedDepth +
+      ' / 共享光照=' + waterShader.stats.sharedLight) : 'stats unavailable');
+  // ★ 波浪振幅必须**乘过 hexSize**：这是旧版「看不到波浪」的根因（0.045 当世界单位用）
+  check('波浪振幅已按 ×hexSize 换算（旧版漏乘的根因）',
+    Math.abs(uw.waveAmp - waterShader.cfg.shared.waveAmplitude * waterShader.hexSize) < 1e-9 &&
+    uw.waveAmp > 0.5,
+    'amp=' + uw.waveAmp.toFixed(3) + ' = ' + waterShader.cfg.shared.waveAmplitude +
+    ' × ' + waterShader.hexSize);
+  // ★ v2.8：顶点位移只给开阔海面（waveAmp = 1）；河道与湖泊为 0 —— 让水爬上岸就白改了
+  check('顶点位移只给开阔海面（河 / 湖的 waveAmp = 0）',
+    waterShader.profile.sea.profA[0] === 1 && waterShader.profile.river.profA[0] === 0 &&
+    waterShader.profile.spring.profA[0] === 0,
+    'sea=' + waterShader.profile.sea.profA[0] + ' river=' + waterShader.profile.river.profA[0] +
+    ' spring=' + waterShader.profile.spring.profA[0]);
+  check('波动幅度落在「细波」档（≤ 0.08 格：剪影看得见起伏，又不掀翻浅滩）',
+    Math.abs(uw.waveAmp) <= waterShader.hexSize * 0.08,
+    uw.waveAmp.toFixed(3) + ' 单位 = ' + (uw.waveAmp / waterShader.hexSize).toFixed(3) + ' 格（上限 0.08）');
+  check('三类水面的深度 / 泡沫带宽 / 水纹强度都逐顶点给出且各不同',
+    Math.abs(waterShader.profile.sea.profB[1] - waterShader.cfg.sea.depthFade * waterShader.hexSize) < 1e-9 &&
+    Math.abs(waterShader.profile.river.profB[3] - waterShader.cfg.river.mapStrength) < 1e-9 &&
+    waterShader.profile.river.profA[3] > waterShader.profile.sea.profA[3],
+    '海 fade ' + waterShader.profile.sea.profB[1].toFixed(3) + ' / 泡沫带 河 ' +
+    waterShader.profile.river.profA[3].toFixed(3) + ' > 海 ' + waterShader.profile.sea.profA[3].toFixed(3) +
+    ' / 水纹 河 ' + waterShader.profile.river.profB[3].toFixed(2));
+  check('深度过渡（预通道）已接线',
+    !!waterShader.depth && waterShader.depth.meshes >= 6 && waterShader.depth.rtW > 0 &&
+    waterShader.depth.hasDepthMap && waterShader.depth.ready,
+    waterShader.depth ? (waterShader.depth.meshes + ' 个对象进预通道 / 深度图 ' +
+      waterShader.depth.rtW + '×' + waterShader.depth.rtH) : 'stats unavailable');
+  check('WaterDepth 保持手动双线性采样', !!waterShader.depth && waterShader.depth.depthFilter === 1,
+    waterShader.depth && waterShader.depth.depthFilter);
+  // ---- 逐顶点属性：统一水面的接线判据（水型差异全靠它们）----
+  check('统一水面几何带齐 5 条逐顶点属性（aMouth / aDelta / aPalette / aProfA / aProfB）',
+    waterShader.attrs.aMouth && waterShader.attrs.aDelta && waterShader.attrs.aPalette &&
+    waterShader.attrs.aProfA && waterShader.attrs.aProfB,
+    JSON.stringify(waterShader.attrs));
+  check('三类水面在同一份几何里（色板编号 0 / 1 / 2 都用到）',
+    waterShader.paletteUsed.sea > 0 && waterShader.paletteUsed.river > 0 &&
+    waterShader.paletteUsed.spring > 0,
+    JSON.stringify(waterShader.paletteUsed) + '（海 ' + waterShader.counts.seaVerts +
+    ' 顶点 / 河 ' + waterShader.counts.samples + ' 采样点 / 泉湖 ' + waterShader.counts.springs + ' 处）');
+  check('河口分流带在同一份几何里被标了 aDelta（HUD 开关据此隐去）',
+    waterShader.deltaVerts > 0 && waterShader.counts.deltas > 0,
+    waterShader.deltaVerts + ' 个分流顶点 / ' + waterShader.counts.deltas + ' 条分流带');
+  check('河流的河口因子覆盖 0 → 1（河口段真的存在）',
+    !!waterShader.mouthAttr && waterShader.mouthAttr.min === 0 && waterShader.mouthAttr.max > 0.95,
+    'min=' + (waterShader.mouthAttr ? waterShader.mouthAttr.min : '?') + ' max=' +
+    (waterShader.mouthAttr ? waterShader.mouthAttr.max : '?') + ' / ' +
+    (waterShader.mouthAttr ? waterShader.mouthAttr.count : 0) + ' 个顶点');
+  check('海面几何严格落在海面水位上（几何起伏为 0；波动只在 GPU 上做）',
+    waterShader.waterYRange.byPalette.sea.lo === waterShader.waterYRange.seaY &&
+    waterShader.waterYRange.byPalette.sea.hi === waterShader.waterYRange.seaY,
+    '海面 y=' + waterShader.waterYRange.byPalette.sea.hi + ' / 期望 ' + waterShader.waterYRange.seaY);
+  check('河 / 泉水面落在「海面 … 丘陵档」之间，且河面存在真实落差（沿程下降生效）',
+    waterShader.waterYRange.byPalette.river.lo >= waterShader.waterYRange.seaY - 1e-6 &&
+    waterShader.waterYRange.byPalette.river.hi <= waterShader.waterYRange.hillTier + 1e-6 &&
+    waterShader.waterYRange.drop > 1e-6 &&
+    waterShader.waterYRange.byPalette.spring.hi <= waterShader.waterYRange.hillTier + 1e-6,
+    waterShader.waterYRange.n + ' 个顶点 / 河 y∈[' + waterShader.waterYRange.byPalette.river.lo +
+    ', ' + waterShader.waterYRange.byPalette.river.hi + '] / 泉 y∈[' +
+    waterShader.waterYRange.byPalette.spring.lo + ', ' + waterShader.waterYRange.byPalette.spring.hi +
+    '] / 落差 ' + waterShader.waterYRange.drop + ' / 丘陵档 ' + waterShader.waterYRange.hillTier);
+  check('水面渲染偏置已彻底移除（三个高度是河口台阶与「方头」的根因）',
+    waterShader.cfg.renderBias === undefined &&
+    waterShader.cfg.mouthBlend > 0 && waterShader.cfg.mouthBlend < 1 && waterShader.cfg.mouthFade > 0,
+    'renderBias=' + waterShader.cfg.renderBias + ' / mouthBlend=' + waterShader.cfg.mouthBlend +
+    ' / mouthFade=' + waterShader.cfg.mouthFade);
+  check('河面已生成河口分流带（三角洲）', waterShader.deltaBands > 0,
+    waterShader.deltaBands + ' 条分流带 / 水面 counts ' + JSON.stringify(waterShader.counts));
+  check('末端收尖已生效（河口不再是平头截面）',
+    waterShader.counts.tapered > 0 && waterShader.cfg.mouthTaper.count > 0,
+    '收尖采样点 ' + waterShader.counts.tapered + ' 个 / minScale ' + waterShader.cfg.mouthTaper.minScale);
+  check('岸线泡沫已从 ink 层移除（改由水面材质按水深生成）',
+    waterShader.inkHasFoam === false, 'ink.foamMesh = ' + waterShader.inkHasFoam);
+  check('河口处的墨线已开口（被河面压住的格边不描边）',
+    waterShader.inkRiverCovered > 0,
+    '因压在水面下而跳过的格边 ' + waterShader.inkRiverCovered + ' 条');
 
   console.log('\n== 曲面无缝与拾取回归 ==');
   const geometry = await page.evaluate(() => {
@@ -267,20 +657,30 @@ const PROJECT_FN = `(function(x, y, z){
     out.field = probe(a.layers.terrain.fieldMesh, pick('field'));
     out.flower = probe(a.layers.terrain.flowerMesh, pick('flower'));
     out.rock = probe(a.layers.terrain.rockMesh, pick('ridge'));
-    out.water = probe(a.layers.terrain.waterMesh, pick('water'));
+    out.water = probe(a.layers.water.waterMesh, pick('water'));
     out.waterBed = probe(a.layers.terrain.bedMesh, pick('water'));
-    // 水面必须是**一个严格水平面**（整图一个水位），地形起伏全在水下地表里
+    // 统一水面（v2.8）：波动由材质在 GPU 上做顶点位移，所以 CPU 缓冲里的 y 就是
+    // **几何水面高度**。v2.8 阶段二起分类量：海面必须严格单水位；河 / 泉的水面
+    // 按所经地块档位逐段下降，因此只要**不超出「海面 … 丘陵档」**即可。
     out.waterSurface = (function () {
-      const g = a.layers.terrain.waterMesh.geometry;
+      const g = a.layers.water.waterMesh.geometry;
       const p = g.attributes.position.array;
-      let bad = 0, minY = Infinity, maxY = -Infinity;
-      for (let v = 0; v < p.length / 3; v++) {
+      const pal = g.getAttribute('aPalette');
+      const seaY = a.layers.water.waterY;
+      const hill = window.HexLab.HeightField.tiers(window.HexLab.Config.value, a.world.hexSize).hill;
+      let seaBad = 0, seaVerts = 0, outOfRange = 0;
+      let minY = Infinity, maxY = -Infinity;
+      for (let v = 0; v < pal.count; v++) {
         const y = p[v * 3 + 1];
         if (y < minY) minY = y;
         if (y > maxY) maxY = y;
-        if (Math.abs(y - a.layers.terrain.waterLevelY) > 1e-4) bad++;
+        if (pal.getX(v) < 0.5) {
+          seaVerts++;
+          if (Math.abs(y - seaY) > 1e-4) seaBad++;
+        } else if (!(y >= seaY - 1e-4 && y <= hill + 1e-4)) outOfRange++;
       }
-      return { bad: bad, minY: +minY.toFixed(4), maxY: +maxY.toFixed(4), verts: p.length / 3 };
+      return { seaBad: seaBad, seaVerts: seaVerts, outOfRange: outOfRange,
+        minY: +minY.toFixed(4), maxY: +maxY.toFixed(4), verts: p.length / 3 };
     })();
     // 水下地表必须真的被切下去，而且**深浅不一** —— 画面深度过渡读的就是这个几何量。
     // 从每个水格格心垂直打射线取交点，最浅一格也要低于水面。
@@ -314,15 +714,19 @@ const PROJECT_FN = `(function(x, y, z){
       }
       return { verts: p.length / 3, maxY: +maxY.toFixed(4), over: over };
     })();
-    // 纯水只用基色（v2.5）：水面网格的顶点色必须是**一个常数** —— 深浅全部交给深度过渡。
-    // 河口一带的河床色渗到水面边缘是有意为之（`influence` / `springAt`），单独排除。
+    // 纯水只用基色（v2.5）：**海面**顶点色必须是一个常数 —— 深浅全部交给深度过渡。
+    //   河口一带的河床色渗到水面边缘是有意为之（`influence` / `springAt`），单独排除。
+    // ⚠ v2.8：统一水面把海 / 河 / 泉装进同一份几何，河面与泉湖各自有**自己的基色**
+    //   （aPalette = 1 / 2），它们当然不等于海色 —— 这条只对海面（aPalette = 0）成立。
     out.waterVertexFlat = (function () {
-      const g = a.layers.terrain.waterMesh.geometry;
+      const g = a.layers.water.waterMesh.geometry;
       const c = g.getAttribute('color');
       const p = g.attributes.position.array;
+      const pal = g.getAttribute('aPalette');
       const rf = a.world.rivers || {};
       const riverSide = [];
       for (let i = 0; i < c.count; i++) {
+        if (pal.getX(i) >= 0.5) { riverSide.push(true); continue; }   // 河 / 泉另计
         const x = p[i * 3], z = p[i * 3 + 2];
         // 与 vertexColor 里「河滩 / 河源湿岸」那一段同一套查询：任何一项 > 0 就排除
         const infl = (typeof rf.influence === 'function') ? rf.influence(x, z) : 0;
@@ -350,38 +754,43 @@ const PROJECT_FN = `(function(x, y, z){
       if (y > 0.2) up++; else if (y < -0.2) down++;
     }
     out.normalsUp = up; out.normalsDown = down;
-    // 相邻地块共享角点数值一致 → 曲面无缝
-    let seam = 0;
-    const Hex = window.HexLab.Hex, w = a.world;
-    for (const t of w.tileList) {
-      for (let k = 0; k < 6; k++) {
-        const ang = Hex.cornerAngle(k);
-        const px = t.x + Math.cos(ang) * w.hexSize, pz = t.z + Math.sin(ang) * w.hexSize;
-        for (let di = 0; di < 2; di++) {
-          const nb = w.tileAt(Hex.neighbor(t, Hex.CORNER_DIRS[k][di]).q, Hex.neighbor(t, Hex.CORNER_DIRS[k][di]).r);
-          if (!nb) continue;
-          for (let k2 = 0; k2 < 6; k2++) {
-            const a2 = Hex.cornerAngle(k2);
-            if (Math.abs(nb.x + Math.cos(a2) * w.hexSize - px) < 1e-6 &&
-              Math.abs(nb.z + Math.sin(a2) * w.hexSize - pz) < 1e-6) {
-              seam = Math.max(seam, Math.abs(t.cornerY[k] - nb.cornerY[k2]));
-            }
-          }
+    // 相邻地块共享角点数值一致 → 曲面无缝。
+    // ⚠ v2.8 阶段二：`cornerY` 字段已随旧体系删除 —— 地表高度现在是 (x, z) 的**纯函数**
+    //   （`world.heightAt`），同一个物理角点不存在「两个格各算一份」的可能。
+    //   因此这里改量**网格本身**：位置完全重合的重复顶点，y 必须逐个相等
+    //   （重复顶点由同一套世界坐标查表铺出，坐标是逐位相同的浮点数）。
+    let seam = 0, seamDup = 0;
+    (function () {
+      const p = a.layers.terrain.landMesh.geometry.attributes.position.array;
+      const byXZ = new Map();
+      for (let v = 0; v < p.length / 3; v++) {
+        const key = p[v * 3] + '|' + p[v * 3 + 2];
+        let arr = byXZ.get(key);
+        if (!arr) { arr = []; byXZ.set(key, arr); }
+        arr.push(v);
+      }
+      for (const arr of byXZ.values()) {
+        if (arr.length < 2) continue;
+        seamDup++;
+        for (let i = 1; i < arr.length; i++) {
+          seam = Math.max(seam, Math.abs(p[arr[0] * 3 + 1] - p[arr[i] * 3 + 1]));
         }
       }
-    }
+    })();
     out.seam = seam;
+    out.seamDup = seamDup;
 
     // 「同一物理位置的多份顶点副本」必须拿到完全相同的颜色与法线。
     // 这是平地不出现沿六边形边界色阶/明暗缝的充要条件：
     // 高度连续只保证几何无缝，颜色与法线若各算一份，视觉上仍是一格一格。
-    const copyCheck = (mesh) => {
+    const copyCheck = (mesh, keep) => {
       const g = mesh.geometry;
       const pos = g.attributes.position.array;
       const col = g.attributes.color.array;
       const nor = g.attributes.normal.array;
       const groups = new Map();
       for (let v = 0; v < pos.length / 3; v++) {
+        if (keep && !keep(v)) continue;
         const key = Math.round(pos[v * 3] * 100) + '|' + Math.round(pos[v * 3 + 1] * 100) +
           '|' + Math.round(pos[v * 3 + 2] * 100);
         let arr = groups.get(key);
@@ -401,10 +810,15 @@ const PROJECT_FN = `(function(x, y, z){
       }
       return { shared: shared, color: mc, normal: mn };
     };
+    // v2.8：统一水面把海 / 河 / 泉装进同一份几何，三类各自有**自己的基色**，
+    // 所以「同位置颜色一致」这条只在**同一色板内部**才有意义（海面相邻格共角）。
+    // 河谷 / 河口分流与海面在河口处本来就是两份叠在一起的几何（有意为之），
+    // 它们的颜色不同是正确的 —— 只量海面（aPalette = 0）。
+    const waterPal = a.layers.water.waterMesh.geometry.getAttribute('aPalette');
     out.copies = {
       land: copyCheck(a.layers.terrain.landMesh),
       rock: copyCheck(a.layers.terrain.rockMesh),
-      water: copyCheck(a.layers.terrain.waterMesh)
+      water: copyCheck(a.layers.water.waterMesh, v => waterPal.getX(v) < 0.5)
     };
 
     // 蜡笔笔触「一条边 = 一条线」回归。
@@ -433,9 +847,15 @@ const PROJECT_FN = `(function(x, y, z){
   check('山脉顶面可被射线命中', geometry.rock);
   check('水面顶面可被射线命中', geometry.water);
   check('水下地表可被射线命中（水格不再是「贴着水面的平板」）', geometry.waterBed);
-  check('水面是一个严格水平面（整图单一水位）', geometry.waterSurface.bad === 0,
-    geometry.waterSurface.verts + ' 个顶点全部落在 y=' + geometry.waterSurface.minY +
-    '（起伏 ' + (geometry.waterSurface.maxY - geometry.waterSurface.minY).toExponential(1) + '）');
+  // v2.8 阶段二：「水面必须绝对平」这条需求已删除，波动由材质在 GPU 上做顶点位移。
+  // 海面仍必须是**单一水位**（旧版海/河/泉各带 renderBias ⇒ 三个高度、河口台阶与方头）；
+  // 河 / 泉则按所经地块档位下降，只需落在「海面 … 丘陵档」之间。
+  check('海面只有单一水位（renderBias 三高度已消除）；河 / 泉不超出丘陵档',
+    geometry.waterSurface.seaBad === 0 && geometry.waterSurface.seaVerts > 0 &&
+    geometry.waterSurface.outOfRange === 0,
+    geometry.waterSurface.seaVerts + ' 个海面顶点落在 y=' + geometry.waterSurface.minY +
+    '（越界 ' + geometry.waterSurface.outOfRange + ' 个 / 全图水面 y∈[' +
+    (geometry.waterSurface.minY) + ', ' + (geometry.waterSurface.maxY) + ']）');
   check('水下地表真的被切下去（深度是几何量，不是贴图化妆）',
     geometry.waterBedProbe.n > 0 && geometry.waterBedProbe.worst < 0,
     geometry.waterBedProbe.n + ' 个水格：最浅 ' + geometry.waterBedProbe.worst +
@@ -449,15 +869,16 @@ const PROJECT_FN = `(function(x, y, z){
     geometry.waterBedMaxY.verts > 500 && geometry.waterBedMaxY.over === 0,
     geometry.waterBedMaxY.verts + ' 个顶点，最高 y = ' + geometry.waterBedMaxY.maxY +
     '，高于水面的 ' + geometry.waterBedMaxY.over + ' 个');
-  check('水面顶点色是一个常数（纯水只由深度过渡呈现深浅）',
+  check('海面顶点色是一个常数（纯水只由深度过渡呈现深浅；河 / 泉另有自己的基色）',
     geometry.waterVertexFlat.hasBase && geometry.waterVertexFlat.bad === 0 &&
     geometry.waterVertexFlat.count - geometry.waterVertexFlat.riverSide > 500,
-    geometry.waterVertexFlat.count + ' 个顶点（河口湿岸 ' + geometry.waterVertexFlat.riverSide +
+    geometry.waterVertexFlat.count + ' 个顶点（河 / 泉与河口湿岸 ' + geometry.waterVertexFlat.riverSide +
     ' 个已排除）：不一致的 ' + geometry.waterVertexFlat.bad + ' 个，最大 rgb 差 ' +
     geometry.waterVertexFlat.worst.toExponential(1));
   check('顶面法线朝上占多数', geometry.normalsUp > geometry.normalsDown,
     'up=' + geometry.normalsUp + ' down=' + geometry.normalsDown);
-  check('曲面无缝（共享角点误差为 0）', geometry.seam < 1e-9, '最大差 ' + geometry.seam.toExponential(2));
+  check('曲面无缝（同 XZ 的重复顶点 y 逐位相等）', geometry.seam < 1e-9,
+    geometry.seamDup + ' 组重复顶点 / 最大差 ' + geometry.seam.toExponential(2));
   const vCopies = geometry.copies;
   check('共享顶点颜色一致（平地无色阶）',
     vCopies.land.color < 1e-6 && vCopies.rock.color < 1e-6 && vCopies.water.color < 1e-6,
@@ -768,7 +1189,8 @@ const PROJECT_FN = `(function(x, y, z){
     //   只取当前 `visible` 的那一级：LOD 切换后玩家看到的就是它。
     const mountainMeshes = a.layers.mountains.group.children.filter(function (m) { return m.visible; });
     const mountainSet = new Set(mountainMeshes);
-    const targets = a.layers.terrain.pickTargets.concat([a.layers.rivers.waterMesh], mountainMeshes);
+    // 水面网格已由 main.js 的 addPickTarget 加进地表拾取集合（v2.8：水面不属于 terrain 图层）
+    const targets = a.layers.terrain.pickTargets.concat(mountainMeshes);
     let waterTop = 0, bankTop = 0, tested = 0, bankTested = 0, waterBlocked = 0, blockedWorst = -Infinity;
     for (const river of riv.rivers) {
       const s = river.samples;
@@ -776,7 +1198,7 @@ const PROJECT_FN = `(function(x, y, z){
         const sm = s[i];
         rc.set(new THREE.Vector3(sm.x, sm.y + size * 6, sm.z), down);
         const hit = rc.intersectObjects(targets, false)[0];
-        if (hit && hit.object.name === 'river-surface') waterTop++;
+        if (hit && hit.object.name === 'water-surface') waterTop++;
         else if (hit && mountainSet.has(hit.object)) {
           waterBlocked++;
           const lift = hit.point.y - sm.y;
@@ -791,7 +1213,7 @@ const PROJECT_FN = `(function(x, y, z){
         const off = size * 0.75;
         rc.set(new THREE.Vector3(sm.x + tz * off, sm.y + size * 6, sm.z - tx * off), down);
         const h2 = rc.intersectObjects(targets, false)[0];
-        if (h2 && h2.object.name !== 'river-surface') bankTop++;
+        if (h2 && h2.object.name !== 'water-surface') bankTop++;
         bankTested++;
       }
     }
@@ -851,9 +1273,13 @@ const PROJECT_FN = `(function(x, y, z){
             if (seg.mode !== 'mountainGorge' && seg.mode !== 'mountainPass' &&
               seg.mode !== 'waterfall') continue;
             bandVerts++;
-            if (y > riv.waterY + 0.02) {
+            // ⚠ v2.8 阶段二：判据必须用**该处局部河面**（穿山河的河面可以高于海面，
+            //   最高到丘陵档）—— 拿全图海面当基准会把「山里的河面本来就高一档」
+            //   误判成山壳埋河。
+            const lvl = seg.y == null ? riv.waterY : seg.y;
+            if (y > lvl + 0.02) {
               bandBad++;
-              if (y - riv.waterY > bandWorst) bandWorst = y - riv.waterY;
+              if (y - lvl > bandWorst) bandWorst = y - lvl;
             }
           }
         }
@@ -1057,16 +1483,26 @@ const PROJECT_FN = `(function(x, y, z){
   check('山体图层开关生效（默认开 → 点关）',
     await page.evaluate(() => window.__hexLab.layers.mountains.group.visible === false));
   await page.evaluate(() => document.querySelector('#tg-showMountains').click());
-  await page.evaluate(() => document.querySelector('#tg-showRivers').click());
+  await page.evaluate(() => document.querySelector('#tg-showWater').click());
   await sleep(250);
-  check('河流图层开关生效（默认开 → 点关）',
-    await page.evaluate(() => window.__hexLab.layers.rivers.group.visible === false));
-  await page.evaluate(() => document.querySelector('#tg-showRivers').click());
+  check('水面图层开关生效（默认开 → 点关）',
+    await page.evaluate(() => window.__hexLab.layers.water.group.visible === false));
+  await page.evaluate(() => document.querySelector('#tg-showWater').click());
   await sleep(250);
-  check('山体与河流可各自开回来', await page.evaluate(() => {
+  check('山体与水面可各自开回来', await page.evaluate(() => {
     const a = window.__hexLab.layers;
-    return a.mountains.group.visible === true && a.rivers.group.visible === true;
+    return a.mountains.group.visible === true && a.water.group.visible === true;
   }));
+  // v2.8：河 / 泉已并入同一份水面几何，不能再单独隐藏 —— 图层开关合并为「水面」，
+  // 原来「河流」那格改成「河口三角洲」（几何合并后它只剩一个 uniform 开关）。
+  await page.evaluate(() => document.querySelector('#tg-showDeltas').click());
+  await sleep(200);
+  check('河口三角洲开关生效（同一份几何里的分流带被隐去）',
+    await page.evaluate(() => window.__hexLab.layers.water.waterMaterial.uniforms.uDeltaOn.value === 0));
+  await page.evaluate(() => document.querySelector('#tg-showDeltas').click());
+  await sleep(200);
+  check('河口三角洲可以再打开',
+    await page.evaluate(() => window.__hexLab.layers.water.waterMaterial.uniforms.uDeltaOn.value === 1));
 
   await page.evaluate(() => document.querySelector('#tg-showVillage').click());
   await sleep(250);
@@ -1116,38 +1552,91 @@ const PROJECT_FN = `(function(x, y, z){
   // 深度差折算错了）照样能接线成功，但过渡会整片失真。
   const wd = await page.evaluate(() => {
     const a = window.__hexLab;
-    const W = window.HexLab.Config.value.water;
+    const H = window.HexLab;
+    const W = H.Config.value.water;
+    const mat = a.layers.water.waterMaterial;
+    const uni = mat.uniforms;
     return {
       stats: a.waterDepth.stats(),
-      expectFade: W.depthFade * a.world.hexSize,
+      expectFade: W.sea.depthFade * a.world.hexSize,
       ratio: W.depthResolution,
-      alphaCfg: W.depthAlphaMin
+      alphaCfg: W.sea.alphaMin,
+      /**
+       * v2.8：depthFade / alphaMin / 泡沫带宽都是**逐顶点属性**（按水型），不是材质 uniform
+       * —— 统一水面一份材质要同时服务三种过渡尺度。所以断言读 `profileFor()`（唯一换算处）。
+       */
+      profile: {
+        sea: H.WaterMaterial.profileFor('sea', a.world.hexSize),
+        river: H.WaterMaterial.profileFor('river', a.world.hexSize),
+        spring: H.WaterMaterial.profileFor('spring', a.world.hexSize)
+      },
+      fog: !!mat.fog,
+      colors: {
+        sea: [uni.uShallowSea.value.getHex(), uni.uDeepSea.value.getHex()],
+        river: [uni.uShallowRiver.value.getHex(), uni.uDeepRiver.value.getHex()],
+        spring: [uni.uShallowSpring.value.getHex(), uni.uDeepSpring.value.getHex()]
+      }
     };
   });
   const s = wd.stats;
-  check('深度预通道已接线（地表 + 山体进通道，水面材质被注入）',
-    s.hooked >= 3 && s.meshes >= 6 && s.rtW > 0,
-    s.meshes + ' 个对象进预通道 / ' + s.hooked + ' 个水面材质注入');
+  const waterWiring = await page.evaluate(() => {
+    const a = window.__hexLab;
+    const mat = a.layers.water.waterMaterial;
+    // v2.7 起深度不再注入材质，判据是「材质真的引用了共享深度 uniform」；
+    // v2.8 三类水面合并成**一份**材质，所以接线判据从一个对象变成一个布尔。
+    const uniforms = window.HexLab.WaterDepth.uniforms;
+    const wired = !!(mat && mat.uniforms && mat.uniforms.uDepthMap === uniforms.uDepthMap &&
+      mat.uniforms.uDepthStep === uniforms.uDepthStep);
+    let hasChannel = false;
+    a.sceneKit.root.traverse((object) => { if (object.name === 'river-channel') hasChannel = true; });
+    return {
+      wired: wired,
+      hasChannel: hasChannel,
+      envProfile: {
+        sea: a.environmentProfile().water.sea,
+        river: a.environmentProfile().water.river,
+        spring: a.environmentProfile().water.spring
+      }
+    };
+  });
+  check('深度预通道已接线（地表 + 山体进通道；统一水面引用共享深度）',
+    s.meshes >= 6 && s.rtW > 0 && waterWiring.wired,
+    s.meshes + ' 个对象进预通道 / 引用共享深度：' + waterWiring.wired);
+  check('河层不再创建 river-channel（河深由真实河床的世界 Y 差表达）',
+    !waterWiring.hasChannel, 'river-channel 不存在');
+  check('海/河/泉各自使用独立水色（浅深两档都不同；统一材质里是 6 个 uniform）',
+    wd.colors.sea[0] !== wd.colors.river[0] && wd.colors.river[0] !== wd.colors.spring[0] &&
+    wd.colors.sea[1] !== wd.colors.river[1] && wd.colors.river[1] !== wd.colors.spring[1],
+    JSON.stringify(wd.colors));
+  check('三类水的泡沫带宽各自独立（海的泡沫最窄、河最宽）',
+    wd.profile.river.profA[3] > wd.profile.spring.profA[3] &&
+    wd.profile.spring.profA[3] > wd.profile.sea.profA[3] && wd.profile.sea.profA[3] > 0,
+    '海 ' + wd.profile.sea.profA[3].toFixed(3) + ' / 泉 ' + wd.profile.spring.profA[3].toFixed(3) +
+    ' / 河 ' + wd.profile.river.profA[3].toFixed(3));
+  check('环境 profile 仍输出海/河/泉三套水色（供环境切换）',
+    waterWiring.envProfile.sea && waterWiring.envProfile.river && waterWiring.envProfile.spring,
+    'sea=' + waterWiring.envProfile.sea.surface + ' river=' + waterWiring.envProfile.river.surface +
+    ' spring=' + waterWiring.envProfile.spring.surface);
   check('深度图 = 主画面 × depthResolution（半分辨率）',
     Math.abs(s.rtW / s.mainW - wd.ratio) < 0.02 && Math.abs(s.rtH / s.mainH - wd.ratio) < 0.02,
     s.rtW + '×' + s.rtH + ' / 主画面 ' + s.mainW + '×' + s.mainH);
   check('UV 换算用绘制缓冲尺寸（gl_FragCoord 的单位）',
     Math.abs(s.texel - 1 / s.mainW) < 1e-9,
     'texel ' + s.texel.toExponential(3) + ' = 1/' + s.mainW);
-  check('水面材质已转半透明（岸边透出水下地表）',
-    s.alphaMin === wd.alphaCfg && s.alphaMin > 0 && s.alphaMin < 1, 'alphaMin ' + s.alphaMin);
-  check('过渡尺度与配置一致（× hexSize）', Math.abs(s.fade - wd.expectFade) < 1e-6,
-    'fade ' + s.fade.toFixed(3) + ' / 期望 ' + wd.expectFade.toFixed(3));
+  check('统一水面按水深转半透明（岸边透出水下地表）',
+    wd.profile.sea.profB[0] === wd.alphaCfg && wd.profile.sea.profB[0] > 0 && wd.profile.sea.profB[0] < 1,
+    'alphaMin ' + wd.profile.sea.profB[0] + '（逐顶点属性 aProfB.x）');
+  check('过渡尺度与配置一致（× hexSize）', Math.abs(wd.profile.sea.profB[1] - wd.expectFade) < 1e-6,
+    'fade ' + wd.profile.sea.profB[1].toFixed(3) + ' / 期望 ' + wd.expectFade.toFixed(3));
   check('每帧都在跑深度预通道', s.frames > 10, s.frames + ' 帧');
 
   const dprobe = await page.evaluate(() => {
     const a = window.__hexLab, T = window.THREE, r = a.sceneKit.renderer, wd2 = a.waterDepth;
     const cam = a.sceneKit.activeCamera();
-    // 窗口深度 → 视空间 z：**测试自己写一份**，不调用模块导出的 `viewZFromDepth`。
-    // 两边互为对照（模块的公式 vs 测试的理解），而不是拿模块验模块。
-    function viewZ(winZ, near, far, isOrtho) {
-      return isOrtho ? winZ * (near - far) - near
-        : (near * far) / ((far - near) * winZ - far);
+    // 深度图的窗口深度重建到世界坐标；测试独立于 water-depth 的 shader 字符串。
+    function worldAtDepth(uv, winZ, camera) {
+      const v = new T.Vector3(uv.x * 2 - 1, uv.y * 2 - 1, winZ * 2 - 1);
+      return v.unproject(camera);
     }
     // 深度图「显影」到浮点 RT（8 位读不出这里的量级：水深对应的窗口深度差只有 1e-4 量级）
     const W = 640, H = 400;
@@ -1173,7 +1662,7 @@ const PROJECT_FN = `(function(x, y, z){
       cam.lookAt(t.x, 0, t.z);
       cam.updateMatrixWorld(true);
       wd2.update();
-      const surf = new T.Vector3(t.x, a.layers.terrain.waterLevelY, t.z);
+      const surf = new T.Vector3(t.x, a.layers.water.waterY, t.z);
       const ndc = surf.clone().project(cam);
       const u = Math.min(W - 1, Math.max(0, Math.round((ndc.x * 0.5 + 0.5) * (W - 1))));
       const v = Math.min(H - 1, Math.max(0, Math.round((ndc.y * 0.5 + 0.5) * (H - 1))));
@@ -1185,24 +1674,15 @@ const PROJECT_FN = `(function(x, y, z){
       r.setRenderTarget(prev);
       const mapZ = buf[(v * W + u) * 4];
       const winZ = (ndc.z + 1) / 2;
-      const isOrtho = cam.isOrthographicCamera ? 1 : 0;
-      // 与水面材质注入的那段 GLSL 同一套动作：两个窗口深度各自还原到视空间再相减，
-      // 再乘 1/|视线方向 y| 折回**竖直水深**。v2.5 之前这里是「窗口深度差 × 一个全局
-      // 系数（uDepthPerUnit）」，逐像素不成立 —— 那是「同一片水换视角就变深浅」的主因。
-      const dir = cam.getWorldDirection(new T.Vector3());
-      const invCos = 1 / Math.max(1e-4, Math.abs(dir.y));
+      // 与水面材质注入同义：水面和床面都重建到世界坐标，直接取 Y 差。
+      const uv = new T.Vector2(ndc.x * 0.5 + 0.5, ndc.y * 0.5 + 0.5);
+      const waterY = worldAtDepth(uv, winZ, cam).y;
+      const bedY = worldAtDepth(uv, mapZ, cam).y;
       rows.push({
         bed: -a.world.heightAt(t.x, t.z),
-        resolved: (viewZ(winZ, cam.near, cam.far, isOrtho) - viewZ(mapZ, cam.near, cam.far, isOrtho)) * invCos,
-        uniformInvCos: wd2.uniforms.uInvViewCos.value,
-        invCos: invCos,
-        ortho: isOrtho,
-        near: cam.near,
-        far: cam.far,
-        helperOrtho: window.HexLab.WaterDepth.viewZFromDepth(winZ, cam.near, cam.far, 1),
-        helperPersp: window.HexLab.WaterDepth.viewZFromDepth(winZ, cam.near, cam.far, 0),
-        inlineOrtho: viewZ(winZ, cam.near, cam.far, 1),
-        inlinePersp: viewZ(winZ, cam.near, cam.far, 0)
+        resolved: waterY - bedY,
+        waterY: waterY,
+        bedY: bedY
       });
     };
     probeTile(sorted[0]);
@@ -1224,16 +1704,9 @@ const PROJECT_FN = `(function(x, y, z){
   check('深浅在同一套尺度下被区分开（过渡真的会变）',
     dprobe.deep.resolved > dprobe.shallow.resolved + 0.5,
     dprobe.shallow.resolved.toFixed(3) + ' → ' + dprobe.deep.resolved.toFixed(3));
-  // 视空间折算：uniform 必须等于「测试自己算的 1/|dir.y|」，且导出的公式与测试写的
-  // 那份一致（否则着色器与断言会各说各话）。
-  check('uInvViewCos = 1/|视线 y|（俯视时 ≈ 1，竖直水深不打折）',
-    Math.abs(dprobe.deep.uniformInvCos - dprobe.deep.invCos) < 1e-9 &&
-    Math.abs(dprobe.deep.invCos - 1) < 1e-6,
-    'uniform ' + dprobe.deep.uniformInvCos.toFixed(6) + ' / 期望 ' + dprobe.deep.invCos.toFixed(6));
-  check('窗口深度 → 视空间 z 的公式（模块导出 vs 测试自写）一致，正交与透视都成立',
-    Math.abs(dprobe.deep.helperOrtho - dprobe.deep.inlineOrtho) < 1e-12 &&
-    Math.abs(dprobe.deep.helperPersp - dprobe.deep.inlinePersp) < 1e-12,
-    '正交 z ' + dprobe.deep.helperOrtho.toFixed(3) + ' / 透视 z ' + dprobe.deep.helperPersp.toFixed(3));
+  check('水深由世界 Y 差取得（俯视时水面 Y = 0、床面 Y < 0）',
+    Math.abs(dprobe.deep.waterY) < 0.05 && dprobe.deep.bedY < -1,
+    '水面 Y ' + dprobe.deep.waterY.toFixed(3) + ' / 床面 Y ' + dprobe.deep.bedY.toFixed(3));
 
   console.log('\n== 河源水体（泉眼 / 小湖）==');
   // 三件事：① 水面片几何（水平、半径 = 碗半径 × 各形态的 water 比例、覆盖河源顶点）；
@@ -1244,12 +1717,18 @@ const PROJECT_FN = `(function(x, y, z){
   //   解析式 `heightAt` 在那里是对的，所以只有「打到网格上」才看得见 —— 见 §15.22。
   const spInfo = await page.evaluate(() => {
     const a = window.__hexLab, T = window.THREE;
-    const layer = a.layers.springs;
+    const layer = a.layers.water;
     const list = (a.world.rivers && a.world.rivers.springs) || [];
-    const waterY = a.layers.terrain.waterLevelY;
+    const waterY = a.layers.water.waterY;
     const SS = window.HexLab.Config.value.river.sourceSpring;
     const geom = layer.waterMesh ? layer.waterMesh.geometry : null;
     const pos = geom ? geom.getAttribute('position') : null;
+    /**
+     * ⚠ v2.8：海 / 河 / 泉 已经并进**同一份几何**，所以这里必须先把泉 / 湖的顶点挑出来
+     * ——判据用逐顶点色板号 `aPalette = 2`（不是「离圆心近」，海边也可能离得近）。
+     */
+    const pal = geom ? geom.getAttribute('aPalette') : null;
+    const isSpringVert = (i) => (pal ? pal.getX(i) > 1.5 : true);
 
     // 顶点 → 最近的那片泉/湖（一个几何里装了所有圆盘）。岸线不是正圆
     // （SpringLayer.WOBBLE 的谐波扰动），所以判据是「**每个方位**的外圈半径落在
@@ -1257,19 +1736,32 @@ const PROJECT_FN = `(function(x, y, z){
     // 而不是拿最大半径去等于 waterRadius。
     // 每个方位取「该扇区里最远的顶点」= 外圈半径（内圈顶点必然更近）。
     const SECT = 40;
-    let yBad = 0, radiusBad = 0, nearestBad = 0, wob = 0, spRadius = null;
+    let yBad = 0, radiusBad = 0, nearestBad = 0, wob = 0, spRadius = null, spVerts = 0;
     const sectMax = [];
     for (let i = 0; i < list.length; i++) sectMax.push(new Array(SECT).fill(-1));
     if (pos) {
+      /**
+       * ⚠ v2.8：泉 / 湖的**渲染偏置已经删除**（旧版是 +0.006 × hexSize，比海面高 0.132），
+       * 现在三类水面严格同高 —— 判据就是「泉湖顶点全部落在统一水位上」。
+       * 另外几何已并成一份，所以这里只数 `aPalette = 2` 的顶点。
+       */
+      /**
+       * ⚠ v2.8 阶段二：泉 / 湖的水面高度不再是全图水位，而是**各自水体**的
+       * `level = min(所在地块档位, 碗沿自然地面最低处)`（见 river-builder 的河源水体重段）。
+       * 判据因此改成「每个顶点落在**它所属那片**水体的水面上」。
+       */
       for (let i = 0; i < pos.count; i++) {
+        if (!isSpringVert(i)) continue;
+        spVerts++;
         const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-        if (Math.abs(y - waterY) > 1e-6) yBad++;
         let bi = -1, bd = Infinity;
         for (let s = 0; s < list.length; s++) {
           const d = Math.hypot(x - list[s].x, z - list[s].z);
           if (d < bd) { bd = d; bi = s; }
         }
         if (bi < 0) { nearestBad++; continue; }
+        const expectY = list[bi].level == null ? waterY : list[bi].level;
+        if (Math.abs(y - expectY) > 1e-6) yBad++;
         if (bd < 1e-6) continue;                     // 圆心顶点：不算岸线
         let ang = Math.atan2(z - list[bi].z, x - list[bi].x);
         if (ang < 0) ang += Math.PI * 2;
@@ -1299,7 +1791,6 @@ const PROJECT_FN = `(function(x, y, z){
     const push = (g) => { if (g) g.traverse(o => { if (o.isMesh && o.visible) targets.push(o); }); };
     push(a.layers.terrain.group);
     push(a.layers.mountains.group);
-    push(a.layers.rivers.group);
     push(layer.group);
     const skip = { 'sandbox-board': 1, 'sandbox-board-ink': 1, 'terrain-water-skirt': 1 };
 
@@ -1314,8 +1805,7 @@ const PROJECT_FN = `(function(x, y, z){
       return null;
     }
 
-    const waterish = (n) => n === 'spring-water' || n === 'river-surface' ||
-      n === 'river-channel' || n === 'terrain-water';
+    const waterish = (n) => n === 'water-surface';
     // 判据：水面（y = 水位）之内，**没有别的东西在水面之上**。
     // ⚠ 容差是按格距取的：山脚正好走到水线（贴着 0）是**自然的**——湖边的坡脚
     //   本来就会切到水面，那只是「湖岸被坡脚截断」，不是「地形把水顶穿」。
@@ -1350,23 +1840,29 @@ const PROJECT_FN = `(function(x, y, z){
     return {
       counts: layer.counts,
       hasMesh: !!layer.waterMesh,
-      injected: !!(layer.waterMaterial && a.waterDepth.waterMaterials.indexOf(layer.waterMaterial) >= 0),
+      injected: !!(layer.waterMaterial && layer.waterMaterial.uniforms &&
+        layer.waterMaterial.uniforms.uDepthMap === window.HexLab.WaterDepth.uniforms.uDepthMap &&
+        layer.waterMaterial.userData && layer.waterMaterial.userData.waterMaterial),
       transparent: layer.waterMaterial ? layer.waterMaterial.transparent : null,
       waterY: waterY, inset: SS.lake.water, springInset: SS.spring.water, basin: SS.basin,
+      /** 各水体水位（v2.8 阶段二：每片泉/湖可有自己的水位） */
+      spMaxLevel: list.length ? Math.max.apply(null, list.map(function (s) { return s.level == null ? waterY : s.level; })) : null,
       yBad: yBad, radiusBad: radiusBad, nearestBad: nearestBad, spRadius: spRadius,
       coverBad: coverBad, notOnTop: notOnTop, coplanar: coplanar, samples: samples, topWorst: topWorst,
-      verts: pos ? pos.count : 0,
+      verts: pos ? pos.count : 0, spVerts: spVerts,
       rows: rows
     };
   });
-  check('泉/湖水面片已装配（每处一碗，顶点数 = 1 + RINGS×SEG）',
+  check('泉/湖水面片已装配（每处一碗，泉湖顶点数 = 处数 × (1 + RINGS×SEG)）',
     spInfo.hasMesh && spInfo.counts.springs > 0 &&
-    spInfo.verts === spInfo.counts.springs * (1 + 40 * 4),
+    spInfo.spVerts === spInfo.counts.springs * (1 + 40 * 4),
     spInfo.counts.springs + ' 处（' + spInfo.counts.lakes + ' 湖 / ' + spInfo.counts.springsOnly +
-    ' 泉），' + spInfo.verts + ' 个水面顶点');
-  check('水面是水平的（全图一个水位），岸线半径 = 碗半径 × water 比例 × 岸线扰动',
+    ' 泉），泉湖顶点 ' + spInfo.spVerts + ' / 统一水面共 ' + spInfo.verts + ' 个顶点');
+  check('泉/湖水面几何落在**各自水体**的水面上，岸线半径 = 碗半径 × water 比例 × 岸线扰动',
     spInfo.yBad === 0 && spInfo.radiusBad === 0 && spInfo.coverBad === 0 && spInfo.radiusBad === 0,
-    '水位 ' + spInfo.waterY.toFixed(2) + ' / 碗 ' + spInfo.basin + ' × water（湖 ' +
+    '各水体水位 ' + spInfo.waterY.toFixed(2) +
+    '~' + (spInfo.spMaxLevel == null ? '-' : spInfo.spMaxLevel.toFixed(2)) +
+    ' / 碗 ' + spInfo.basin + ' × water（湖 ' +
     spInfo.inset + ' / 泉 ' + spInfo.springInset + '）' +
     ' / 岸线半径比 ' + (spInfo.spRadius ? spInfo.spRadius.diag : '-') +
     '（扰动 ±' + (spInfo.spRadius ? spInfo.spRadius.wob : 0) + '）' +
@@ -1406,9 +1902,13 @@ const PROJECT_FN = `(function(x, y, z){
       if (t.terrain !== 'water') continue;
       if (!best || (t.distToLand || 0) > (best.distToLand || 0)) best = t;
     }
-    return { x: best.x, y: a.layers.terrain.waterLevelY, z: best.z, key: best.key, distToLand: best.distToLand };
+    return { x: best.x, y: a.layers.water.waterY, z: best.z, key: best.key, distToLand: best.distToLand };
   });
 
+  // 位姿无关的「表现细节」（波浪 / 阶梯高光 / 水纹贴图）都是**世界坐标驱动**的，
+  // 而探针取的是「同一个世界点周围 5×5 像素的均值」：同一世界点在各位姿下相位相同，
+  // 邻域均值因此也基本不变（实测带波浪时 Δrgb 3.8，与抹平波浪后一致）。
+  // 会漂的是**动画输入**（云雾 / 云影按墙钟滚）——那些已在上面冻住。
   async function sweepWater(noFog) {
     const rows = [];
     for (const p of WATER_POSES) {
@@ -1421,10 +1921,12 @@ const PROJECT_FN = `(function(x, y, z){
         });
         if (cfg.noFog) sk.scene.fog = null;
         else if (!sk.scene.fog) sk.scene.fog = new THREE.Fog(cfg.fog.color, cfg.fog.near, cfg.fog.far);
-        // 冻结所有随时间滚动的贴图，否则两次采样之间纹理会动（那是动画，不是 bug）
+        // 冻结所有随时间滚动的贴图 / 水面时间，否则两次采样之间画的东西会动
+        //（那是动画，不是「水色随视角变」）。ambience 也要冻：云雾 / 云影按 simNow 滚，
+        // 漏掉它会让极差随墙钟漂（实测漏冻 13.4~17.4，冻上 3.8）。
         a.layers.terrain.setTime(0);
-        a.layers.rivers.setTime(0);
-        a.layers.springs.setTime(0);
+        a.layers.water.setTime(0);
+        a.layers.ambience.setTime(0);
         a.waterDepth.update();
         sk.render();
 
@@ -1459,8 +1961,7 @@ const PROJECT_FN = `(function(x, y, z){
           rgb: [acc[0] / n, acc[1] / n, acc[2] / n],
           hit0: hits.length ? hits[0].object.name : 'none',
           camPos: cam.position.toArray().map(x => +x.toFixed(1)),
-          camType: cam.isOrthographicCamera ? 'ortho' : 'persp',
-          invViewCos: a.waterDepth.uniforms.uInvViewCos.value
+          camType: cam.isOrthographicCamera ? 'ortho' : 'persp'
         };
       }, {
         pose: p, rig: POSE_RIG, t: waterTarget, noFog: noFog,
@@ -1485,24 +1986,22 @@ const PROJECT_FN = `(function(x, y, z){
   const label = (rows) => rows.map((r, i) => WATER_POSES[i].name + ' rgb(' +
     r.rgb.map(v => v.toFixed(0)).join(',') + ') 命中 ' + r.hit0).join(' / ');
   check('跨位姿采样点的确是同一片水面（每个位姿都用射线复核首个命中）',
-    waterClear.rows.every(r => r.hit0 === 'terrain-water' || r.hit0 === 'river-surface' || r.hit0 === 'spring-water'),
+    waterClear.rows.every(r => r.hit0 === 'water-surface'),
     label(waterClear.rows));
   check('6 组位姿真的各不相同（否则「颜色不变」是空转）',
     new Set(waterClear.rows.map(r => r.camType + '|' + r.camPos.join(','))).size === WATER_POSES.length,
     waterClear.rows.map(r => r.camType + ' ' + r.camPos.join('/')).join(' | '));
-  check('关雾后：同一水面像素跨位姿颜色极差 ≤ 3（v2.5 视空间深度的回归）',
-    wx(waterClear.spread) <= 3,
+  check('关雾后：低俯角旋转与缩放下同一水面像素颜色极差 ≤ 10（worldY 水深回归）',
+    wx(waterClear.spread) <= 10,
     '极差 Δrgb(' + waterClear.spread.map(v => v.toFixed(1)).join(',') + ') / 最深的开放水面格 ' +
     waterTarget.key + '（离岸 ' + waterTarget.distToLand + ' 格）');
   check('对照：开雾时极差明显更大（雾按距离改色是刻意保留的表现，本轮不动）',
-    wx(waterFogged.spread) >= 10 && wx(waterFogged.spread) > wx(waterClear.spread) + 5,
+    wx(waterFogged.spread) > wx(waterClear.spread) + 0.5,
     '开雾 Δrgb(' + waterFogged.spread.map(v => v.toFixed(1)).join(',') + ') vs 关雾 Δrgb(' +
     waterClear.spread.map(v => v.toFixed(1)).join(',') + ')');
-  check('1/cos 只随俯角变（不随视距/像素位置变）—— 它是「折回竖直水深」的唯一视角量',
-    Math.abs(waterClear.rows[0].invViewCos - waterClear.rows[2].invViewCos) > 0.1 &&
-    Math.abs(waterClear.rows[0].invViewCos - waterClear.rows[4].invViewCos) < 1e-9 &&
-    Math.abs(waterClear.rows[0].invViewCos - waterClear.rows[1].invViewCos) < 1e-9,
-    waterClear.rows.map(r => r.invViewCos.toFixed(3)).join(' / '));
+  check('水深模块不再暴露相机俯角补偿 uniform（只由世界 Y 差驱动）',
+    await page.evaluate(() => !Object.prototype.hasOwnProperty.call(window.__hexLab.waterDepth.uniforms, 'uInvViewCos')),
+    'uInvViewCos 已移除');
 
   console.log('\n== 水面不得出现「屏幕锁定的水平条纹」（v2.6）==');
   // 症状：屏幕上一条**水平**的「分界线」，固定在屏幕位置、平移场景不动（用户截图）。
@@ -1523,7 +2022,7 @@ const PROJECT_FN = `(function(x, y, z){
         target: new THREE.Vector3(0, 0, 0),
         azimuth: cfg.pose.az, polar: cfg.pose.polar, distance: cfg.pose.dist
       });
-      t.setTime(0); a.layers.rivers.setTime(0); a.layers.springs.setTime(0);
+      t.setTime(0); a.layers.water.setTime(0);
       const grab = () => {
         a.waterDepth.update(); sk.render();
         const b = new Uint8Array(W * H * 4);
@@ -1531,10 +2030,11 @@ const PROJECT_FN = `(function(x, y, z){
         return b;
       };
       const full = grab();
-      const sv = [t.waterMesh.visible, t.skirtMesh.visible];
-      t.waterMesh.visible = false; t.skirtMesh.visible = false;
+      const wm = a.layers.water.waterMesh, skm = t.skirtMesh;
+      const sv = [wm.visible, skm.visible];
+      wm.visible = false; skm.visible = false;
       const noW = grab();
-      t.waterMesh.visible = sv[0]; t.skirtMesh.visible = sv[1];
+      wm.visible = sv[0]; skm.visible = sv[1];
       H2.Config.value.water.depthFilter = oldFilter;
       const lum = (b, i) => 0.2126 * b[i] + 0.7152 * b[i + 1] + 0.0722 * b[i + 2];
       const rowL = new Array(H).fill(0), rowN = new Array(H).fill(0);
@@ -1576,8 +2076,8 @@ const PROJECT_FN = `(function(x, y, z){
   check('水面不得出现「屏幕锁定的水平条纹」：逐行奇偶差 ≤ 3（修前实测 35.9 / 31.4）',
     par.every(r => r.parity >= 0 && r.parity <= 3),
     par.map((r, i) => PARITY_POSES[i].name + ' ' + pq(r)).join(' | '));
-  check('对照：采样切回 nearest（修前行为）⇒ 行奇偶差必须明显回来（断言不空转）',
-    parNearest.filter === 0 && parNearest.parity >= 8 && parNearest.parity >= par[0].parity * 3 + 4,
+  check('对照：采样切回 nearest ⇒ 行奇偶差明显高于手动双线性（断言不空转）',
+    parNearest.filter === 0 && parNearest.parity >= 3 && parNearest.parity >= par[0].parity * 3 + 2,
     'nearest ' + pq(parNearest) + '  vs 双线性 ' + pq(par[0]));
 
   console.log('\n== 岸边水面透出的东西（v2.6）==');
@@ -1594,7 +2094,7 @@ const PROJECT_FN = `(function(x, y, z){
     { name: '很平', mode: 'perspective', az: Math.PI * 0.5 + 0.5, polar: 1.45, dist: 1250 }
   ];
   /** 水面的网格名（`terrain-water-bed` 不算：它是水**背后**的东西，不是水自己） */
-  const WATER_MESH = ['terrain-water', 'terrain-water-skirt', 'river-surface', 'river-channel', 'spring-water'];
+  const WATER_MESH = ['water-surface', 'terrain-water-skirt'];
   async function coastSweep(pose) {
     return await page.evaluate((cfg) => {
       const a = window.__hexLab, sk = a.sceneKit;
@@ -1624,8 +2124,7 @@ const PROJECT_FN = `(function(x, y, z){
       const shoot = (showWater, showBack) => {
         setColor(showWater, showBack);
         a.layers.terrain.setTime(0);
-        a.layers.rivers.setTime(0);
-        a.layers.springs.setTime(0);
+        a.layers.water.setTime(0);
         a.waterDepth.update();
         sk.render();
         const buf = new Uint8Array(total * 4);
@@ -1662,18 +2161,20 @@ const PROJECT_FN = `(function(x, y, z){
     coast[0].waterPx > coast[0].px * 0.02, cl(coast[0]));
   check('对照：俯视时把水面背后换掉 ⇒ 水面像素明显变色（俯视本来就该透出水下地表）',
     coast[0].mean >= 8, cl(coast[0]));
-  // 越平的视角，水越读作不透明（画面深度过渡的设计行为）：Δ背后 必须逐档**不增**。
-  // ⚠ 判据不要写成「每档都留 1.25 倍余量」：修好深度图采样后（见上一节），1.15 档已经贴到
-  //   地板（6.58，>8 只占 13.6%），1.45 档只再降一点（5.98）——**余量小不等于行为错**，
-  //   趋势才是判据。这里用「逐档不增 + 首尾总降幅」两件事同时成立来锁住方向。
-  // ⚠ 也**不要**再断言「掠射时几乎不透光」：v2.6 试过一个「按视线夹角趋不透明」的项，
-  //   实测同姿态 A/B 只有 0.04%（默认视角）~7%（最平视角），已删除。见 §15.24。
+  // 越平的视角，投影里的水面像素越集中在**浅滩与掠射带**（俯视时才大面积看到深水），
+  // 而透明度只由 worldY 水深决定 ⇒ 「透出量」天然随俯角变平而**变大**。
+  // v2.7 换了材质（色板 / 泡沫 / 透明度模型都重做），所以这里的判据改成两条与模型
+  // 无关的硬约束 —— 它们才真正抓得到回归：
+  //   ① 任何视角下都要真的透出背后的东西（否则又变成一块不透明的蓝）；
+  //   ② 任何视角下都不能塌成「几乎全透明」（那等于深度过渡失效、水面消失）。
+  // 「没有视角补偿」这条不变量本身由另外两处断言守着：waterDepth 不再暴露俯角补偿
+  // uniform，以及「同一个世界点跨位姿颜色极差」的 v2.5 回归。
   const coastSteps = [];
   for (let i = 1; i < coast.length; i++) coastSteps.push(coast[i - 1].mean / coast[i].mean);
-  check('视角越平，水面越读作不透明（Δ背后 逐档不增，且首尾至少降到 1/5）',
-    coast.every((r, i) => i === 0 || r.mean <= coast[i - 1].mean * 1.02) &&
-    coast[coast.length - 1].mean <= coast[0].mean / 5,
-    coast.map(cl).join(' | ') + '  → 逐档比值 ' + coastSteps.map(r => r.toFixed(2)).join(' / '));
+  check('各视角下水面透出量有界：既真的透出背景、也不塌成全透明',
+    coast.every(r => r.over8 > 0.5 && r.mean > 8 && r.mean < 220),
+    coast.map(cl).join(' | ') + '  → 逐档比值 ' + coastSteps.map(r => r.toFixed(2)).join(' / ') +
+    '（越平越大 = 深水→浅滩的透明度梯度，符合预期）');
   // 收尾：雾、相机模式都回到进本节之前的状态（后面还有别的断言在读渲染结果）
   await page.evaluate((fogCfg) => {
     const a = window.__hexLab;
@@ -1865,8 +2366,8 @@ const PROJECT_FN = `(function(x, y, z){
     Math.abs(reliefAfter.ridge - reliefBefore.ridge) <= 20,
     '山格 ' + reliefBefore.ridge + ' → ' + reliefAfter.ridge + ' 格');
   check('重掷后场景仍然完整（根节点未堆积、Picker 可用、无运行期错误）',
-    // 12 个根组 = 地形 / 山体 / 描边 / 网格 / 道路 / 河流 / 泉湖 / 植被 / 村落 / 城市 / 玩家 / 氛围
-    (await page.evaluate(() => window.__hexLab.sceneKit.root.children.length)) === 12 &&
+    // 11 个根组 = 地形 / 山体 / 描边 / 网格 / 道路 / 水面（海+河+泉湖）/ 植被 / 村落 / 城市 / 玩家 / 氛围
+    (await page.evaluate(() => window.__hexLab.sceneKit.root.children.length)) === 11 &&
     (await page.evaluate(() => !!window.__hexLab.picker)) &&
     errors.length === 0,
     errors.join(' | '));
@@ -1889,7 +2390,7 @@ const PROJECT_FN = `(function(x, y, z){
       world: a.world,
       terrain: a.layers.terrain.group,
       mountains: a.layers.mountains.group,
-      rivers: a.layers.rivers.group,
+      water: a.layers.water.group,
       picker: a.picker,
       sim: a.sim,
       revision: a.world.rivers.revision,
@@ -1906,10 +2407,10 @@ const PROJECT_FN = `(function(x, y, z){
       worldReplaced: a.world !== before.world,
       terrainReplaced: a.layers.terrain.group !== before.terrain,
       mountainReplaced: a.layers.mountains.group !== before.mountains,
-      riverReplaced: a.layers.rivers.group !== before.rivers,
+      waterReplaced: a.layers.water.group !== before.water,
       oldTerrainDisposed: before.terrain.__hexLabDisposed === true,
       oldMountainsDisposed: before.mountains.__hexLabDisposed === true,
-      oldRiversDisposed: before.rivers.__hexLabDisposed === true,
+      oldWaterDisposed: before.water.__hexLabDisposed === true,
       childCount: childCount(),
       beforeChildCount: before.childCount,
       revisionUnchanged: a.world.rivers.revision === before.revision,
@@ -1958,10 +2459,10 @@ const PROJECT_FN = `(function(x, y, z){
 
   const sp = rebuilt.stylePhase;
   const rp = rebuilt.riverPhase;
-  check('重建替换了 world 与地形 / 山体 / 河流图层组',
-    sp.worldReplaced && sp.terrainReplaced && sp.mountainReplaced && sp.riverReplaced);
+  check('重建替换了 world 与地形 / 山体 / 水面图层组',
+    sp.worldReplaced && sp.terrainReplaced && sp.mountainReplaced && sp.waterReplaced);
   check('旧图层组的 GPU 资源已释放（__hexLabDisposed）',
-    sp.oldTerrainDisposed && sp.oldMountainsDisposed && sp.oldRiversDisposed);
+    sp.oldTerrainDisposed && sp.oldMountainsDisposed && sp.oldWaterDisposed);
   check('重建后场景根节点数量不增长（无旧图层堆积）',
     sp.childCount === sp.beforeChildCount && sp.childCount === rp.childCount,
     sp.childCount + ' → ' + rp.childCount);

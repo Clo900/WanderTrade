@@ -531,7 +531,7 @@
         scl.set(it.scale, 1, it.scale * (0.78 + it.jitter * 0.4));
         m.compose(pos, q, scl);
         mesh.setMatrixAt(i, m);
-        COLOR.setHex(C.palette.river.surface).multiplyScalar(0.90 + it.jitter * 0.16);
+        COLOR.setHex(C.palette.water.shallow).multiplyScalar(0.90 + it.jitter * 0.16);
         mesh.setColorAt(i, COLOR);
       }
       mesh.instanceMatrix.needsUpdate = true;

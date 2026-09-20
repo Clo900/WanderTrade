@@ -1,27 +1,27 @@
 /* ============================================================
- * render/spring-layer.js —— 河源水体（泉眼 / 小湖）的水面片
+ * render/spring-layer.js —— 河源水体（泉眼 / 小湖）水面的**几何追加器**
  * ------------------------------------------------------------
- * 河源一直是一条和别处同宽的水带凭空开始。数据层现在会在河源附近刻一个
- * 「格内碗」（`world.heightAt` 叠加 `tile.springRefs`，见 river-builder 的
- * 「河源水体」注释），本层负责给这个碗铺一张**水面片**：
+ * 河源一直是一条和别处同宽的水带凭空开始。数据层会在河源附近刻一个「格内碗」
+ * （`world.heightAt` 叠加 `tile.springRefs`，见 river-builder 的「河源水体」注释），
+ * 本层负责给这个碗铺一张**水面片**，并把它追加进统一水面的几何缓冲
+ * （`render/water-surface.js` 持有那份缓冲与唯一的水面材质）。
  *
- *   · 水面是**水平**的 —— 高度取全图统一水位（与海 / 河同一个值），
- *     所以湖面、河面、海面永远齐平，湖口不会出现台阶；
- *   · 形状是**极坐标圆盘**：中心 1 个顶点 + N 圈，UV 的 v 轴 = 归一化半径、
- *     u 轴 = 方位角。于是滚动贴图 `offset.y` 就是一串向外扩散的涟漪
- *     （贴图在 v 上取整周期，回绕不留缝）；
- *   · 半径 = `spring.waterRadius`（= 碗半径 × 各形态的 `water` 比例）—— 比碗小一圈，
- *     让水面边缘沉在碗壁里。否则水面边缘会与地面共面（闪面），而且碗壁那一带
- *     地表网格还没解析出来、会直接顶穿水面（实测 0.62 是安全上限）。
- *   · 本层**不进深度预通道**（预通道要的是水下地表），但材质要**进注入列表**：
- *     碗是真实几何下切，所以水面的深浅与海 / 河共用同一套规则（水面片不在
- *     通道里，才不会出现「自己和自己比、深度恒为 0」）。
+ *   · 水面高度 = **该水体自己的水位**（`min(碗主的档位, 碗沿自然地面最低值)`，来源只有
+ *     river-builder 的 `spring.level`）—— 所以丘陵上的湖不会浮在碗沿之上、湖口也不会有
+ *     台阶（v2.8 阶段二起不再是全图统一水位）；v2.8 起**没有渲染偏置**（旧版湖面比海面高 0.132）。
+ *   · 形状是**极坐标圆盘**：中心 1 个顶点 + `RINGS` 圈。UV 的 v 轴 = 归一化半径、
+ *     u 轴 = 方位角 —— 这是三类水面里**唯一**不用世界等比 UV 的地方，为的是让
+ *     涟漪贴图读成一圈圈向外扩散的水纹（海 / 河都是世界等比 UV，见 water-material）。
+ *   · 半径 = 碗半径 × 各形态的 `water` 比例 —— 比碗小一圈，让水面边缘沉在碗壁里。
+ *     否则水面边缘会与地面共面（闪面），而且碗壁那一带地表网格还没解析出来、
+ *     会直接顶穿水面（实测 0.62 是安全上限）。
+ *   · 本层**不进深度预通道**（预通道要的是水下地表），但水面材质读同一张深度图：
+ *     碗是真实几何下切，所以湖面的深浅与海 / 河共用同一套规则。
  * ============================================================ */
 (function (HL) {
   'use strict';
 
   const Config = HL.Config;
-  const Textures = HL.Textures;
 
   /** 圆盘的方位分段 / 径向分段 */
   const SEG = 40;
@@ -42,42 +42,39 @@
     return R * (1 + WOBBLE * w);
   }
 
-  function build(world) {
+  /**
+   * 把泉 / 湖水面追加进统一水面的几何缓冲。
+   * @param {object} buf     `TerrainLayer.createBuf()` 的缓冲（就地追加）
+   * @param {object} profBuf `WaterMaterial.createProfileBuf()` 的属性缓冲（同长）
+   * @param {object} world
+   * @param {object} riverData HL.Rivers.build(world) 的输出（读 `springs`）
+   * @param {object} profile `WaterMaterial.profileFor('spring', size)` 的结果
+   */
+  function appendWater(buf, profBuf, world, riverData, profile) {
     const C = Config.value;
     const P = C.palette;
-    const rivers = world.rivers;
-    const list = (rivers && rivers.springs) || [];
-    const group = new THREE.Group();
-    group.name = 'springs';
-
+    const WM = HL.WaterMaterial;
     const size = world.hexSize;
-    // 与海 / 河 / 湖同一个水位，来源只有 river-builder 的 waterLevel() 一处
-    const waterY = HL.Rivers.waterLevel(size);
-    const SS = C.river.sourceSpring || {};
+    const list = (riverData && riverData.springs) || [];
+    const counters = { springs: 0, lakes: 0, springsOnly: 0, verts: 0 };
+    if (!list.length) return counters;
 
-    if (!list.length) {
-      return {
-        group: group, waterMesh: null, waterMaterial: null,
-        counts: { springs: 0, lakes: 0, springsOnly: 0, verts: 0 },
-        setVisible: function (v) { group.visible = !!v; },
-        setEnvironment: function () { }, setTime: function () { }
-      };
-    }
-
-    const ripple = Textures.rippleTexture(list[0].seed + 1301);
-    const mat = new THREE.MeshStandardMaterial({
-      vertexColors: true, map: ripple, roughness: 0.30, metalness: 0.02
-    });
-    // 涟漪贴图沿 v（半径方向）滚动 —— 与河流滚动 crackle 的做法同构。
-    // 相位按泉/湖的 seed 错开，同屏多个水体不会同步脉动。
-    const offsetPhase = ((list[0].seed >>> 4) % 100) / 100;
-
-    const positions = [];
-    const colors = [];
-    const uvs = [];
-    const indices = [];
+    /**
+     * 水面高度（v2.8 阶段二）：**逐处**取该水体自己的高度（`sp.level`），
+     * 不再是全图水位 —— 山里的湖就是比海面高一个档。旧版三类水严格同高，
+     * 是因为那时「一个水位」是硬不变量；现在只有**海面**还是那个平面。
+     * `sp.level` 由 river-builder 给出（= min(所在地块档位, 碗沿自然地面最低处)）。
+     */
+    const fallbackY = HL.Rivers.waterLevel(size);
+    const positions = buf.pos;
+    const colors = buf.col;
+    const uvs = buf.uv;
+    const indices = buf.idx;
     const c = new THREE.Color();
-    const surface = new THREE.Color(P.river.surface).convertSRGBToLinear();
+    // 顶点色只给材质做很轻的逐格变化（uVertexColorStrength = 0.25），
+    // 水面颜色由 palette.water.spring 唯一决定，所以这里取同一档浅水色即可。
+    const surface = new THREE.Color((P.water.spring || P.water).shallow);
+    const vertsPerDisc = 1 + RINGS * SEG;
 
     for (let s = 0; s < list.length; s++) {
       const sp = list[s];
@@ -87,8 +84,11 @@
       //   （实测：竖直射线只有第 1 片打得中，其余全打不中 —— 见 §15.22）。
       const base = positions.length / 3;
       const center = base;
-      positions.push(sp.x, waterY, sp.z);
-      c.copy(surface).multiplyScalar(0.98 + ((sp.seed >>> 3) % 100) / 800);
+      const tint = 0.98 + ((sp.seed >>> 3) % 100) / 800;
+      // 该片自己的水面高度（缺字段时退回海面水位，兼容旧数据）
+      const surfaceY = sp.level == null ? fallbackY : sp.level;
+      positions.push(sp.x, surfaceY, sp.z);
+      c.copy(surface).multiplyScalar(tint);
       colors.push(c.r, c.g, c.b);
       uvs.push(0, 0);
 
@@ -98,10 +98,10 @@
           const ang = (a / SEG) * Math.PI * 2;
           // 半径 = 该方位的岸线半径 × 归一化环号：内圈按比例跟着收，
           // 环与环不会交叉，`v = rn` 仍然是「到岸线的比例」
-          positions.push(sp.x + Math.cos(ang) * shoreRadius(a, R, sp.seed) * rn,
-            waterY, sp.z + Math.sin(ang) * shoreRadius(a, R, sp.seed) * rn);
+          const rad = shoreRadius(a, R, sp.seed) * rn;
+          positions.push(sp.x + Math.cos(ang) * rad, surfaceY, sp.z + Math.sin(ang) * rad);
           // 顶点色只做很轻的径向变化（近心略深），深浅主体交给画面深度
-          c.copy(surface).multiplyScalar((0.98 + ((sp.seed >>> 3) % 100) / 800) * (0.97 + 0.03 * rn));
+          c.copy(surface).multiplyScalar(tint * (0.97 + 0.03 * rn));
           colors.push(c.r, c.g, c.b);
           uvs.push(a / SEG, rn);
         }
@@ -120,48 +120,21 @@
           indices.push(ringIn + a, ringOut + a1, ringOut + a);
         }
       }
+
+      // 泉 / 湖没有河口段：aMouth 恒为 0（pushProfile 默认就是 0）
+      WM.pushProfile(profBuf, vertsPerDisc, profile);
+      counters.springs++;
+      if (sp.kind === 'lake') counters.lakes++; else counters.springsOnly++;
+      counters.verts += vertsPerDisc;
     }
-
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-    geom.setIndex(indices);
-    geom.computeVertexNormals();
-    geom.computeBoundingSphere();
-
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.name = 'spring-water';
-    mesh.receiveShadow = true;
-    mesh.castShadow = false;
-    group.add(mesh);
-
-    let lakes = 0, springsOnly = 0;
-    for (let i = 0; i < list.length; i++) {
-      if (list[i].kind === 'lake') lakes++; else springsOnly++;
-    }
-
-    return {
-      group: group,
-      waterMesh: mesh,
-      waterMaterial: mat,
-      counts: { springs: list.length, lakes: lakes, springsOnly: springsOnly, verts: positions.length / 3 },
-      setVisible: function (v) { group.visible = !!v; },
-      setEnvironment: function (env) {
-        if (!env || !env.river) return;
-        // 内陆水与河面同一套色（比海更清），季节 / 天气调制的入口也在这里
-        mat.color.setHex(env.river.surface != null ? env.river.surface : P.river.surface);
-        mat.roughness = 0.30 - (env.wetness || 0) * 0.08;
-        mat.metalness = 0.02 + (env.wetness || 0) * 0.04;
-      },
-      /** 涟漪：沿半径方向滚动一个周期（ripplePeriod 秒），并向缓慢摆动 */
-      setTime: function (t) {
-        const period = Math.max(0, SS.ripplePeriod == null ? 7 : SS.ripplePeriod);
-        if (period > 0) ripple.offset.y = (t / period + offsetPhase) % 1;
-        ripple.offset.x = Math.sin(t * 0.05) * 0.004;
-      }
-    };
+    return counters;
   }
 
-  HL.SpringLayer = { build: build, SEG: SEG, RINGS: RINGS, WOBBLE: WOBBLE, shoreRadius: shoreRadius };
+  HL.SpringLayer = {
+    appendWater: appendWater,
+    SEG: SEG,
+    RINGS: RINGS,
+    WOBBLE: WOBBLE,
+    shoreRadius: shoreRadius
+  };
 })(window.HexLab = window.HexLab || {});

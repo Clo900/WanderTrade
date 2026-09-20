@@ -119,8 +119,11 @@
     }
   }
 
-  /** 通用手绘斑驳：大块软斑 + 细颗粒，输出 0.80~1.0 的灰度 */
-  function mottleTexture(seed) {
+  /**
+   * 通用手绘斑驳（**画布**）：大块软斑 + 细颗粒，输出 0.80~1.0 的灰度。
+   * 草地底纹直接拿它的像素继续叠笔触，所以这里返回 canvas 而不是 Texture。
+   */
+  function mottleCanvas(seed) {
     const N = SURFACE_TILE_PX;
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
@@ -162,7 +165,17 @@
       });
     }
     ctx.globalAlpha = 1;
-    return toTexture(canvas);
+    return canvas;
+  }
+
+  /**
+   * 通用手绘斑驳（贴图）：把 `mottleCanvas` 包成 `THREE.Texture`。
+   * ⚠ 拆成「画布 → 贴图」两步，是因为草地底纹要的是**同一张画布的像素**再叠草笔触；
+   *   旧写法 `mottleTexture(seed).image` 会先造一个 Texture 再只取它的 canvas ——
+   *   那个 Texture 永远不上传、也没人持有，纯属多余对象。
+   */
+  function mottleTexture(seed) {
+    return toTexture(mottleCanvas(seed));
   }
 
   /**
@@ -174,7 +187,7 @@
     const N = SURFACE_TILE_PX;
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
-    const base = mottleTexture(seed).image;
+    const base = mottleCanvas(seed);
     ctx.drawImage(base, 0, 0);
     const rnd = Rng.mulberry32(((seed || 1) | 0) + 211);
     ctx.globalAlpha = 0.08;
@@ -289,6 +302,43 @@
         ctx.beginPath();
         ctx.arc(x + ox, y + oy, r, 0, Math.PI * 2);
         ctx.fill();
+      });
+    }
+    return toTexture(canvas);
+  }
+
+  /** 湿沙：细砂颗粒 + 水渍斑块，给岸线混合带用（仍是灰度，与基色相乘） */
+  function wetSandTexture(seed) {
+    const N = SURFACE_TILE_PX;
+    const canvas = makeCanvas(N, N);
+    const ctx = canvas.getContext('2d');
+    const s = (seed || 7021) | 0;
+    ctx.fillStyle = '#dfdfdf';
+    ctx.fillRect(0, 0, N, N);
+    const img = ctx.createImageData(N, N);
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        const coarse = Rng.valueNoise2Periodic(x / 18, y / 18, N / 18, s);
+        const wet = Rng.valueNoise2Periodic(x / 9, y / 9, N / 9, s + 41);
+        const fine = Rng.hash2(x, y, s + 83);
+        const v = 0.74 + coarse * 0.10 + wet * 0.08 + fine * 0.04;
+        const c = Math.max(0, Math.min(255, Math.round(v * 255)));
+        const i = (y * N + x) * 4;
+        img.data[i] = c; img.data[i + 1] = c; img.data[i + 2] = c; img.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const rnd = Rng.mulberry32(s + 151);
+    for (let i = 0; i < 180; i++) {
+      const x = rnd() * N, y = rnd() * N;
+      const r = 5 + rnd() * 16;
+      wrapped(N, { minX: x - r, maxX: x + r, minY: y - r, maxY: y + r }, function (ox, oy) {
+        const g = ctx.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
+        g.addColorStop(0, 'rgba(110,110,110,0.18)');
+        g.addColorStop(0.55, 'rgba(150,150,150,0.12)');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(x - r + ox, y - r + oy, r * 2, r * 2);
       });
     }
     return toTexture(canvas);
@@ -655,7 +705,7 @@
   }
 
   /** 岩壁：水平层理 + 竖向裂纹 + 颗粒（山脉/峡谷地表用，可平铺） */
-  function rockTexture(seed) {
+  function buildRockTexture(seed) {
     const N = SURFACE_TILE_PX;
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
@@ -726,6 +776,19 @@
     }
     ctx.putImageData(img, 0, 0);
     return toTexture(canvas);
+  }
+
+  /**
+   * 岩壁贴图（按 seed 记忆化）。
+   * ⚠ 地表层（峡谷地表）与山体层都要这一张，两边各自调一次会**生成两张一模一样
+   *   的贴图**（重复的逐像素生成 + 两份显存），而两张材质本来就可以引用同一张纹理。
+   *   与 `roadSurfaceTexture` 同一套做法。
+   */
+  const rockCache = Object.create(null);
+  function rockTexture(seed) {
+    const key = String(seed);
+    if (!rockCache[key]) rockCache[key] = buildRockTexture(seed);
+    return rockCache[key];
   }
 
   const roadSurfaceCache = Object.create(null);
@@ -1078,6 +1141,7 @@
     forestFloorTexture: forestFloorTexture,
     fieldStripesTexture: fieldStripesTexture,
     flowerSpeckleTexture: flowerSpeckleTexture,
+    wetSandTexture: wetSandTexture,
     waterCrackleTexture: waterCrackleTexture,
     /** 泉眼 / 小湖的涟漪贴图（v 轴 = 归一化半径） */
     rippleTexture: rippleTexture,

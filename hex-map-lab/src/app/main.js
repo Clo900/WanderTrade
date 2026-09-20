@@ -109,6 +109,9 @@
     // 每层的建造耗时一起记：地表与山体是两大头（山体还要按 LOD 建 4 级），
     // 回归时看这一行就知道是哪一层变慢了。
     layerMs = {};
+    // 水面材质的诊断注册表：世界重建会造一批新材质，旧的随图层一起 dispose，
+    // 这里清一次引用，避免 stats() 里的数量越滚越大。
+    if (HL.WaterMaterial && HL.WaterMaterial.resetStats) HL.WaterMaterial.resetStats();
     function timed(name, fn) {
       const t0 = performance.now();
       const out = fn();
@@ -118,10 +121,10 @@
     layers = {
       terrain: timed('地形', function () { return HL.TerrainLayer.build(world); }),
       mountains: timed('山体', function () { return HL.MountainLayer.build(world); }),
-      rivers: timed('河流', function () { return HL.RiverLayer.build(world, riverData); }),
-      // 河源水体（泉眼 / 小湖）的水面片。数据来自 riverData.springs；本层只画
-      // **水面**，碗本身由 world.heightAt 刻（所以山体 / 地表 / 深度预通道都自动对）
-      springs: timed('泉湖', function () { return HL.SpringLayer.build(world); }),
+      // 统一水面（v2.8）：海 + 河（含河口分流）+ 泉 / 湖合并成一份几何 + 一份材质。
+      // 旧版这里是三个图层（河流 / 泉湖 / 地表里的海面），各有自己的渲染偏置 ——
+      // 三个高度正是河口台阶与「方头」的来源，见 render/water-surface.js 的头注。
+      water: timed('水面', function () { return HL.WaterSurface.build(world, riverData); }),
       ink: timed('描边', function () { return HL.InkLayer.build(world); }),
       grid: HL.GridLayer.build(world),
       roads: timed('道路', function () { return HL.RoadLayer.build(world, roadData, state); }),
@@ -137,20 +140,21 @@
       layers.ink.group,
       layers.grid.group,
       layers.roads.group,
-      layers.rivers.group,
-      layers.springs.group,
+      layers.water.group,
       layers.props.group,
       layers.village.group,
       layers.cities.group,
       layers.players.group,
       layers.ambience.group
     );
+    // 水面由独立图层装配，但拾取要能打到它（读地图时点水面要出地块详情）
+    layers.terrain.addPickTarget(layers.water.waterMesh);
 
     // 默认可见性（与 HUD 勾选状态保持一致）
     layers.grid.setVisible(false);
     layers.mountains.setVisible(true);
-    layers.rivers.setVisible(true);
-    layers.springs.setVisible(true);
+    layers.water.setVisible(true);
+    layers.water.setDeltasVisible(true);
     layers.ink.setVisible(true);
     layers.roads.setVisible(true);
     layers.roads.setLabelsVisible(false);
@@ -179,19 +183,13 @@
       // 否则「地表深度」恒等于水面深度，差值为 0，过渡失效）。
       // 山体要给**全部级别**：当前可见的只是一部分，但每一级都可能被切到，
       // 少了任何一级都会让远处水面在该级别下失去地形深度。
+      //
+      // ⚠ v2.7：深度**不再注入材质**。水面用的是 render/water-material.js 的自写
+      //   ShaderMaterial，它直接读 HL.WaterDepth 的共享 GLSL 与 uniform（同一份
+      //   深度图、同一套矩阵），所以这里只要把预通道的内容列清楚即可。
       meshes: [
-        layers.terrain.landMesh, layers.terrain.forestMesh, layers.terrain.fieldMesh,
-        layers.terrain.flowerMesh, layers.terrain.rockMesh, layers.terrain.bedMesh
-      ].concat(layers.mountains.meshes),
-      waterMaterials: [
-        layers.terrain.waterMaterial,   // 海 / 湖（水格的水平水面）
-        layers.rivers.waterMaterial,    // 河面
-        layers.rivers.channelMaterial,  // 河中泓
-        // 泉眼 / 小湖的水面片。**没有泉湖时这里是 null**，create() 会过滤掉；
-        // 它自己不进上面的 `meshes`（预通道要的是水下地表），但必须进注入列表：
-        // 碗是真实几何下切，所以「泉眼浅、湖心深」由画面深度自动读出来。
-        layers.springs.waterMaterial
-      ]
+        layers.terrain.groundMesh, layers.terrain.bedMesh
+      ].concat(layers.mountains.meshes)
     });
 
     // ---------- 3c) 山体 LOD 控制器 ----------
@@ -261,7 +259,8 @@
       roadCount: Data.SNAPSHOT.roads.length,
       maxRise: world.maxRise.toFixed(1),
       inkEdges: layers.ink.edgeCount,
-      foamEdges: layers.ink.foamCount,
+      /** 河口分流带条数（表现层三角洲）；旧的「蜡笔泡沫线」已由水面材质接管 */
+      deltaBands: layers.water.counts.deltas || 0,
       inkStrokes: layers.ink.crayonStats.strokes,
       inkBreaks: layers.ink.crayonStats.breaks,
       revision: Data.SNAPSHOT_REVISION,
@@ -275,10 +274,14 @@
     hud.pushLog('生成参数来自 config（' + C.revision + '），比例可调', 'sys');
     hud.pushLog('地形：山脉 ' + (world.stats.byTerrain.ridge || 0) + ' 格；立体结构：桥 ' + roadData.tileStats.bridge +
       ' / 栈桥 ' + roadData.tileStats.trestle + ' / 隧道 ' + roadData.tileStats.tunnel + ' 格', 'sys');
-    hud.pushLog('河流：' + riverData.counts.rivers + ' 条（沿格边）· 汇流 ' + riverData.counts.confluences +
-      ' 处 · 最长 ' + (riverData.counts.longest / world.hexSize).toFixed(1) + ' 格；河源水体 ' +
-      riverData.counts.springs + ' 处（' + layers.springs.counts.lakes + ' 湖 / ' +
-      layers.springs.counts.springsOnly + ' 泉，跳过 ' + riverData.counts.springSkipped +
+    hud.pushLog('河流：' + riverData.counts.rivers + ' 条（沿格边）· 汇流 ' + riverData.counts.joins +
+      ' 处（干流互并 ' + riverData.counts.confluences + ' / 支流汇入 ' + riverData.counts.tributaryJoins + '）· 最长 ' +
+      (riverData.counts.longest / world.hexSize).toFixed(1) + ' 格；河面落差 ' +
+      ((riverData.profile && riverData.profile.drop) || 0).toFixed(1) + ' 单位（沿程下降：' +
+      '源 ' + ((riverData.profile && riverData.profile.sourceY) || 0).toFixed(1) +
+      ' → 海口 ' + ((riverData.profile && riverData.profile.mouthY) || 0).toFixed(1) + '）；河源水体 ' +
+      riverData.counts.springs + ' 处（' + layers.water.counts.lakes + ' 湖 / ' +
+      layers.water.counts.springsOnly + ' 泉，跳过 ' + riverData.counts.springSkipped +
       ' 处河源）· 泉湖沿岸道具 ' + layers.props.counts.spring + ' 个；连续山体 ' +
       layers.mountains.counts.peaks + ' 片 / 山簇 ' + mountainClusters.clusters.length +
       ' 组 / 支流候选 ' + terrainRules.branchCandidates.length + ' 处', 'sys');
@@ -487,7 +490,7 @@
         source: Data.SNAPSHOT.source, worldSchema: world.worldSchema, seed: world.seed,
         hexCount: world.tileList.length, cityCount: Data.SNAPSHOT.cities.length,
         roadCount: Data.SNAPSHOT.roads.length, maxRise: world.maxRise.toFixed(1),
-        inkEdges: layers.ink.edgeCount, foamEdges: layers.ink.foamCount,
+        inkEdges: layers.ink.edgeCount, deltaBands: layers.water.counts.deltas || 0,
         inkStrokes: layers.ink.crayonStats.strokes, inkBreaks: layers.ink.crayonStats.breaks,
         revision: Data.SNAPSHOT_REVISION, configRevision: C.revision
       });
@@ -501,8 +504,8 @@
         case 'cameraMode': sceneKit.setMode(msg.value); break;
         case 'showInk': layers.ink.setVisible(msg.value); break;
         case 'showMountains': layers.mountains.setVisible(msg.value); break;
-        case 'showRivers': layers.rivers.setVisible(msg.value); break;
-        case 'showSprings': layers.springs.setVisible(msg.value); break;
+        case 'showWater': layers.water.setVisible(msg.value); break;
+        case 'showDeltas': layers.water.setDeltasVisible(msg.value); break;
         case 'showGrid': layers.grid.setVisible(msg.value); break;
         case 'showRoads': layers.roads.setVisible(msg.value); break;
         case 'showRoadLabels': layers.roads.setLabelsVisible(msg.value); break;
@@ -595,12 +598,14 @@
 
       // 动画
       layers.terrain.setTime(simNow);
-      layers.rivers.setTime(simNow);
-      layers.springs.setTime(simNow);
+      layers.water.setTime(simNow);
       layers.ink.setTime(simNow);
       layers.cities.setTime(simNow);
       layers.players.setTime(simNow);
       layers.ambience.setTime(simNow);
+      // 水面 shader 的光照来自场景实际灯光：日夜 / 天气切换后水面自动跟随，
+      // 而且三类水共用同一份光照 uniform，只算一次。
+      if (HL.WaterMaterial) HL.WaterMaterial.updateSceneLighting(sceneKit);
 
       cameraControl.update(dt);
       // 山体 LOD：按相机与视口像素密度切采样级别（相机不动时这一步开销为 0）

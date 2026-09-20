@@ -31,9 +31,15 @@
 
         const a0 = Hex.cornerAngle(k);
         const a1 = Hex.cornerAngle((k + 1) % 6);
+        // 角点高度一律问 heightAt（v2.8 阶段二：格边不再必然是 0 ——
+        // 丘陵的连绵波与河带走廊都会让角点离开基准平面）
+        const x0 = tile.x + Math.cos(a0) * size;
+        const z0 = tile.z + Math.sin(a0) * size;
+        const x1 = tile.x + Math.cos(a1) * size;
+        const z1 = tile.z + Math.sin(a1) * size;
         positions.push(
-          tile.x + Math.cos(a0) * size, tile.cornerY[k] + lift, tile.z + Math.sin(a0) * size,
-          tile.x + Math.cos(a1) * size, tile.cornerY[(k + 1) % 6] + lift, tile.z + Math.sin(a1) * size
+          x0, world.heightAt(x0, z0) + lift, z0,
+          x1, world.heightAt(x1, z1) + lift, z1
         );
       }
     }

@@ -5,11 +5,14 @@
  *   1) 不再有「独立棱柱 + 边缘下沉」的台阶感。地表是一张连续曲面：
  *      中心顶点取地块自身高度，六个角点取 world 里与邻居共享的角点高度。
  *      相邻地块在同一角点上的数值完全相同，因此曲面必然无缝、衔接自然。
- *   2) 材质按地形分组成若干 mesh（陆地表 / 农田 / 花田 / 岩壁 / 水面），
- *      每组用一张程序化灰度贴图 × 顶点色，得到手绘平涂的质感。
- *      山脉与峡谷共用岩壁贴图（一次 draw call 画两种地形），
- *      区分靠顶点色与高度明暗。
- *   3) 顶点色带多尺度斑驳与高程明暗，避免出现「一格一色」的拼接感。
+ *   2) 材质是**一份**（render/ground-material.js）：草地 / 森林 / 农田 / 花田 /
+ *      岩壁各一张程序化灰度贴图，按逐顶点权重（aSplatA / aSplatB）混合，
+ *      再乘逐槽位底色（取自**配置的地形调色板**，见 SURFACE_SLOTS）——
+ *      于是地形之间的交界是**贴图级**渐变，而不是格子拼贴。
+ *      水格的地表单独一张（水下地表），水面由统一水面层装配（见下）。
+ *   3) 顶点色只带**明暗调制**（多尺度斑驳 / 高程明暗 / 河滩湿岸 / 岸线过渡），
+ *      底色由材质 uniform 按地形类别给出（见 vertexShadeColor）：
+ *      于是「改季节 / 时段只动一处」，且不会出现「一格一色」的拼接感。
  *   4) 陆地外缘不做高墙，只在网格外缘做一圈水面裙边，并把整张地图放在
  *      一块沙盘底座上——对应「整体更像一个沙盘」的方向。
  * ============================================================ */
@@ -105,6 +108,74 @@
     return out;
   }
 
+  /**
+   * 统一地表 splat 的**槽位表**：数组顺序 = `aSplatA.xyzw` + `aSplatB.x` 的分量顺序。
+   * 一行同时给出「材质分组键」与「配置里的地形键」，所以「地形 → 槽位 → 底色」这条
+   * 映射全项目只有这一处；材质（render/ground-material.js）按序接收底色，不再有第二份顺序表。
+   * ⚠ 底色取**配置调色板**（不是环境色板）：它与下面 vertexColor 的基色同源，
+   *   明暗比值 × 底色正好还原该地块本色 ⇒ 纯色地块与改造前逐位一致。
+   */
+  const SURFACE_SLOTS = [
+    { key: 'land', palette: 'grass' },
+    { key: 'forest', palette: 'forest' },
+    { key: 'field', palette: 'field' },
+    { key: 'flower', palette: 'flower' },
+    { key: 'rock', palette: 'ridge' }
+  ];
+  const SLOT_COUNT = SURFACE_SLOTS.length;
+  /** 逐顶点复用的权重暂存，避免每顶点新建数组 */
+  const TMP_SURFACE_WEIGHTS = new Array(SLOT_COUNT).fill(0);
+  const tmpBase = new THREE.Color();
+
+  function surfaceClassKeyOf(tile) {
+    return CLASS_OF[tile.terrain] || 'land';
+  }
+
+  function surfaceWeightIndex(key) {
+    for (let i = 0; i < SLOT_COUNT; i++) if (SURFACE_SLOTS[i].key === key) return i;
+    return 0; // 未知分组按陆地（CLASS_OF 已兜底一次，这里只是保险）
+  }
+
+  /** 把角点/格心参与组归一成逐槽位 splat 权重（城市并到 land） */
+  function surfaceWeightsAtVertex(group, out) {
+    const dst = out || new Array(SLOT_COUNT).fill(0);
+    for (let i = 0; i < SLOT_COUNT; i++) dst[i] = 0;
+    let sum = 0;
+    for (let i = 0; i < group.length; i += 2) {
+      const t = group[i];
+      const w = group[i + 1];
+      const idx = surfaceWeightIndex(surfaceClassKeyOf(t));
+      dst[idx] += w;
+      sum += w;
+    }
+    if (sum > 0) {
+      const inv = 1 / sum;
+      for (let i = 0; i < SLOT_COUNT; i++) dst[i] *= inv;
+    }
+    return dst;
+  }
+
+  /** 参与组的“原地形底色”平均值（城市保持自己的底色，只是纹理归到 land） */
+  function weightedTerrainBaseColor(group, out) {
+    const dst = out || new THREE.Color();
+    const P = Config.value.palette;
+    let r = 0, g = 0, b = 0, sum = 0;
+    for (let i = 0; i < group.length; i += 2) {
+      const t = group[i];
+      const w = group[i + 1];
+      const style = P.terrain[t.terrain] || P.terrain.grass;
+      const c = colorOf(style.color);
+      r += c.r * w; g += c.g * w; b += c.b * w; sum += w;
+    }
+    if (sum > 0) {
+      dst.setRGB(r / sum, g / sum, b / sum);
+    } else {
+      dst.setRGB(1, 1, 1);
+    }
+    dst.convertSRGBToLinear();
+    return dst;
+  }
+
   const tmpAlt = new THREE.Color();
 
   /**
@@ -180,7 +251,7 @@
     // 河滩：河线附近的地表向砾石/湿泥色靠拢。
     // 只靠一条蓝色水带读不出「这是一条河」——水面必须配上湿岸；
     // 这里是**世界位置的连续函数**，所以共享顶点算出的颜色自然一致，不会有缝。
-    if (riverField) {
+    if (riverField && !isWaterVertex) {
       const infl = riverField.influence(px, pz);
       const wet = riverField.wetness ? riverField.wetness(px, pz) : infl;
       const flood = riverField.floodplain ? riverField.floodplain(px, pz) : infl;
@@ -206,6 +277,17 @@
           }
         }
       }
+      // 河口冲积平原（v2.7）：**只影响表现**的色带 —— 河口周围的地表（含浅水床面）
+      // 向细砂/淤泥色靠拢，读起来才有「河流在这里卸下泥沙」的三角洲感。
+      // 与 floodplain 同一种做法：世界位置的连续函数 ⇒ 共享顶点算出的颜色天然一致。
+      // 不新增地块类别、不改地形高度、不参与寻路。
+      if (typeof riverField.alluvial === 'function') {
+        const alluv = riverField.alluvial(px, pz);
+        if (alluv > 0) {
+          const strength = (Config.value.river.delta && Config.value.river.delta.alluvialStrength) || 0.42;
+          out.lerp(colorOf(P.river.alluvial), strength * alluv);
+        }
+      }
     }
 
     // 山麓与交界过渡：不再完全依赖 props 道具补画面，地表自身就带一点坡脚碎屑与色相变化。
@@ -224,6 +306,22 @@
     // 这里是重复逻辑，删掉；水面顶点色只保留纯粹的基色。
 
     out.convertSRGBToLinear();
+    return out;
+  }
+
+  /**
+   * splat 地表给 shader 的“明暗调制色”。
+   * 先算出原来的顶点色，再除以该点的底色平均值；这样环境底色与类别基色交回 shader uniform，
+   * 手绘颗粒 / 高程明暗 / 河滩湿岸等细节仍留在顶点色里。
+   */
+  function vertexShadeColor(world, group, px, pz, py, out) {
+    vertexColor(world, group, px, pz, py, out);
+    weightedTerrainBaseColor(group, tmpBase);
+    out.setRGB(
+      Math.max(0, Math.min(2.5, out.r / Math.max(1e-4, tmpBase.r))),
+      Math.max(0, Math.min(2.5, out.g / Math.max(1e-4, tmpBase.g))),
+      Math.max(0, Math.min(2.5, out.b / Math.max(1e-4, tmpBase.b)))
+    );
     return out;
   }
 
@@ -305,100 +403,132 @@
     return normals;
   }
 
+  /* ============================================================
+   * 格内曲面：累加缓冲 + 追加器
+   * ------------------------------------------------------------
+   * 为什么拆成「缓冲 → 追加 → 出几何」三步（v2.8）：
+   *   · **统一水面**要把海（水格面片）、河（扁带）、泉（圆盘）拼进**同一份几何**，
+   *     而海那部分就是这里的格内曲面。若各写一份，无缝性（共享角点、共享法线）
+   *     就要在第二处再实现一遍 —— 那正是要避免的重复。
+   *   · 水面做**顶点位移**需要采样密度，所以格内中环从「固定 1 圈」变成
+   *     「可按档加密的 N 圈」（`opts.innerRings`）；陆地各组行为不变。
+   * ============================================================ */
+
   /**
-   * 构建一组地形的曲面网格
-   * @param {object} world
-   * @param {string} groupName 'land' | 'forest' | 'field' | 'flower' | 'water'
-   * @param {number} [flatY] 给定时，所有顶点高度强制为它（用于**水平水面**：
-   *   水面不能读地形高度，否则「水下地表被下切」会把水面一起拖下去）
+   * 几何累加缓冲（地表各组与统一水面共用）。
+   * ⚠ 字段名必须与 `Ribbon.createBuf()` 完全一致（pos / col / uv / idx）：v2.8 起统一水面
+   *   把 Ribbon 的扁带（河面 / 河口分流）直接追加进这份缓冲，两边只能有一套字段名。
    */
-  function buildGroupGeometry(world, groupName, flatY) {
+  function createBuf() {
+    return { pos: [], col: [], uv: [], idx: [] };
+  }
+
+  /** 缓冲 → BufferGeometry。法线按**位置去重后共享**，避免平地沿六边形边界出现明暗缝 */
+  function bufToGeometry(buf) {
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(buf.pos, 3));
+    geom.setAttribute('color', new THREE.Float32BufferAttribute(buf.col, 3));
+    geom.setAttribute('uv', new THREE.Float32BufferAttribute(buf.uv, 2));
+    geom.setIndex(buf.idx);
+    geom.setAttribute('normal', new THREE.Float32BufferAttribute(
+      sharedVertexNormals(buf.pos, buf.idx), 3));
+    geom.computeBoundingSphere();
+    return geom;
+  }
+
+  function appendSurfaceTiles(buf, world, flatY, opts) {
+    const o = opts || {};
     const size = world.hexSize;
     const H = Config.value.height;
     const bw = Config.value.palette.blendWeights || {};
-    // UV 换算取自贴图模块（贴图覆盖多少格），保证贴图周期只有一个来源
     const uvScale = 1 / (size * Textures.SURFACE_TEX_HEX);
-    // 格内中环：半径比例、微起伏幅度、中环处的混色渗透量
     const innerR = H.innerRing === false ? 0 : Math.max(0, Math.min(0.85, H.innerRingRadius == null ? 0.5 : H.innerRingRadius));
+    const rings = o.innerRings ? o.innerRings.slice() : (innerR > 0 ? [innerR] : []);
     const innerRelief = H.innerRelief == null ? 0 : H.innerRelief;
     const flat = flatY == null ? null : flatY;
-    // 角点的等权平均≈「朝邻居渗透 2/3」，中环取两者之间的插值，色带因此单调
     const centerBlend = bw.center == null ? 0.32 : bw.center;
-    const midBlend = lerp(centerBlend, 2 / 3, innerR);
-    const positions = [];
-    const colors = [];
-    const uvs = [];
-    const indices = [];
+    const positions = buf.pos;
+    const colors = buf.col;
+    const uvs = buf.uv;
+    const indices = buf.idx;
     const c = new THREE.Color();
+    const includeTile = o.includeTile || function (tile) {
+      return surfaceClassKeyOf(tile) === o.groupName;
+    };
+    const colorAt = o.colorAt || vertexColor;
+    const snapCoord = function (v) { return Math.fround(v); };
+
+    function emitVertex(tile, className, group, corner, px, pz, py) {
+      px = snapCoord(px);
+      pz = snapCoord(pz);
+      positions.push(px, py, pz);
+      colorAt(world, group, px, pz, py, c);
+      colors.push(c.r, c.g, c.b);
+      uvs.push(px * uvScale, pz * uvScale);
+      if (typeof o.onVertex === 'function') o.onVertex(tile, className, group, corner, px, pz, py);
+    }
 
     const tiles = world.tileList;
     for (let ti = 0; ti < tiles.length; ti++) {
       const tile = tiles[ti];
-      if (classNameOf(tile) !== groupName) continue;
+      const className = surfaceClassKeyOf(tile);
+      if (!includeTile(tile, className)) continue;
 
-      // 中心顶点（该顶点只属于自己）
       const centerIdx = positions.length / 3;
-      const centerY = flat == null ? world.heightAt(tile.x, tile.z) : flat;
-      positions.push(tile.x, centerY, tile.z);
-      vertexColor(world, colorGroupAtVertex(world, tile, -1), tile.x, tile.z, centerY, c);
-      colors.push(c.r, c.g, c.b);
-      uvs.push(tile.x * uvScale, tile.z * uvScale);
+      const centerX = snapCoord(tile.x);
+      const centerZ = snapCoord(tile.z);
+      const centerY = flat == null ? world.heightAt(centerX, centerZ) : flat;
+      emitVertex(tile, className, colorGroupAtVertex(world, tile, -1), -1, centerX, centerZ, centerY);
 
-      // 中环：6 个顶点，半径 innerRingRadius。它们**严格落在格内**，
-      // 不与任何邻居共享，因此可以自由加微起伏（格内不再是一块平板），
-      // 也不会碰到「同一物理顶点颜色/法线一致」这条硬约束。
-      // 有了这一圈，坡面从「格心→角点」一段折线变成两段，山体才有腰。
-      // ⚠ **只有陆地才加这层微起伏**（v2.5）：`innerRelief × maxRise` 实测 1.25 单位，
-      //   而水深只有 0.35 ~ 1.48 —— 给水下地表加振幅比水深还大的起伏，会有 272/948 个
-      //   中环顶点被抬到**水面之上**（最高 +0.997）：海底在整片水面上穿出一圈圈
-      //   硬边的格子斑块，深度过渡也读到一堆逐格噪声（这就是「水面上奇怪的色块」）。
-      //   海底的形状交给连续离岸距离场，它本来就该是平滑的。
-      const isWaterTile = groupName === 'water';
-      const midStart = positions.length / 3;
-      for (let k = 0; k < 6; k++) {
-        const ang = Hex.cornerAngle(k);
-        const mx = tile.x + Math.cos(ang) * size * innerR;
-        const mz = tile.z + Math.sin(ang) * size * innerR;
-        let my = world.heightAt(mx, mz);
-        if (flat != null) my = flat;
-        else if (innerRelief > 0 && !isWaterTile) {
-          const n = Rng.valueNoise2(mx / (size * 1.2), mz / (size * 1.2), world.seed + 6613);
-          my += innerRelief * world.maxRise * (n - 0.5) * 2;
+      const isWaterTile = className === 'water';
+      const ringStarts = [];
+      for (let ring = 0; ring < rings.length; ring++) {
+        const rr = rings[ring];
+        const blend = lerp(centerBlend, 2 / 3, rr);
+        ringStarts.push(positions.length / 3);
+        for (let k = 0; k < 6; k++) {
+          const ang = Hex.cornerAngle(k);
+          const mx = snapCoord(tile.x + Math.cos(ang) * size * rr);
+          const mz = snapCoord(tile.z + Math.sin(ang) * size * rr);
+          let my = world.heightAt(mx, mz);
+          if (flat != null) my = flat;
+          else if (innerRelief > 0 && !isWaterTile) {
+            const n = Rng.valueNoise2(mx / (size * 1.2), mz / (size * 1.2), world.seed + 6613);
+            const hillMask = typeof world.hillMaskAt === 'function' ? world.hillMaskAt(mx, mz) : 0;
+            my += innerRelief * world.maxRise * (n - 0.5) * 2 * (1 - hillMask);
+          }
+          emitVertex(tile, className, colorGroupAtVertex(world, tile, -1, blend), -1, mx, mz, my);
         }
-        positions.push(mx, my, mz);
-        // 中环的颜色取「格心渗透量 → 角点等权平均」之间的插值，
-        // 于是格心到角点的色带是单调渐变的，不会在中环上出现一道色圈
-        vertexColor(world, colorGroupAtVertex(world, tile, -1, midBlend), mx, mz, my, c);
-        colors.push(c.r, c.g, c.b);
-        uvs.push(mx * uvScale, mz * uvScale);
       }
 
-      // 六个角点：高度来自共享角点表，颜色取该角点三个地块的平均，
-      // 因此相邻地块在同一角点上得到完全相同的高度与颜色（真正无缝）
       const cornerStart = positions.length / 3;
       for (let k = 0; k < 6; k++) {
         const ang = Hex.cornerAngle(k);
-        const px = tile.x + Math.cos(ang) * size;
-        const pz = tile.z + Math.sin(ang) * size;
+        const px = snapCoord(tile.x + Math.cos(ang) * size);
+        const pz = snapCoord(tile.z + Math.sin(ang) * size);
         const py = flat == null ? world.heightAt(px, pz) : flat;
-        positions.push(px, py, pz);
-        vertexColor(world, colorGroupAtVertex(world, tile, k), px, pz, py, c);
-        colors.push(c.r, c.g, c.b);
-        uvs.push(px * uvScale, pz * uvScale);
+        emitVertex(tile, className, colorGroupAtVertex(world, tile, k), k, px, pz, py);
       }
 
-      // 顶面三角化（绕序保证法线朝上）：
-      //   格心 → 中环（6 个）
-      //   中环 → 角点（每个扇区 2 个）
-      if (innerR > 0) {
+      if (ringStarts.length) {
         for (let k = 0; k < 6; k++) {
-          const m0 = midStart + k;
-          const m1 = midStart + ((k + 1) % 6);
-          const c0 = cornerStart + k;
-          const c1 = cornerStart + ((k + 1) % 6);
-          indices.push(centerIdx, m1, m0);
-          indices.push(m0, c1, c0);
-          indices.push(m0, m1, c1);
+          const k2 = (k + 1) % 6;
+          indices.push(centerIdx, ringStarts[0] + k2, ringStarts[0] + k);
+        }
+        for (let ring = 0; ring + 1 < ringStarts.length; ring++) {
+          const inner = ringStarts[ring];
+          const outer = ringStarts[ring + 1];
+          for (let k = 0; k < 6; k++) {
+            const k2 = (k + 1) % 6;
+            indices.push(inner + k, outer + k2, outer + k);
+            indices.push(inner + k, inner + k2, outer + k2);
+          }
+        }
+        const lastRing = ringStarts[ringStarts.length - 1];
+        for (let k = 0; k < 6; k++) {
+          const k2 = (k + 1) % 6;
+          indices.push(lastRing + k, cornerStart + k2, cornerStart + k);
+          indices.push(lastRing + k, lastRing + k2, cornerStart + k2);
         }
       } else {
         for (let k = 0; k < 6; k++) {
@@ -408,16 +538,73 @@
         }
       }
     }
+    return buf;
+  }
 
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-    geom.setIndex(indices);
-    // 用「跨地块共享」的法线，避免平地出现沿六边形边界的明暗缝
-    geom.setAttribute('normal', new THREE.Float32BufferAttribute(
-      sharedVertexNormals(positions, indices), 3));
-    geom.computeBoundingSphere();
+  /**
+   * 把一组地形的**格内曲面**追加进缓冲（就地追加，调用方可以接着追加别的几何）。
+   * @param {object} buf createBuf() 的结果
+   * @param {object} world
+   * @param {string} groupName 'land' | 'forest' | 'field' | 'flower' | 'water'
+   * @param {number} [flatY] 给定时，所有顶点高度强制为它（用于**水平水面**：
+   *   水面不能读地形高度，否则「水下地表被下切」会把水面一起拖下去）
+   * @param {{innerRings?: number[]}} [opts] innerRings = 格内中环的半径比例（升序，0~1）。
+   *   不传时按 config.height 的默认一圈；传空数组 = 不要中环（格心直接连角点）。
+   */
+  function appendGroupGeometry(buf, world, groupName, flatY, opts) {
+    const o = Object.assign({}, opts || {}, {
+      groupName: groupName,
+      colorAt: vertexColor
+    });
+    return appendSurfaceTiles(buf, world, flatY, o);
+  }
+
+  /** 构建一组地形的曲面网格（追加器的薄封装，行为与旧版逐字一致） */
+  function buildGroupGeometry(world, groupName, flatY, opts) {
+    return bufToGeometry(appendGroupGeometry(createBuf(), world, groupName, flatY, opts));
+  }
+
+  function shoreBlendAt(world, x, z) {
+    const band = (((Config.value.terrain || {}).shoreBlendBand) == null ? 0.9 : Config.value.terrain.shoreBlendBand) * world.hexSize;
+    const d = typeof world.waterDistance === 'function' ? world.waterDistance(x, z) : Infinity;
+    if (!(d < band)) return 0;
+    const u = d <= 0 ? 0 : d / Math.max(1e-6, band);
+    const t = u * u * (3 - 2 * u);
+    return 1 - t;
+  }
+
+  /** 逐槽位底色色号（配置调色板 → 数组），顺序与 SURFACE_SLOTS 一致 */
+  function surfaceBaseColors() {
+    const P = Config.value.palette.terrain;
+    const out = [];
+    for (let i = 0; i < SLOT_COUNT; i++) {
+      out.push((P[SURFACE_SLOTS[i].palette] || P.grass).color);
+    }
+    return out;
+  }
+
+  function buildGroundGeometry(world) {
+    // 逐顶点属性布局只支持 4 + 1 个槽位（aSplatA 装槽 0..3、aSplatB.x 装槽 4）：
+    // 改槽位数必须同时改材质那边的属性布局，所以这里直接对账，别让它静默错位。
+    if (SLOT_COUNT !== HL.GroundMaterial.SLOT_COUNT) {
+      throw new Error('地表 splat 槽位数不一致：terrain ' + SLOT_COUNT +
+        ' / ground-material ' + HL.GroundMaterial.SLOT_COUNT);
+    }
+    const buf = createBuf();
+    const splatA = [];
+    const splatB = [];
+    appendSurfaceTiles(buf, world, null, {
+      includeTile: function (tile, className) { return className !== 'water'; },
+      colorAt: vertexShadeColor,
+      onVertex: function (tile, className, group, corner, px, pz) {
+        const w = surfaceWeightsAtVertex(group, TMP_SURFACE_WEIGHTS);
+        splatA.push(w[0], w[1], w[2], w[3]);
+        splatB.push(w[4], shoreBlendAt(world, px, pz), 0, 0);
+      }
+    });
+    const geom = bufToGeometry(buf);
+    geom.setAttribute('aSplatA', new THREE.Float32BufferAttribute(splatA, 4));
+    geom.setAttribute('aSplatB', new THREE.Float32BufferAttribute(splatB, 4));
     return geom;
   }
 
@@ -536,45 +723,38 @@
     boardInk.name = 'sandbox-board-ink';
     group.add(boardInk);
 
-    // ---------- 2) 各类地表 ----------
+    // ---------- 2) 地表（统一 splat 地表 + 水下地表） ----------
     const mottle = Textures.grasslandTexture(world.seed);
     const forestFloor = Textures.forestFloorTexture(world.seed + 173);
     const stripes = Textures.fieldStripesTexture(world.seed);
     const speckle = Textures.flowerSpeckleTexture(world.seed);
+    const wetSand = Textures.wetSandTexture(world.seed + 991);
     const crackle = Textures.waterCrackleTexture(world.seed);
     const cliff = Textures.rockTexture(world.seed + 2207);
-    const waterAnimTex = crackle;
-
-    function makeSurface(name, material) {
-      const mesh = new THREE.Mesh(buildGroupGeometry(world, name), material);
-      mesh.castShadow = false;
-      mesh.receiveShadow = true;
-      mesh.name = 'terrain-' + name;
-      group.add(mesh);
-      return mesh;
-    }
-
-    const landMesh = makeSurface('land', new THREE.MeshStandardMaterial({
-      vertexColors: true, map: mottle, roughness: 1, metalness: 0
-    }));
-    const fieldMesh = makeSurface('field', new THREE.MeshStandardMaterial({
-      vertexColors: true, map: stripes, roughness: 1, metalness: 0
-    }));
-    const forestMesh = makeSurface('forest', new THREE.MeshStandardMaterial({
-      vertexColors: true, map: forestFloor, roughness: 1, metalness: 0
-    }));
-    const flowerMesh = makeSurface('flower', new THREE.MeshStandardMaterial({
-      vertexColors: true, map: speckle, roughness: 1, metalness: 0
-    }));
-    // 山脉/峡谷：层理岩壁贴图 + 各自的色（山脉偏暖灰、峡谷偏暗灰）
-    const rockMesh = makeSurface('rock', new THREE.MeshStandardMaterial({
-      vertexColors: true, map: cliff, roughness: 1, metalness: 0
-    }));
-    // ---------- 水面 / 水下地表（两件事必须拆开）----------
+    const groundMat = HL.GroundMaterial.create({
+      maps: {
+        land: mottle,
+        forest: forestFloor,
+        field: stripes,
+        flower: speckle,
+        rock: cliff,
+        shore: wetSand
+      },
+      baseColors: surfaceBaseColors(),
+      roughness: 1,
+      metalness: 0
+    });
+    const groundMesh = new THREE.Mesh(buildGroundGeometry(world), groundMat);
+    groundMesh.castShadow = false;
+    groundMesh.receiveShadow = true;
+    groundMesh.name = 'terrain-ground';
+    group.add(groundMesh);
+    // ---------- 水下地表（水面已移交统一水面层）----------
     //   · **水下地表（bed）** = 水格的地表。`world.heightAt` 用「连续离岸距离场 ×
     //     岸坡因子」把它切下去（见 hex-world 的 waterBedDepth / shoreFade）：
     //     深度是 (x,z) 的纯函数且跨格连续，水深就是它相对水面的落差。
-    //   · **水面** = 一个**水平面**，高度只由全图统一水位决定。
+    //   · **水面**（海 / 河 / 湖 / 泉）由 `render/water-surface.js` 统一装配 —— v2.8
+    //     把它们合并成一份几何 + 一份材质，本层不再出声明的「海面」。
     // 旧版把两者合在同一个网格里（水格的「地表」就是水面），于是「水深」这个概念
     // 在数据上根本不存在，深度过渡也就无从谈起。
     // ⚠ 水位只有**一个来源**：river-builder 的 `waterLevel()`（= size × config.water.level），
@@ -588,16 +768,7 @@
     bedMesh.name = 'terrain-water-bed';
     group.add(bedMesh);
 
-    const waterMat = new THREE.MeshStandardMaterial({
-      vertexColors: true, map: crackle, roughness: 0.35, metalness: 0.02
-    });
-    const waterMesh = new THREE.Mesh(buildGroupGeometry(world, 'water', waterLevelY), waterMat);
-    waterMesh.castShadow = false;
-    waterMesh.receiveShadow = true;
-    waterMesh.name = 'terrain-water';
-    group.add(waterMesh);
-
-    // 水面裙边
+    // 水面裙边（沙盘侧壁：从水面下沿到底座顶面，受光材质，不属于水面本身）
     const skirtGeom = buildWaterSkirt(world, boardTopY);
     const skirtMesh = new THREE.Mesh(skirtGeom, new THREE.MeshStandardMaterial({
       vertexColors: true, roughness: 0.8, metalness: 0, side: THREE.DoubleSide
@@ -626,20 +797,28 @@
 
     return {
       group: group,
-      landMesh: landMesh,
-      forestMesh: forestMesh,
-      fieldMesh: fieldMesh,
-      flowerMesh: flowerMesh,
-      rockMesh: rockMesh,
-      waterMesh: waterMesh,
+      groundMesh: groundMesh,
+      // 兼容旧的消费者：地表已合并成一份，但引用仍指向同一张统一地表网格
+      landMesh: groundMesh,
+      forestMesh: groundMesh,
+      fieldMesh: groundMesh,
+      flowerMesh: groundMesh,
+      rockMesh: groundMesh,
       bedMesh: bedMesh,
-      waterMaterial: waterMat,
       skirtMesh: skirtMesh,
       boardMesh: board,
       /** 水位（绝对高度）：河面 / 湖面 / 海面共用同一个值 */
       waterLevelY: waterLevelY,
-      /** 供射线拾取使用的表面集合 */
-      pickTargets: [landMesh, forestMesh, fieldMesh, flowerMesh, rockMesh, waterMesh],
+      /**
+       * 供射线拾取使用的表面集合。
+       * ⚠ 水面**不在**这里 —— 它由 `render/water-surface.js` 装配，main.js 用
+       *   `addPickTarget()` 把那份网格加进来（本层不再拥有水面）。
+       */
+      pickTargets: [groundMesh],
+      /** 把手拾取的表面加进来（水面在别处装配，见上） */
+      addPickTarget: function (mesh) {
+        if (mesh && this.pickTargets.indexOf(mesh) < 0) this.pickTargets.push(mesh);
+      },
 
       setHighlight: function (tile) {
         if (!tile) { highlight.visible = false; return; }
@@ -649,20 +828,19 @@
 
       setEnvironment: function (env) {
         if (!env || !env.terrain) return;
-        landMesh.material.color.setHex(env.terrain.land);
-        forestMesh.material.color.setHex(env.terrain.forest);
-        fieldMesh.material.color.setHex(env.terrain.field);
-        flowerMesh.material.color.setHex(env.terrain.flower);
-        rockMesh.material.color.setHex(env.terrain.rock);
-        waterMesh.material.color.setHex(env.terrain.water);
-        // 水下地表（河床/海底）不跟着水面走：它读的是同一个水色系但更暗、更湿，
-        // 这样深度过渡把水面变透明时，透出来的是「床」而不是另一层水
+        // ⚠ 统一地表的底色**不吃环境**（v2.9 的决定）：它取自配置的地形调色板
+        //   （见 SURFACE_SLOTS / surfaceBaseColors），与顶点明暗比值同源、也与改造前一致。
+        //   环境色板那份 `terrain.*` 是「向 tint 混色」的结果（夏季 tint = 白色 ⇒
+        //   等于把草地朝白混 28%），拿它当地表底色会把整张地图冲淡。
+        //   环境仍然驱动水面（water-surface 自己刷三套色板）与下面这几项。
+        // 水下地表（河床/海底）**不**跟着水面走：它读同一个水色系但更暗、更湿，
+        // 这样水面按水深变透明时，透出来的是「床」而不是另一层水。
+        // （水面三套色板由 water-surface.setEnvironment → WaterMaterial.setPalette
+        //   一次性刷，本层不碰水面材质。）
         bedMesh.material.color.setHex(env.terrain.water);
         skirtMesh.material.color.setHex(env.terrain.skirt);
         board.material.color.setHex(env.terrain.board);
         boardInk.material.color.setHex(env.terrain.boardEdge);
-        waterMesh.material.roughness = 0.35 - (env.wetness || 0) * 0.12;
-        waterMesh.material.metalness = 0.02 + (env.wetness || 0) * 0.03;
         bedMesh.material.roughness = 0.55 - (env.wetness || 0) * 0.10;
         bedMesh.material.metalness = 0.01 + (env.wetness || 0) * 0.02;
         outline.material.color.setHex(env.accent && env.accent.highlightLine != null ? env.accent.highlightLine : 0xfff0c0);
@@ -670,8 +848,7 @@
       },
 
       setTime: function (t) {
-        waterAnimTex.offset.y = (t * 0.012) % 1;
-        waterAnimTex.offset.x = Math.sin(t * 0.06) * 0.008;
+        // 水面时间由 water-surface.setTime 统一推进（本层不持有水面材质）
         if (highlight.visible) outline.material.opacity = 0.7 + Math.sin(t * 3.2) * 0.25;
       }
     };
@@ -686,6 +863,14 @@
     // 「陆地基本色不被水色污染」「同一角点在三格上算出同一个颜色」这两条红线
     // 因此可以在没有浏览器的前提下逐点对拍。
     colorGroupAtVertex: colorGroupAtVertex,
-    vertexColor: vertexColor
+    surfaceWeightsAtVertex: surfaceWeightsAtVertex,
+    /** 槽位表（顺序 = aSplatA / aSplatB 的分量顺序，也是底色数组的顺序） */
+    SURFACE_SLOTS: SURFACE_SLOTS,
+    vertexColor: vertexColor,
+    // 格内曲面的「缓冲 / 追加 / 出几何」：统一水面要用它把海（水格面片）与
+    // 河 / 泉拼进同一份几何，无缝性（共享角点 + 共享法线）因此只有一份实现。
+    createBuf: createBuf,
+    appendGroupGeometry: appendGroupGeometry,
+    bufToGeometry: bufToGeometry
   };
 })(window.HexLab = window.HexLab || {});

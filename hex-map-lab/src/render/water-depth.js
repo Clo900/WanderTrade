@@ -1,30 +1,33 @@
 /* ============================================================
- * render/water-depth.js —— 画面深度过渡（屏幕空间深度预通道）
+ * render/water-depth.js —— 画面深度过渡的**深度预通道**与共享 GLSL
  * ------------------------------------------------------------
  * 解决什么问题：水面网格是一个**水平面**，它在地图上盖出一整片同色的蓝。
  * 真实世界里水的读法来自「水有多深」—— 岸边浅到能看见底，中间深到发暗。
  * 在平面网格上做不出这件事，除非把「该像素处的地表有多远」交给 GPU 去比。
  *
- * 做法（一次半分辨率深度预通道 + 一次着色器注入）：
+ * 做法（一次半分辨率深度预通道 + 一份共享 GLSL）：
  *
  *   1) 预通道：把**地表 + 山体**画进一张带 DepthTexture 的 renderTarget。
  *      用相机 layer 掩码筛选，不靠临时改 visible（visible 是图层开关的状态，
  *      借来当渲染筛选会跟 HUD 勾选打架）；水面自己**不在**预通道里 ——
  *      否则「地表深度」永远等于水面深度，差值为 0，过渡就白做了。
- *   2) 注入：给水面材质挂 onBeforeCompile，在片元着色器尾部加一段比较：
- *        两边都**还原到视空间**再相减，乘 1/|cos| 折回竖直方向，得到该像素处
- *        「这片水底下有多深」dz，再由 dz 求 t ∈ [0,1] 去插值不透明度与深水色。
+ *   2) 共享 GLSL：深度重建与手动双线性只在这里维护一份，由**水面材质**
+ *      （render/water-material.js）在自己的片元里调用，得到
+ *        · `dz` = 该像素处水底比水面低多少（世界单位，真竖直水深）
+ *        · `t`  = dz 相对 depthFade 的归一化（0 = 岸边，1 = 深水）
+ *      深浅色、透明度、泡沫**全部由使用方自己决定**，本模块不再插任何材质代码。
+ *
+ * ⚠ v2.7 的重要收缩：旧版本模块自己挂 `onBeforeCompile` 往水面材质里塞代码，
+ *   并且**另存了一份 uDepthShallow / uDepthDeep** —— 与表现层各读一遍
+ *   `palette.water[type]`、各混一遍，水色被往「淡」里拉两次。现在颜色链只有一条
+ *   （表现层的 palette），本模块只提供深度。同时消除了「两个 onBeforeCompile
+ *   在同一份 shader 字符串上抢注入点」这种隐式顺序依赖。
  *
  * 要点：
  *   · 水面片元与地表片元用的**同一个相机、同一个投影**，窗口深度直接可比；
- *   · ⚠ **必须在视空间相减**（v2.5 修正，见 §15.22）。窗口深度是非线性的，
- *     「每 1 单位窗口深度差 = 多少竖直水深」是**逐像素**不同的（取决于该像素到
- *     相机的距离）。旧实现用一个「相机到水面平面的中心距离」算出全局系数
- *     `uDepthPerUnit`，于是偏离视线中心的像素被判成更浅、相机高度/俯角一变
- *     整片水就变深变浅（实测同一像素在透视档的 RGB 极差到 100 量级，而正确值
- *     应当是个位数）。现在两边都用 near/far 还原成 viewZ 再相减 → 与像素位置、
- *     相机高度、正透视档全都无关，同一个世界点在任何视角下得到同一个 t。
- *   · 相机有俯角：视线方向量到的深度差要除 |cos|（`uInvViewCos`）才是竖直水深。
+ *   · 窗口深度本身非线性，不能直接相减或用全局比例换算。每个水面/床面深度都先
+ *     通过当前投影反变换重建到世界坐标，再直接比较 worldY；因此不依赖相机俯角、
+ *     视距或像素位置的全局补偿，同一个世界点在任何视角下都得到同一个 t。
  *
  * ⚠ 深度预通道的精度决定过渡的下限：UnsignedShort 深度（16 位）在
  *   far ≈ 4000 时每级 ≈ 0.06 单位，而过渡区间只有 1.65 单位 —— 只剩 27 级，
@@ -38,43 +41,53 @@
   /** 预通道专用 layer 位：只有「地表 + 山体」被打开这一位 */
   const DEPTH_LAYER = 1;
 
-  /** 注入片段：声明 */
-  const DECL = [
-    'uniform sampler2D uDepthMap;',
-    'uniform vec2 uDepthTexel;',
+  /**
+   * 共享 uniforms。**在模块加载时就建好**，因为水面图层比深度通道更早创建
+   * （main.js 先建图层、再建 WaterDepth）—— 材质必须能在那一刻就引用到这些
+   * uniform 对象；`uDepthMap.value` 由 create() 在稍后补上。
+   * 这里只放「三类水共用」的量：每个水型自己的 depthFade / alphaMin 在材质里。
+   */
+  const uniforms = {
+    uDepthMap: { value: null },
+    /** 主绘制缓冲像素 → UV 的步长（1 / 主画面尺寸） */
+    uDepthTexel: { value: new THREE.Vector2(1, 1) },
     // 深度图**一个 texel 的 UV 步长**（= 1/深度图尺寸）。⚠ 不能拿 uDepthTexel 顶替：
     // 那是「主画面像素 → UV」的换算（1/主画面尺寸），深度图是半分辨率，两者差一倍。
+    uDepthStep: { value: new THREE.Vector2(1, 1) },
+    /** 由当前相机把窗口深度重建为世界坐标，worldY 差即真实竖直水深 */
+    uInvProjection: { value: new THREE.Matrix4() },
+    uCameraWorld: { value: new THREE.Matrix4() },
+    /** 1 = 手动双线性（默认）；0 = 单点最近邻（对照 / 回退档，见 config.water.depthFilter） */
+    uDepthFilter: { value: 1 }
+  };
+
+  /**
+   * 共享 GLSL（片元）：uniform 声明 + 世界坐标重建 + 手动双线性床面 + 求水深。
+   * 使用方只需要一行：`float dz; float dT = waterDepthRatio(fragUV, fadeScale, dz);`
+   * （`fragUV = gl_FragCoord.xy * uDepthTexel`，`fadeScale` = 该水型的 depthFade）
+   */
+  const GLSL_DECL = [
+    'uniform sampler2D uDepthMap;',
+    'uniform vec2 uDepthTexel;',
     'uniform vec2 uDepthStep;',
-    'uniform float uNear;',
-    'uniform float uFar;',
-    'uniform float uIsOrtho;',
-    'uniform float uInvViewCos;',
-    'uniform float uDepthFade;',
-    'uniform float uDepthAlphaMin;',
-    'uniform vec3 uDepthTint;',
-    // 1 = 手动双线性（默认）；0 = 单点最近邻（对照 / 回退档，见 config.water.depthFilter）
+    'uniform mat4 uInvProjection;',
+    'uniform mat4 uCameraWorld;',
     'uniform float uDepthFilter;',
-    // 窗口深度 → 视空间 z（相机前方为负）。这两行与 three 的 packing.glsl
-    // （orthographicDepthToViewZ / perspectiveDepthToViewZ）是同一套约定；
-    // 直接写在这里是为了不依赖该材质是否 `#include <packing>`。
-    'float vpViewZ(float windowZ, float near, float far, float isOrtho) {',
-    '  if (isOrtho > 0.5) return windowZ * (near - far) - near;',
-    '  return (near * far) / ((far - near) * windowZ - far);',
+    // 窗口深度 + UV → 世界坐标。水面与河床都以同一套投影反变换重建，
+    // 所以直接比较 y 分量就是世界竖直水深，不需也不能再乘相机俯角补偿。
+    'vec3 waterWorldAtDepth(vec2 uv, float windowZ) {',
+    '  vec4 clip = vec4(uv * 2.0 - 1.0, windowZ * 2.0 - 1.0, 1.0);',
+    '  vec4 view = uInvProjection * clip;',
+    '  view /= max(1e-6, view.w);',
+    '  return (uCameraWorld * view).xyz;',
     '}',
-    // 床深的**手动双线性**（v2.6 修「屏幕上那条水平分界线」，见 §15.24）：
-    // 深度纹理在 WebGL 里只支持 NEAREST（不可线性过滤），于是半分辨率深度图会把
-    // 过渡系数 t 变成「屏幕上 2×2 一块」的阶跃 —— 水面深浅与不透明度每 2 行跳一下，
-    // 远看就是一条**屏幕锁定、平移场景不动**的水平条纹/分界线。
-    // 这里取 4 个邻近 texel 自己做双线性：
-    //   · 必须**各自还原到视空间再加权**（窗口深度非线性，混窗口深度 = 换了尺度，§15.22）；
-    //   · 「没有地表」的 texel（窗口深度 ≈ 远平面）权重置 0 后归一化，否则水体外缘会拉出光晕；
-    //   · 4 个都无效时退回单点采样，保证行为不比修前差。
-    'float bedViewBilinear(vec2 duv, float near, float far, float isOrtho) {',
+    // 床深的**手动双线性**：先逐 texel 重建 worldY 再加权，不能混合非线性的窗口深度。
+    'float waterBedYBilinear(vec2 duv) {',
     '  vec2 stp = uDepthStep;',
     '  vec2 p = duv / stp;',
     '  vec2 b = floor(p - 0.5) + 0.5;',
     '  vec2 f = p - b;',
-    '  float d0 = texture2D(uDepthMap, (b) * stp).x;',
+    '  float d0 = texture2D(uDepthMap, b * stp).x;',
     '  float d1 = texture2D(uDepthMap, (b + vec2(1.0, 0.0)) * stp).x;',
     '  float d2 = texture2D(uDepthMap, (b + vec2(0.0, 1.0)) * stp).x;',
     '  float d3 = texture2D(uDepthMap, (b + vec2(1.0, 1.0)) * stp).x;',
@@ -83,65 +96,47 @@
     '  float v2 = (1.0 - f.x) * f.y * (1.0 - step(0.9999, d2));',
     '  float v3 = f.x * f.y * (1.0 - step(0.9999, d3));',
     '  float wsum = v0 + v1 + v2 + v3;',
-    '  if (wsum <= 1e-5) return vpViewZ(clamp(d0, 0.0, 1.0), near, far, isOrtho);',
-    '  return (v0 * vpViewZ(clamp(d0, 0.0, 1.0), near, far, isOrtho)',
-    '        + v1 * vpViewZ(clamp(d1, 0.0, 1.0), near, far, isOrtho)',
-    '        + v2 * vpViewZ(clamp(d2, 0.0, 1.0), near, far, isOrtho)',
-    '        + v3 * vpViewZ(clamp(d3, 0.0, 1.0), near, far, isOrtho)) / wsum;',
+    '  if (wsum <= 1e-5) return waterWorldAtDepth(duv, clamp(d0, 0.0, 1.0)).y;',
+    '  return (v0 * waterWorldAtDepth(b * stp, clamp(d0, 0.0, 1.0)).y',
+    '        + v1 * waterWorldAtDepth((b + vec2(1.0, 0.0)) * stp, clamp(d1, 0.0, 1.0)).y',
+    '        + v2 * waterWorldAtDepth((b + vec2(0.0, 1.0)) * stp, clamp(d2, 0.0, 1.0)).y',
+    '        + v3 * waterWorldAtDepth((b + vec2(1.0, 1.0)) * stp, clamp(d3, 0.0, 1.0)).y) / wsum;',
     '}',
-    // 单点最近邻（`config.water.depthFilter = 'nearest'` 时的回退档，也是测试的对照组）
-    'float bedViewNearest(vec2 duv, float near, float far, float isOrtho) {',
-    '  return vpViewZ(clamp(texture2D(uDepthMap, duv).x, 0.0, 1.0), near, far, isOrtho);',
+    'float waterBedYNearest(vec2 duv) {',
+    '  return waterWorldAtDepth(duv, clamp(texture2D(uDepthMap, duv).x, 0.0, 1.0)).y;',
+    '}',
+    // 水深：dz = 水面 worldY − 床面 worldY（真竖直水深）；dT = dz / fadeScale（已 smoothstep）
+    //
+    // ⚠ 入参只有一个 UV，语义是**主绘制缓冲的 UV**（= gl_FragCoord.xy × uDepthTexel）。
+    //   内部两种采样各自换算：
+    //     · 双线性先 `p = duv / uDepthStep` 得到「深度图 texel 坐标」，再取 4 邻域；
+    //     · 最近邻直接按这个 UV 采（深度图与主画面是同一视锥，UV 是同一套）。
+    //   把这两个换算搞混（例如把 gl_FragCoord.xy × uDepthStep 当 UV 传进来）会让
+    //   texel 坐标整体变成 2 倍，采到完全不相干的区域 —— 而且因为两边都错，画面
+    //   看起来「还算像水」，只有「nearest 对照组的行奇偶差」会暴露它（v2.7 实测）。
+    //
+    // ⚠ `fadeScale` 是**入参**而不是这里的 uniform（v2.8）：统一水面把每个水型的
+    //   depthFade 放在逐顶点属性里（`aProfB.y`），同一份材质、同一次绘制要服务
+    //   海 / 河 / 泉三种过渡尺度。本模块因此只做「重建 + 求差」，一个尺度都不持有。
+    'float waterDepthRatio(vec2 fragUV, float fadeScale, out float dz) {',
+    '  float waterY = waterWorldAtDepth(fragUV, gl_FragCoord.z).y;',
+    '  float bedY = (uDepthFilter > 0.5) ? waterBedYBilinear(fragUV) : waterBedYNearest(fragUV);',
+    '  dz = max(0.0, waterY - bedY);',
+    '  float t = clamp(dz / max(1e-6, fadeScale), 0.0, 1.0);',
+    '  return t * t * (3.0 - 2.0 * t);',
     '}'
   ].join('\n');
-
-  /** 注入片段：比较 + 混合（放在 dithering 之前，此时 gl_FragColor 已是最终色） */
-  const BODY = [
-    '{',
-    '  vec2 duv = gl_FragCoord.xy * uDepthTexel;',
-    // ⚠ 两边都还原到**视空间**再相减：窗口深度是非线性的，「每单位窗口深度差
-    //   等于多少竖直水深」逐像素不同（看该像素到相机多远），用全局系数近似会让
-    //   同一片水随视角/高度/像素位置变深变浅。见文件头与 §15.22。
-    '  float fragViewZ = vpViewZ(gl_FragCoord.z, uNear, uFar, uIsOrtho);',
-    '  float bedViewZ = (uDepthFilter > 0.5)',
-    '    ? bedViewBilinear(duv, uNear, uFar, uIsOrtho)',
-    '    : bedViewNearest(duv, uNear, uFar, uIsOrtho);',
-    '  float dz = (fragViewZ - bedViewZ) * uInvViewCos;',
-    '  float t = clamp(dz / max(1e-6, uDepthFade), 0.0, 1.0);',
-    '  t = t * t * (3.0 - 2.0 * t);',
-    // ⚠ 这里曾加过一个「按视线与水面的夹角趋不透明」的项（v2.6 试验，已删）：实测在
-    //   默认整图视角下对画面的影响是 0.04%（同姿态、固定像素集 A/B），最平视角也只有 7%。
-    //   原因是它只在 |视线方向.y| < 0.35 时大于 0，而上面这条 dz 在同一批像素上已经饱和
-    //   （dz = 水深/viewCos²，最浅水深 0.016 × 22 ≈ 0.35 单位，viewCos < 0.42 时就 > 1.98
-    //   的 uDepthFade）⇒ t 已经是 1，抬不动。见 §15.24。
-    '  gl_FragColor.rgb = mix(gl_FragColor.rgb, gl_FragColor.rgb * uDepthTint, t);',
-    '  gl_FragColor.a = mix(uDepthAlphaMin, 1.0, t);',
-    '}'
-  ].join('\n');
-
-  /**
-   * 窗口深度 → 视空间 z。与上面 GLSL 里的 `vpViewZ` **同一套公式**（JS 版给
-   * 断言 / 调试用：测试要拿深度图里的窗口深度反解出「真实水深」来对拍）。
-   */
-  function viewZFromDepth(windowZ, near, far, isOrtho) {
-    if (isOrtho) return windowZ * (near - far) - near;
-    return (near * far) / ((far - near) * windowZ - far);
-  }
 
   /**
    * @param {Object} opts
-   *   · sceneKit        渲染骨架（要 activeCamera / renderer / scene）
-   *   · meshes          预通道要画的对象数组（地表各组 + 山体）
-   *   · waterMaterials  要注入深度过渡的水面材质数组
-   *   · hexSize         格距（depthFade 以「× hexSize」计）
+   *   · sceneKit  渲染骨架（要 activeCamera / renderer / scene）
+   *   · meshes    预通道要画的对象数组（地表各组 + 山体；**不含水面**）
+   *   · hexSize   格距（depthFade 以「× hexSize」计）
    */
   function create(opts) {
     const sceneKit = opts.sceneKit;
     const renderer = sceneKit.renderer;
-    const scene = sceneKit.scene;
     const meshes = (opts.meshes || []).filter(Boolean);
-    const materials = (opts.waterMaterials || []).filter(Boolean);
-    const hexSize = opts.hexSize || 1;
 
     // 预通道只画「地表 + 山体」：给它们打开 DEPTH_LAYER 这一位（原 layer 0 保留，
     // 主通道与射线拾取都还按 layer 0 走，互不影响）。
@@ -155,7 +150,6 @@
       renderer.getDrawingBufferSize(dbSize);
       return { w: Math.max(1, Math.round(dbSize.x)), h: Math.max(1, Math.round(dbSize.y)) };
     }
-    // 由下面的 resize() 填上真实值（此刻 renderer 可能还没 setSize）
     let mainW = 1;
     let mainH = 1;
 
@@ -169,72 +163,10 @@
       stencilBuffer: false,
       depthTexture: depthTexture
     });
+    uniforms.uDepthMap.value = depthTexture;
 
     /** 预通道的替身材质：只写深度缓冲，颜色谁写都一样 */
     const depthMaterial = new THREE.MeshBasicMaterial();
-
-    const uniforms = {
-      uDepthMap: { value: depthTexture },
-      uDepthTexel: { value: new THREE.Vector2(1, 1) },
-      // 深度图一个 texel 的 UV 步长（= 1/深度图尺寸）：手动双线性要用它把
-      // 「主画面像素 UV」换算到 texel 坐标。resize() 里随 RT 尺寸更新。
-      uDepthStep: { value: new THREE.Vector2(1, 1) },
-      // 相机的 near / far 与「是不是正交」：两个深度都必须先还原成视空间 z 才能相减
-      uNear: { value: 1 },
-      uFar: { value: 1000 },
-      uIsOrtho: { value: 1 },
-      // 1 / |视线方向的 y 分量|：把「沿视线的深度差」折回**竖直水深**
-      uInvViewCos: { value: 1 },
-      uDepthFade: { value: 1 },
-      uDepthAlphaMin: { value: 0.4 },
-      uDepthTint: { value: new THREE.Vector3(1, 1, 1) },
-      // 1 = 手动双线性（默认），0 = 最近邻（对照 / 回退档）
-      uDepthFilter: { value: 1 }
-    };
-
-    // ---------- 注入水面材质 ----------
-    let hooked = 0;
-    const originalHooks = [];
-    for (let i = 0; i < materials.length; i++) {
-      const mat = materials[i];
-      originalHooks.push({ material: mat, onBeforeCompile: mat.onBeforeCompile });
-      // 半透明水面：浅处透出「水下地表」，深处不透明。depthWrite 保持打开，
-      // 水面仍然是「最上层可见面」，只是它的 alpha 由深度决定。
-      mat.transparent = true;
-      mat.depthWrite = true;
-      mat.onBeforeCompile = function (shader) {
-        shader.uniforms.uDepthMap = uniforms.uDepthMap;
-        shader.uniforms.uDepthTexel = uniforms.uDepthTexel;
-        shader.uniforms.uDepthStep = uniforms.uDepthStep;
-        shader.uniforms.uNear = uniforms.uNear;
-        shader.uniforms.uFar = uniforms.uFar;
-        shader.uniforms.uIsOrtho = uniforms.uIsOrtho;
-        shader.uniforms.uInvViewCos = uniforms.uInvViewCos;
-        shader.uniforms.uDepthFade = uniforms.uDepthFade;
-        shader.uniforms.uDepthAlphaMin = uniforms.uDepthAlphaMin;
-        shader.uniforms.uDepthTint = uniforms.uDepthTint;
-        shader.uniforms.uDepthFilter = uniforms.uDepthFilter;
-        shader.fragmentShader = shader.fragmentShader
-          .replace('#include <common>', '#include <common>\n' + DECL)
-          .replace('#include <dithering_fragment>', BODY + '\n#include <dithering_fragment>');
-      };
-      mat.needsUpdate = true;
-      hooked++;
-    }
-
-    let lastCamIsOrtho = null;
-    let lastInvViewCos = 0;
-
-    function applyUniforms() {
-      const W = (Config.value && Config.value.water) || {};
-      const fade = Math.max(1e-4, (W.depthFade == null ? 0.09 : W.depthFade) * hexSize);
-      uniforms.uDepthFade.value = fade;
-      uniforms.uDepthAlphaMin.value = W.depthAlphaMin == null ? 0.40 : W.depthAlphaMin;
-      const tint = W.depthTint == null ? 0.58 : W.depthTint;
-      uniforms.uDepthTint.value.set(tint, tint, tint);
-      uniforms.uDepthFilter.value = W.depthFilter === 'nearest' ? 0 : 1;
-    }
-    applyUniforms();
 
     function resize() {
       const s = measure();
@@ -268,99 +200,91 @@
         Math.max(1, Math.round(dbSize.y)) !== mainH) resize();
     }
 
-    const dir = new THREE.Vector3();
-    let frames = 0;
     let disposed = false;
+    /** 预通道跑过的帧数（供断言「每帧都在跑」） */
+    let frames = 0;
+    /** 预通道换替身材质前的原材质（只在 create 时分配一次） */
+    const savedMaterials = new Array(meshes.length);
 
-    /** 每帧在主通道之前调用：先渲染深度预通道，再刷新水面的深度相关 uniform */
+    /** 每帧在主通道之前调用：先渲染深度预通道，再刷新矩阵与采样开关 */
     function update() {
       if (disposed) return;
       const cam = sceneKit.activeCamera();
       if (!cam) return;
 
-      // 配置每帧重读：策划改水深 / 过渡参数后不需要刷新页面就能看到
-      // （此前只有 create() 时读一次 ⇒ 运行期改 Config.water 不生效）。
-      applyUniforms();
+      // 配置每帧重读：策划改深度采样方式后不需要刷新页面就能看到
+      const W = (Config.value && Config.value.water) || {};
+      uniforms.uDepthFilter.value = W.depthFilter === 'nearest' ? 0 : 1;
 
       syncSize();
-      cam.getWorldDirection(dir);
-      // 四个相机量：两个深度靠 near/far + 正交标志还原成视空间 z，
-      // |dir.y| 用来把「沿视线的深度差」折回竖直水深。**不依赖像素位置、
-      // 不依赖相机到水面的距离** —— 这正是「同一片水换视角就变深浅」的根治点。
-      uniforms.uNear.value = cam.near;
-      uniforms.uFar.value = cam.far;
-      uniforms.uIsOrtho.value = cam.isOrthographicCamera ? 1 : 0;
-      uniforms.uInvViewCos.value = 1 / Math.max(1e-4, Math.abs(dir.y));
-      lastCamIsOrtho = !!cam.isOrthographicCamera;
-      lastInvViewCos = uniforms.uInvViewCos.value;
 
-      // ---- 深度预通道 ----
-      const prevOverride = scene.overrideMaterial;
-      const prevAutoShadow = renderer.shadowMap.autoUpdate;
-      const prevRT = renderer.getRenderTarget();
+      // 两个矩阵把水面与床面的窗口深度重建为世界坐标
+      uniforms.uInvProjection.value.copy(cam.projectionMatrixInverse);
+      uniforms.uCameraWorld.value.copy(cam.matrixWorld);
+
+      // 预通道 = 地表 + 山体（水面**不在** meshes 里，否则「地表深度」恒等于水面深度）。
+      // 筛选靠**相机 layer 掩码**，不靠临时改 visible —— visible 是图层开关的状态，
+      // 借来当渲染筛选会跟 HUD 勾选打架。替身材质只写深度、不跑 PBR 片元。
+      for (let i = 0; i < meshes.length; i++) {
+        savedMaterials[i] = meshes[i].material;
+        meshes[i].material = depthMaterial;
+      }
       const prevMask = cam.layers.mask;
-
-      // 关掉阴影自动更新：预通道只要深度，重算一遍 shadow map 是纯浪费
-      // （主通道那一遍会把阴影算好，恢复 autoUpdate 即可）
-      renderer.shadowMap.autoUpdate = false;
-      scene.overrideMaterial = depthMaterial;
+      const prevTarget = renderer.getRenderTarget();
       cam.layers.set(DEPTH_LAYER);
-
       renderer.setRenderTarget(rt);
-      renderer.render(scene, cam);
-
-      renderer.setRenderTarget(prevRT);
+      renderer.render(sceneKit.scene, cam);
+      renderer.setRenderTarget(prevTarget);
       cam.layers.mask = prevMask;
-      scene.overrideMaterial = prevOverride;
-      renderer.shadowMap.autoUpdate = prevAutoShadow;
-
+      for (let i = 0; i < meshes.length; i++) meshes[i].material = savedMaterials[i];
       frames++;
     }
 
+    function dispose() {
+      if (disposed) return;
+      disposed = true;
+      rt.dispose();
+      depthTexture.dispose();
+      depthMaterial.dispose();
+      uniforms.uDepthMap.value = null;
+    }
+
     return {
+      uniforms: uniforms,
+      glsl: GLSL_DECL,
+      depthTexture: depthTexture,
+      renderTarget: rt,
       update: update,
       resize: resize,
-      uniforms: uniforms,
-      renderTarget: rt,
-      depthTexture: depthTexture,
-      waterMaterials: materials,
-      dispose: function () {
-        if (disposed) return;
-        disposed = true;
-        for (let i = 0; i < originalHooks.length; i++) {
-          const entry = originalHooks[i];
-          entry.material.onBeforeCompile = entry.onBeforeCompile;
-          entry.material.needsUpdate = true;
-        }
-        if (HL.ResourceDispose) HL.ResourceDispose.renderTarget(rt);
-        if (depthMaterial && typeof depthMaterial.dispose === 'function') depthMaterial.dispose();
-      },
-      meshes: meshes,
-      /** 供测试/调试读的实况 */
+      dispose: dispose,
+      /** 预通道是否已经把深度图准备好（供断言与诊断读） */
+      ready: function () { return !disposed && rt.width > 1 && rt.height > 1; },
+      /**
+       * 诊断统计（供测试/HUD 读）。
+       * ⚠ 不再有 `hooked`：本模块**不往任何材质里插代码**（v2.7），
+       *   水面材质只是引用这里的 uniform 与 GLSL，所以「接入了几个材质」
+       *   由 `HL.WaterMaterial.stats()` 报。
+       */
       stats: function () {
+        const W = (Config.value && Config.value.water) || {};
         return {
-          hooked: hooked,
           meshes: meshes.length,
-          frames: frames,
-          rtW: rt.width,
-          rtH: rt.height,
           mainW: mainW,
           mainH: mainH,
+          rtW: rt.width,
+          rtH: rt.height,
+          rt: [rt.width, rt.height],
+          /** 主画面像素 → UV 的步长（1/主画面尺寸） */
           texel: uniforms.uDepthTexel.value.x,
-          /** 深度图 texel 的 UV 步长（手动双线性的采样间隔）。断言用 */
+          /** 深度图一个 texel 的 UV 步长（半分辨率时约为 texel 的 2 倍） */
+          depthStep: uniforms.uDepthStep.value.x,
           depthStepX: uniforms.uDepthStep.value.x,
           depthStepY: uniforms.uDepthStep.value.y,
-          ortho: lastCamIsOrtho,
-          /** 1/|cos|（竖直折算）。断言用：它只该随俯角变，**不该**随像素位置/视距变 */
-          invViewCos: lastInvViewCos,
-          near: uniforms.uNear.value,
-          far: uniforms.uFar.value,
-          fade: uniforms.uDepthFade.value,
-          alphaMin: uniforms.uDepthAlphaMin.value,
-          tint: uniforms.uDepthTint.value.x,
-          /** 1 = 手动双线性；0 = 最近邻（对照档） */
+          ratio: W.depthResolution == null ? 0.5 : W.depthResolution,
           depthFilter: uniforms.uDepthFilter.value,
-          materials: materials.map(function (m) { return m.type + (m.transparent ? '/transparent' : ''); })
+          hasDepthMap: !!uniforms.uDepthMap.value,
+          frames: frames,
+          ready: !disposed && rt.width > 1 && rt.height > 1
         };
       }
     };
@@ -369,7 +293,8 @@
   HL.WaterDepth = {
     create: create,
     DEPTH_LAYER: DEPTH_LAYER,
-    /** 窗口深度 → 视空间 z（与着色器里 `vpViewZ` 同一套公式，供断言对拍） */
-    viewZFromDepth: viewZFromDepth
+    uniforms: uniforms,
+    glsl: GLSL_DECL,
+    waterWorldAtDepthGLSL: GLSL_DECL
   };
 })(window.HexLab = window.HexLab || {});

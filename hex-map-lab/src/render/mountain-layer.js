@@ -1,5 +1,5 @@
 /**
- * 山体层：山脉格上的低多边形山体，叠在统一平面之上。
+ * 山体层：山脉格上的低多边形山体，叠在地表之上（山格格位不抬地表基座）。
  * ============================================================
  * 造型**全部来自 `world/mountain-field.js` 的簇级柏林噪声场**，本层只做三件事：
  * 采样、建网格、上色。这里没有任何「每格的形状」概念。
@@ -203,8 +203,13 @@
       thickness: function (x, z) {
         return Math.max(0, field.surfaceAt(x, z) - world.heightAt(x, z));
       },
-      /** 山体表面高度（含地表钳制） */
-      heightAt: function (x, z) { return field.surfaceAt(x, z); }
+      /**
+       * **山壳表面**高度（含地表钳制与河道侵蚀）。
+       * ⚠ 名字不能叫 `heightAt`：`world.heightAt` 是**地表**高度，两者在穿山河段
+       *   刻意不同（山壳被侵蚀切回地表）。同名两义正是多次「水面之上到底有没有
+       *   地形」各说各话的源头。
+       */
+      surfaceHeightAt: function (x, z) { return field.surfaceAt(x, z); }
     };
   }
 
@@ -569,9 +574,11 @@
       world: world, size: size, uvPeriod: size * 0.9,
       taperOuter: M.taperOuter, outlineWobble: M.outlineWobble,
       /**
-       * 全图统一水位：**不在这里重抄 `size × water.level`** —— 直接问 river-builder 的
-       * `waterLevel()`（河 / 湖 / 海 / 泉水面都读它）。「水面之上/之下」这条判据必须与
-       * 它们同源，否则山体、水面、水下地表三者会各按各的水位算。
+       * 水面参考高度 = **海面水位**：**不在这里重抄 `size × water.level`** —— 直接问
+       * river-builder 的 `waterLevel()`。「水面之上/之下」这条判据只用来判「这块地是不是
+       * 沉在水里」，而沉在水里的只有水格（水下地表），水格的档位就是海面；
+       * 河 / 泉的局部水面另有住户（地表网格与水面几何），不归山体判据管。
+       * ⚠ 判据必须与它同源，否则山体、水面、水下地表三者会各按各的水位算。
        */
       waterLevel: HL.Rivers && HL.Rivers.waterLevel ? HL.Rivers.waterLevel(size) : 0,
       /**

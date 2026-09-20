@@ -34,6 +34,18 @@
   }
 
   /**
+   * 路面基准地表高度（**唯一来源**）。
+   *
+   * 控制点与采样点都必须用它：v2.8 阶段二起地表是连续的丘陵波（`world.heightAt`），
+   * 而 `world.topY` 只是**逻辑档位**。控制点若用档位、采样点用真实地表，同一条路就
+   * 有了两个地面高度 —— 曲线弧长按错的 Y 算，且未来任何「控制点也参与渲染」的改动
+   * 都会立刻露馅。城市格在这两处都返回 0（`tileHeightAt` 的城市分支），天然一致。
+   */
+  function roadGround(world, x, z) {
+    return world.heightAt(x, z);
+  }
+
+  /**
    * 生成单条道路的控制点（格心 + 共享边中点，附带 XZ 噪声偏移）
    */
   function buildControlPoints(world, road, hexes) {
@@ -56,7 +68,7 @@
 
       if (i === 0 || i === hexes.length - 1) {
         // 首末点落在城市格心（保证道路真正接入城市）
-        pts.push(new THREE.Vector3(t.x, world.topY(t) + lift, t.z));
+        pts.push(new THREE.Vector3(t.x, roadGround(world, t.x, t.z) + lift, t.z));
         continue;
       }
 
@@ -67,11 +79,11 @@
         mx = (prev.x + t.x) / 2;
         mz = (prev.z + t.z) / 2;
       }
-      const y = world.topY(t) + lift;
+      const y = roadGround(world, t.x, t.z) + lift;
       pts.push(new THREE.Vector3(mx + ox * 0.5, y, mz + oz * 0.5));
 
       // 格心点本身也纳入，让曲线穿过格子，视觉上更贴合格网
-      pts.push(new THREE.Vector3(t.x + ox, world.topY(t) + lift, t.z + oz));
+      pts.push(new THREE.Vector3(t.x + ox, roadGround(world, t.x + ox, t.z + oz) + lift, t.z + oz));
     }
 
     if (pts.length < 2) return null;
@@ -123,7 +135,7 @@
           kind = ((tile.distToLand || 0) >= deepWater) ? 'trestle' : 'bridge';
         } else if (rd < 0) {
           kind = 'bridge';
-        } else if (tile.terrain === 'ridge' && tile.height >= 2) {
+        } else if (tile.terrain === 'ridge') {
           kind = 'tunnel';
         }
       }
@@ -254,7 +266,7 @@
         if (tile.terrain === 'water') {
           if ((tile.distToLand || 0) >= deepWater) tile.trestleVia = road.id;
           else tile.bridgeVia = road.id;
-        } else if (tile.terrain === 'ridge' && tile.height >= 2) {
+        } else if (tile.terrain === 'ridge') {
           tile.tunnelVia = road.id;
         } else if (tile.roadIds.indexOf(road.id) < 0) {
           tile.roadIds.push(road.id);

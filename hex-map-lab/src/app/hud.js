@@ -19,8 +19,12 @@
   const Config = HL.Config;
   const RoadStyle = HL.RoadStyle;
 
-  /** 地貌中文名（landform 只有 水/低地/丘陵；山脉见 terrain） */
-  const LANDFORM_NAME = { water: '水域', lowland: '低地', hill: '丘陵' };
+  /**
+   * 地貌中文名（landform 只有 水 / 平原 / 丘陵；山脉见 terrain）。
+   * ⚠ 键必须与世界上产出的值一致：产出是 'plain'（v2.8 起与 config 的
+   *   `landformRatios` 键名统一，旧版是产出 plain、表里写 lowland，查不到中文名）。
+   */
+  const LANDFORM_NAME = { water: '水域', plain: '平原', hill: '丘陵' };
 
   function el(tag, cls, html) {
     const node = document.createElement(tag);
@@ -69,7 +73,7 @@
     const header = el('div', 'hud-header');
     header.appendChild(el('div', 'hud-title', '六边形 2.5D 跑商地图 · 实验页'));
     header.appendChild(el('div', 'hud-sub',
-      '手绘蜡笔沙盘风：统一平面微缩地形 + 独立山体（雪线）+ 沿格边河流 + 五档道路（铁轨 / 栈桥 / 隧道）+ 生态植被与过渡装饰 + 云影飞鸟'));
+      '手绘蜡笔沙盘风：逐地块档位 + 丘陵连绵波 + 独立山体（雪线）+ 沿格边河流（沿程下降）+ 五档道路（铁轨 / 栈桥 / 隧道）+ 生态植被与过渡装饰 + 云影飞鸟'));
     root.appendChild(header);
 
     // ---------- 世界 ----------
@@ -109,8 +113,10 @@
     const layers = [
       { name: 'showInk', label: '墨线描边', on: true },
       { name: 'showMountains', label: '山体（峰+雪）', on: true },
-      { name: 'showRivers', label: '河流（沿格边）', on: true },
-      { name: 'showSprings', label: '泉眼 / 小湖', on: true },
+      // 水面（v2.8）：海 / 河 / 泉已合并成一份几何，只能整片开关；
+      // 「河口三角洲」是逐顶点的表现开关（几何仍属于同一份水面）。
+      { name: 'showWater', label: '水面（海 / 河 / 湖）', on: true },
+      { name: 'showDeltas', label: '河口三角洲', on: true },
       { name: 'showRoads', label: '道路（五档）', on: true },
       { name: 'showRoadLabels', label: '里程标签', on: false },
       { name: 'showProps', label: '植被道具', on: true },
@@ -395,7 +401,7 @@
           '<div><span>六边形</span><b>' + info.hexCount + ' 格</b></div>' +
           '<div><span>城市 / 道路</span><b>' + info.cityCount + ' / ' + info.roadCount + '</b></div>' +
           '<div><span>最大高差</span><b>' + info.maxRise + ' 单位</b></div>' +
-          '<div><span>描边 / 泡沫线</span><b>' + info.inkEdges + ' / ' + info.foamEdges + '</b></div>' +
+          '<div><span>描边 / 河口分流</span><b>' + info.inkEdges + ' / ' + info.deltaBands + '</b></div>' +
           '<div><span>蜡笔笔触 / 断笔</span><b>' + info.inkStrokes + ' / ' + info.inkBreaks + '</b></div>' +
           '<div><span>快照版本</span><b>' + info.revision + '</b></div>' +
           '<div><span>配置版本</span><b>' + info.configRevision + '</b></div>';
@@ -430,7 +436,11 @@
         html += '<div><span>轴向坐标</span><b>q=' + tile.q + ', r=' + tile.r + '</b></div>';
         html += '<div><span>地貌</span><b>' + (LANDFORM_NAME[tile.landform] || tile.landform) + '</b></div>';
         html += '<div><span>地形</span><b>' + swatch(style.color) + style.name + '</b></div>';
-        html += '<div><span>高度语义</span><b>' + ['低', '中', '高'][tile.height] + '（局部起伏 ' +
+        // 高度语义（v2.8 阶段二）：**基座**（离散，`surfaceY`，山格恒为 0）
+        // 与**逐点实际地表**（连续，`world.heightAt`）是两件事 —— 后者还含丘陵波、
+        // 河道走廊与泉湖碗。旧版只有一个 `tile.height`（0/1/2 的标志位）却叫 height。
+        html += '<div><span>高度基座</span><b>' + (LANDFORM_NAME[tile.landform] || tile.landform) +
+          '（基座 ' + tile.surfaceY.toFixed(1) + ' · 地表 ' +
           world.heightAt(tile.x, tile.z).toFixed(1) + ' 单位）</b></div>';
         if (tile.resource) {
           html += '<div><span>资源</span><b>' + tile.resource.name + ' ×' + tile.resource.amount + '</b></div>';

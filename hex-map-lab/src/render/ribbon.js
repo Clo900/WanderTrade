@@ -103,6 +103,10 @@
     if (to - from < 1) return;
     const widthAt = typeof opt.halfWidth === 'function' ? opt.halfWidth : null;
     const halfWidth = widthAt ? 0 : opt.halfWidth;
+    const widthLAt = typeof opt.halfWidthL === 'function' ? opt.halfWidthL : null;
+    const widthRAt = typeof opt.halfWidthR === 'function' ? opt.halfWidthR : null;
+    const halfWidthL = widthLAt ? 0 : (opt.halfWidthL == null ? halfWidth : opt.halfWidthL);
+    const halfWidthR = widthRAt ? 0 : (opt.halfWidthR == null ? halfWidth : opt.halfWidthR);
     const lateralAt = typeof opt.lateral === 'function' ? opt.lateral : null;
     const lateral0 = lateralAt ? 0 : (opt.lateral || 0);
     const yOffset = opt.yOffset || 0;
@@ -122,18 +126,23 @@
       const y = s.y + yOffset;
       const u = arc[i] / period;
       const hw0 = widthAt ? widthAt(i, s) : halfWidth;
+      const hwL0 = widthLAt ? widthLAt(i, s) : (opt.halfWidthL == null ? hw0 : halfWidthL);
+      const hwR0 = widthRAt ? widthRAt(i, s) : (opt.halfWidthR == null ? hw0 : halfWidthR);
       const lateral = lateralAt ? lateralAt(i, s) : lateral0;
-      const v = hw0 / period;
+      const v = Math.max(hwL0, hwR0) / period;
       // 毛边：小径的路幅左右抖动，边缘因此不是一条直线
-      let hw = hw0;
+      let hwL = hwL0;
+      let hwR = hwR0;
       if (opt.jitterAmp) {
-        hw *= 1 + (Rng.hash2(i, 17, opt.jitterSeed || 7) - 0.5) * 2 * opt.jitterAmp;
+        const jitter = 1 + (Rng.hash2(i, 17, opt.jitterSeed || 7) - 0.5) * 2 * opt.jitterAmp;
+        hwL *= jitter;
+        hwR *= jitter;
       }
 
-      const lx = s.x + f.nx * (-hw + lateral);
-      const lz = s.z + f.nz * (-hw + lateral);
-      const rx = s.x + f.nx * (hw + lateral);
-      const rz = s.z + f.nz * (hw + lateral);
+      const lx = s.x + f.nx * (-hwL + lateral);
+      const lz = s.z + f.nz * (-hwL + lateral);
+      const rx = s.x + f.nx * (hwR + lateral);
+      const rz = s.z + f.nz * (hwR + lateral);
       const ly = colY ? colY(lx, lz, i, s, y) : y;
       const ry = colY ? colY(rx, rz, i, s, y) : y;
 

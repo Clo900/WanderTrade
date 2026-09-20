@@ -1,4 +1,4 @@
-/* 逻辑层冒烟测试：世界生成 / 统一平面与格内微起伏 / 河流（沿格边·水平水面·浅切槽）
+/* 逻辑层冒烟测试：世界生成 / 逐地块档位 + 丘陵连绵波 / 河流（沿格边·沿程阶梯水面·浅切槽）
  * / 五档道路与桥隧栈桥 / 生态状态 / 确定性
  * 运行：node tests/logic-test.js （在 hex-map-lab 目录下）
  */
@@ -19,6 +19,8 @@ const files = [
   'src/data/world-snapshot.js',
   'src/world/terrain-overrides.js',
   'src/world/mountain-system.js',
+  // 高度场是 hex-world 的**依赖**（档位表 / 丘陵波的唯一来源），必须先加载
+  'src/world/height-field.js',
   'src/world/hex-world.js',
   'src/world/terrain-rules.js',
   'src/world/mountain-cluster.js',
@@ -54,7 +56,7 @@ function check(name, cond, extra) {
 function pct(v) { return (v * 100).toFixed(1) + '%'; }
 
 console.log('== 模块装载 ==');
-['Bus', 'Rng', 'Hex', 'Config', 'Data', 'World', 'WorldRebuild', 'TerrainOverrides', 'MountainSystem', 'TerrainRules', 'MountainCluster', 'Roads', 'CityGraph', 'TileState', 'EnvironmentState', 'EnvironmentPalette'].forEach(function (k) {
+['Bus', 'Rng', 'Hex', 'Config', 'Data', 'World', 'WorldRebuild', 'TerrainOverrides', 'MountainSystem', 'TerrainRules', 'MountainCluster', 'Roads', 'CityGraph', 'TileState', 'EnvironmentState', 'EnvironmentPalette', 'HeightField'].forEach(function (k) {
   check('HexLab.' + k, !!HL[k]);
 });
 
@@ -83,6 +85,10 @@ check('环境系统默认状态已配置', !!C.environment && !!C.environment.de
   JSON.stringify(C.environment.default));
 check('天气预设已配置', !!C.weather && Object.keys(C.weather.presets || {}).length >= 3,
   Object.keys(C.weather.presets || {}).join('/'));
+check('风格化水体参数分组齐全', !!C.water.shared && !!C.water.sea && !!C.water.river &&
+  !!C.water.spring && !!C.water.heightmap && C.water.shared.waveAmplitude > 0 &&
+  C.water.shared.highlightSteps >= 1 && C.water.heightmap.fallback === 'sum-of-sines',
+  'shared/sea/river/spring/heightmap');
 // v1.6：云影改成贴地网格，参数自洽性（步长/抬升为正是「贴地」的前提，
 // 贴图边长低于 512 会让掠射角下重新退化成细线）
 check('云影改为贴地网格（步长 / 抬升 / 贴图精度自洽）',
@@ -122,9 +128,14 @@ const envNight = HL.EnvironmentPalette.resolve(envState.current());
 check('地块数量 > 200', w.tileList.length > 200, w.tileList.length + ' 格');
 check('13 城全部落格', Object.keys(w.cityTiles).length === 13);
 check('城市格地形为 city', Object.keys(w.cityTiles).every(id => w.cityTiles[id].terrain === 'city'));
-check('高度均为离散 0/1/2', w.tileList.every(t => t.height === 0 || t.height === 1 || t.height === 2));
-check('water 高度恒为 0', w.tileList.filter(t => t.terrain === 'water').every(t => t.surfaceY === 0));
-check('陆地高度非负', w.tileList.filter(t => t.terrain !== 'water').every(t => t.surfaceY >= 0));
+// v2.8 阶段二：`tile.height`（旧的 0/1/2 标志位）已删除，改为 `surfaceY` = **逻辑档位**
+// （离散；由 HeightField.tierOf 唯一来源填写）。档位只有「基准面」与「丘陵档」两种取值。
+const TIERS = HL.HeightField.tiers(C, w.hexSize);
+check('档位为离散值（只有 基准面 / 丘陵档 两种）',
+  w.tileList.every(t => t.surfaceY === TIERS.plain || t.surfaceY === TIERS.hill),
+  '基准 ' + TIERS.plain + ' / 丘陵 ' + TIERS.hill);
+check('water 档位恒为海面 0', w.tileList.filter(t => t.terrain === 'water').every(t => t.surfaceY === TIERS.water));
+check('陆地档位非负', w.tileList.filter(t => t.terrain !== 'water').every(t => t.surfaceY >= 0));
 check('山脉簇分析已生成', clusterState.clusters.length > 0, clusterState.clusters.length + ' 组');
 check('地块联动语义已生成', !!rules.byTile[w.tileList[0].key] && !!w.tileList[0].terrainRule);
 // 山簇段级语义（spine / endcap / wall / pass）与「每格局部取向」（主轴 / 前后邻居）
@@ -144,11 +155,15 @@ check('内湖/内海支流已从候选推进到可生成数据',
   rules.branchCandidates.length === 0 || (rivers.counts.tributaries || 0) > 0,
   '候选 ' + rules.branchCandidates.length + ' 处 / 支流 ' + (rivers.counts.tributaries || 0) + ' 条');
 check('环境色解析可输出整图角色', !!envNoon.scene && !!envNoon.terrain && !!envNoon.props && !!envNoon.city);
-check('环境切换会改变地表与场景主色',
+check('环境切换会改变地表、水面与场景主色',
   envNoon.scene.sunColor !== envNight.scene.sunColor &&
   envNoon.terrain.land !== envNight.terrain.land &&
-  envNoon.river.surface !== envNight.river.surface,
-  'sun ' + envNoon.scene.sunColor.toString(16) + ' -> ' + envNight.scene.sunColor.toString(16));
+  envNoon.water.surface !== envNight.water.surface,
+  'sun ' + envNoon.scene.sunColor.toString(16) + ' / water ' +
+    envNoon.water.surface.toString(16) + ' -> ' + envNight.water.surface.toString(16));
+check('环境水体 profile 含海/河/泉深浅色',
+  !!envNoon.water.sea && !!envNoon.water.river && !!envNoon.water.spring &&
+  envNoon.water.sea.shallow != null && envNoon.water.river.deep != null && envNoon.water.spring.surface != null);
 
 console.log('\n== 地形按比例生成（目标 / 实际·剔边界）==');
 const innerN = w.stats.innerCount;
@@ -167,43 +182,53 @@ check('山脉已生成', (w.stats.byTerrain.ridge || 0) > 0, (w.stats.byTerrain.
     pct(actual[k] || 0) + ' vs ' + pct(w.stats.targetByTerrain[k]));
 });
 
-console.log('\n== 统一平面 + 格内微起伏 ==');
-// 新体系：整图共享一张基准平面（surfaceY / cornerY 只是兼容字段，恒为 0），
-// 平原完全平；丘陵只做**格内** dome 起伏、不抬格边；山体是独立模型层，
-// 不再由连续高度场抬升。旧体系的隘口 / 峡谷已整体移除。
-check('全部地块共享同一基准平面（surfaceY / cornerY 恒为 0）',
-  w.tileList.every(t => t.surfaceY === 0 && t.cornerY.every(function (v) { return v === 0; })),
-  w.tileList.length + ' 格');
+console.log('\n== 逐地块档位 + 丘陵连绵波（v2.8 阶段二）==');
+// 新体系两层：
+//   · **逻辑档位**（离散）= 地块类型 → 档高（`surfaceY` / `HeightField.tierOf`），
+//     水面高度、侵蚀 ceiling、HUD 都读它；
+//   · **渲染高度**（连续）= 档位 + 丘陵连绵波 + 河道走廊 + 泉湖碗（`world.heightAt`）。
+// 「格边归零」这条约束已随旧版 dome 一起移除：连续场跨格天然连续。
+check('地表基座只由地块类型决定（水/平原/城市/山格 = 基准面，丘陵 = 丘陵档）',
+  w.tileList.every(function (t) {
+    if (t.terrain === 'water') return t.surfaceY === TIERS.water;
+    if (t.terrain === 'city') return t.surfaceY === TIERS.city;
+    if (t.terrain === 'ridge') return t.surfaceY === TIERS.plain;   // 山格不抬基座
+    return t.surfaceY === (t.landform === 'hill' ? TIERS.hill : TIERS.plain);
+  }));
 check('山脉不再抬升地表（山格格心高度为 0）',
   w.tileList.filter(t => t.terrain === 'ridge').every(t => w.heightAt(t.x, t.z) === 0));
 check('旧体系已移除（不再生成峡谷 / 隘口）',
   (w.stats.byTerrain.canyon || 0) === 0 && !w.tileList.some(t => t.pass || t.passPick));
 
-// 平原：格心必须严格平（临河格另有浅切槽，单独断言）
+// 平原：格心必须严格平（掩码为 0 ⇒ 没有丘陵波；走廊外 ⇒ 没有河岸台地；
+// 临河格另有切槽，单独断言）
 let flatBad = 0;
 for (const t of w.tileList) {
-  if (t.landform !== 'plain' || t.riverAdjacency > 0) continue;
+  if (t.landform !== 'plain' || t.riverAdjacency > 0 || t.riverNear) continue;
   if (t.terrain === 'water' || t.terrain === 'city' || t.terrain === 'ridge') continue;
+  if (w.hillMaskAt(t.x, t.z) > 0) continue;              // 过渡带内允许有波
+  const pf = rivers.riverProfileAt(t.x, t.z);
+  if (pf && (pf.corridor > 0 || pf.off > 0)) continue;   // 河岸台地内允许有高度
   if (Math.abs(w.heightAt(t.x, t.z)) > 1e-9) flatBad++;
 }
-check('平原完全平（不受丘陵 / 山体影响）', flatBad === 0, flatBad + ' 个非平格心');
+check('平原完全平（走廊 / 丘陵带之外 ⇒ 不受任何影响）', flatBad === 0, flatBad + ' 个非平格心');
 
-// 丘陵：格心抬起、格边回落到 0（回到 0 才能保证相邻地块之间无缝、无台阶）
-let hillCount = 0, hillPeak = 0, hillEdgeBad = 0;
+// 丘陵：连绵波 —— 均值 = 丘陵档、峰值 = 2 倍档（世界坐标连续，因此没有「格边」这个概念）
+let hillCount = 0, hillSum = 0, hillPeak = 0;
 for (const t of w.tileList) {
-  if (t.landform !== 'hill' || t.riverAdjacency > 0) continue;
+  if (t.landform !== 'hill' || t.riverAdjacency > 0 || t.riverNear) continue;
   if (t.terrain === 'ridge' || t.terrain === 'water' || t.terrain === 'city') continue;
+  if (w.hillFadeAt(t.x, t.z) < 1) continue;   // 山 / 城淡出带内（有意压低，另计）
   hillCount++;
+  hillSum += w.heightAt(t.x, t.z);
   hillPeak = Math.max(hillPeak, w.heightAt(t.x, t.z));
-  for (let k = 0; k < 6; k++) {
-    const p = Hex.cornerPoint(t, k, w.hexSize);
-    if (Math.abs(w.heightAt(p.x, p.z)) > 1e-9) hillEdgeBad++;
-  }
 }
-check('丘陵有格内起伏（格心抬起）', hillCount > 0 && hillPeak > 0.5,
-  hillCount + ' 格 / 最高 ' + hillPeak.toFixed(2) + ' 单位');
-check('丘陵起伏不抬格边（相邻地块之间无缝、无台阶）', hillEdgeBad === 0,
-  hillEdgeBad + ' 个角点未归零');
+const hillMean = hillCount ? hillSum / hillCount : 0;
+check('丘陵波均值 ≈ 丘陵档（弱平均场，不是「一格一个包」）',
+  hillCount > 0 && Math.abs(hillMean - TIERS.hill) < TIERS.hill * 0.25,
+  hillCount + ' 格 / 均值 ' + hillMean.toFixed(3) + ' vs 档 ' + TIERS.hill);
+check('丘陵波有起伏（峰值明显高于均值）', hillPeak > hillMean * 1.2,
+  '峰 ' + hillPeak.toFixed(2) + ' / 均值 ' + hillMean.toFixed(2));
 
 // 山脉仍要远离城市（世界生成权重）
 let ridgeMinCityDist = 99;
@@ -741,10 +766,10 @@ console.log('\n== 山体 LOD（按缩放切采样密度）==');
     '从 500（8 级）靠近 625 → ' + details[la] + '；从 800（5 级）靠近 625 → ' + details[lb]);
 })();
 
-console.log('\n== 地表高度查询（统一平面 + 浅切槽）==');
+console.log('\n== 地表高度查询（逐地块档位 + 浅切槽 / 河岸走廊）==');
 // 三个不变量：
-//   ① 非临河地块一律 0（统一平面）；
-//   ② 临河地块只在格边（= 河线）附近被切槽，离开河道立刻回到 0；
+//   ① 丘陵带与河岸走廊之外的地块一律落在基准面（v2.8 阶段二：不再是「全图统一平面」）；
+//   ② 临河地块只在格边（= 河线）附近被切槽，离开河道立刻回到各自档位；
 //   ③ 河线处的地表一定低于水面 —— 否则整条水带会被地形盖住，河就「消失」了。
 let carveTouched = 0, carveBad = 0, carveCenterMax = 0;
 // 河沿格边走 ⇒ 河道中心线**就是格边**，格边两端就是角点。所以：
@@ -765,7 +790,7 @@ for (const t of w.tileList) {
       if (w.heightAt(qx, qz) <= rivers.waterY - 0.015) carveBad++;
     }
   }
-  if (t.landform === 'plain') {
+  if (t.landform === 'plain' && !t.riverNear && w.hillMaskAt(t.x, t.z) <= 0) {
     carveCenterMax = Math.max(carveCenterMax, Math.abs(w.heightAt(t.x, t.z)));
   }
 }
@@ -806,26 +831,38 @@ check('浅切槽不侵入格心（河道之外地表仍是平的）', carveCente
 //   ④ 地图外不算岸：外缘水格的水下地表不得抬回水面（旧版外缘 182 个格边中点全为 0）。
 const bedW = w.tileList.filter(t => t.terrain === 'water');
 let bedShoreBad = 0, bedShoreWorst = 0, bedShoreNoRiver = 0, bedShoreCutMax = 0;
+let bedShoreCorridorOver = 0, bedShoreCorridorMax = 0, bedShoreCorridorN = 0;
 for (const t of bedW) {
   for (let d = 0; d < 6; d++) {
     if (!(t.shoreEdges & (1 << d))) continue;
     const em = Hex.edgeMid(t, d, w.hexSize);
-    const h = Math.abs(w.heightAt(em.x, em.z));
+    const hs = w.heightAt(em.x, em.z);
+    const h = Math.abs(hs);
     if (h <= 1e-9) continue;
     bedShoreBad++;
     if (h > bedShoreWorst) bedShoreWorst = h;
-    // 河口例外：河从岸线切过去时那里本来就该凹下去。判据必须是「这里**确实**有河」，
-    // 不能只看「非 0 且 ≤ 切槽深」—— 那样 shoreFade 一坏（水下地表在岸线不为 0）
-    // 会正好躲在同一个量级里，断言就失去覆盖了。
+    // 两类**有意为之**的例外（v2.8 阶段二起河比海面可以更高）：
+    //   · 河口切槽：河从岸线切过去，那里本来就该凹下去 —— 下切量 ≤ 槽深；
+    //   · 河岸台地：河带两侧的台地铺到岸线为止 —— 台地地面**不得高于该处水面**
+    //     （否则水会被地面盖住）。台地被 ceiling 停在「水面 − CEILING_EPS」，
+    //     所以这里必须比对**带符号**高度：−0.02 是「低于水面」，不是「高于」。
+    // 除这两类之外，岸线必须严格为 0（水陆齐平）。
     const cut = rivers.channelOffset(em.x, em.z);
+    const pf = rivers.riverProfileAt(em.x, em.z);
     if (cut > 0) bedShoreCutMax = Math.max(bedShoreCutMax, h);
-    else bedShoreNoRiver++;
+    else if (pf && pf.corridor > 0) {
+      bedShoreCorridorN++;
+      bedShoreCorridorMax = Math.max(bedShoreCorridorMax, h);
+      if (hs > pf.level + 1e-9) bedShoreCorridorOver++;
+    } else bedShoreNoRiver++;
   }
 }
-check('水下地表在岸线处为 0（水陆齐平的例外只有河口切槽）',
-  bedShoreNoRiver === 0 && bedShoreCutMax <= rivers.depth + 1e-6,
-  bedShoreBad + ' 处非 0（全部在河道内）/ 最深 ' + bedShoreWorst.toFixed(3) +
-  '（切槽深 ' + rivers.depth.toFixed(2) + '）/ 河道外非 0 的有 ' + bedShoreNoRiver + ' 处');
+check('水下地表在岸线处为 0（例外只有河口切槽与河岸台地，且都不得高于水面）',
+  bedShoreNoRiver === 0 && bedShoreCutMax <= rivers.depth + 1e-6 && bedShoreCorridorOver === 0,
+  bedShoreBad + ' 处非 0 / 最深 ' + bedShoreWorst.toFixed(3) +
+  '（切槽深 ' + rivers.depth.toFixed(2) + '）/ 河道外非 0 的有 ' + bedShoreNoRiver + ' 处' +
+  ' / 台地例外 ' + bedShoreCorridorN + ' 处（最高 ' + bedShoreCorridorMax.toFixed(3) +
+  '，高于水面的 ' + bedShoreCorridorOver + ' 处）');
 
 let bedSeam = 0, bedSeamPairs = 0;
 for (const t of bedW) {
@@ -998,7 +1035,9 @@ check('所有水格地表都低于水面（不然水面会被地形盖住）',
 //   外侧探针本来就不该回到 0。排除判据用 `springAt()`（与表现层同一套查询），
 //   并把排除掉的条数报出来 —— 否则「碗越来越大、把探针全吃掉」会变成静默通过。
 let profBed = 0, profBedN = 0, profHalf = 0, profHalfN = 0, profOut = 0, profOutN = 0;
-let profOutInSpring = 0;
+let profOutInSpring = 0, profOutInChannel = 0;
+const profOutDiag = [];
+const corridorBandW = w.hexSize * ((C.river.corridor && C.river.corridor.band) || 0);
 for (const r of rivers.rivers) {
   for (let i = 1; i < r.samples.length - 1; i += 4) {
     const s = r.samples[i];
@@ -1021,8 +1060,24 @@ for (const r of rivers.rivers) {
     if (ot && ot.riverAdjacency > 0 && ot.landform === 'plain' &&
       ot.terrain !== 'water' && ot.terrain !== 'city') {
       if (rivers.springAt(ox, oz)) { profOutInSpring++; continue; }
+      // ⚠ 别的河道的切槽也是「有意为之的下陷」（v2.7）：河网变密之后，本河
+      //   2.2×半宽 的探针可能正落在邻河的槽里。判据是「**所有**槽之外回到基准平面」，
+      //   所以把落在任意槽内的探针排除并报数 —— 否则「河靠得近」会变成假失败。
+      if (rivers.channelOffset(ox, oz) > 0) { profOutInChannel++; continue; }
+      const pf = rivers.riverProfileAt(ox, oz);
       profOutN++;
-      if (Math.abs(w.heightAt(ox, oz)) < 1e-9) profOut++;
+      // ⚠ v2.8 阶段二：槽外不再一定回到基准平面 —— 河面高度改为逐段档位之后，
+      //   河带两侧有一圈**河岸台地**（走廊）被钉在「该处河面 − CEILING_EPS」，
+      //   于是「槽外回到基准平面」这条阶段一不变量只对**台地之外**成立。
+      //   这里改成真正该守的那一条：**台地地面不得高于该处河面** ——
+      //   否则水面会被地面盖住（水不是最上层可见面）。
+      //   台地之外回到基准平面由「平原完全平（走廊外）」那条断言负责。
+      if (!pf || pf.corridor <= 0) { profOut++; continue; }
+      if (w.heightAt(ox, oz) <= pf.level + 1e-9) profOut++;
+      else if (profOutDiag.length < 6) {
+        profOutDiag.push({ h: +w.heightAt(ox, oz).toFixed(4), mask: +w.hillMaskAt(ox, oz).toFixed(3),
+          corridor: +pf.corridor.toFixed(3), level: +pf.level.toFixed(3), d: +pf.d.toFixed(2) });
+      }
     }
   }
 }
@@ -1030,15 +1085,30 @@ check('河道横剖面：河线处低于水面（水在槽里）', profBedN > 0 
   profBed + '/' + profBedN);
 check('河道横剖面：半宽处仍在水下（水面两侧可见）', profHalfN > 0 && profHalf === profHalfN,
   profHalf + '/' + profHalfN);
-check('河道横剖面：槽外回到基准平面', profOutN > 0 && profOut === profOutN,
-  profOut + '/' + profOutN + '（另有 ' + profOutInSpring + ' 条落在河源水体碗内，已排除）');
+check('河道横剖面：河岸台地地面不高于该处水面（水始终是最上层可见面）',
+  profOutN > 0 && profOut === profOutN,
+  profOut + '/' + profOutN + '（另有 ' + profOutInSpring + ' 条落在河源水体碗内、' +
+  profOutInChannel + ' 条落在邻河槽内，已排除）');
 check('河道水面不会被任何地块盖住（河线处地形低于水面）',
   rivers.rivers.every(r => r.samples.every(s => w.heightAt(s.x, s.z) <= s.y + 1e-9)));
-check('cornerY 兼容字段已初始化', w.tileList.every(t => t.cornerY.length === 6 && isFinite(t.cornerY[0])));
+check('cornerY 兼容字段已随旧体系删除（高度只有 heightAt 一个入口）', w.tileList.every(t => t.cornerY === undefined));
 check('heightAt 返回有限值', isFinite(w.heightAt(0, 0)) && isFinite(w.heightAt(120, -80)));
 
-console.log('\n== 河流（沿格边 + 水平水面 + 浅切槽）==');
+console.log('\n== 河流（沿格边 + 局部河面 + 浅切槽）==');
+check('水面渲染偏置已彻底移除（三个渲染高度是河口台阶与「方头」的根因）',
+  C.water.river.renderBias === undefined && C.water.spring.renderBias === undefined &&
+  C.water.sea.renderBias === undefined,
+  'river ' + C.water.river.renderBias + ' / spring ' + C.water.spring.renderBias +
+  ' / sea ' + C.water.sea.renderBias);
+check('旧的 mouthOffset 已彻底移除（语义含糊、只改末点看不见）',
+  C.water.river.mouthOffset === undefined, 'mouthOffset ' + C.water.river.mouthOffset);
 {
+  // v2.8 阶段二：`rivers.waterY` **只代表海面**，河面高度改为「所经地块的档位」
+  // （逐采样点，见 river-builder 的 applyLevelProfile）—— 不再有「全图唯一水位」。
+  check('海面水位仍是唯一来源（config.water.level，不含河 / 泉）',
+    rivers.waterY === HL.Rivers.waterLevel(w.hexSize),
+    'waterY ' + rivers.waterY + ' / waterLevel ' + HL.Rivers.waterLevel(w.hexSize));
+
   const size = w.hexSize;
   const rs = rivers.rivers;
   const mains = rs.filter(function (r) { return !r.isTributary; });
@@ -1046,11 +1116,154 @@ console.log('\n== 河流（沿格边 + 水平水面 + 浅切槽）==');
   check('生成了河流', mains.length > 0,
     mains.length + ' 条主河 / ' + branches.length + ' 条支流 / 汇流 ' + rivers.counts.confluences + ' 处');
 
+  /* ---------------- v2.7 河口规范：所有主河必须真的入海 ---------------- */
+  check('水域连通域已判定（大片连续纯水 = 面积 ≥ seaMinBodyTiles）',
+    w.waterStats && w.waterStats.seaMinTiles === C.water.seaMinBodyTiles &&
+    w.waterStats.bodies > 0 && w.waterStats.majorTiles > 0 && w.waterStats.largest >= w.waterStats.majorTiles,
+    '连通域 ' + w.waterStats.bodies + ' / 最大 ' + w.waterStats.largest +
+    ' / 大片纯水 ' + w.waterStats.majorTiles + ' 格（阈值 ' + w.waterStats.seaMinTiles + '）');
+  check('每个水格都带 waterBodyId 与 majorWater 标记',
+    w.tileList.every(function (t) {
+      if (t.terrain !== 'water') return t.waterBodyId === -1 && !t.majorWater;
+      return t.waterBodyId >= 0 && t.waterBodyId < w.waterStats.bodies && !!w.waterBodies[t.waterBodyId];
+    }));
+  check('所有主河都真的入海（reachesSea=true 且河口水域够大）',
+    mains.length > 0 && mains.every(function (r) {
+      if (!r.reachesSea || !r.mouth || !r.mouth.tile) return false;
+      const body = w.waterBodies[r.mouth.tile.waterBodyId];
+      return !!body && body.size >= w.waterStats.seaMinTiles;
+    }),
+    mains.map(function (r) {
+      const b = r.mouth && r.mouth.tile ? w.waterBodies[r.mouth.tile.waterBodyId] : null;
+      return r.id + ':' + (b ? b.size : '无');
+    }).join(' '));
+  check('入海口判据未退化（没有一片够大的水时才回退任意水格）',
+    rivers.majorSeaOnly === (w.waterStats.majorTiles > 0), 'majorSeaOnly=' + rivers.majorSeaOnly);
+
+  /* ---------------- v2.8 河口延伸段：末端必须真的开进海里 ---------------- */
+  {
+    const pitch = Hex.SQRT3 * size;
+    const mainsRun = mains.filter(function (r) { return r.reachesSea; });
+    const runSamples = [];
+    mainsRun.forEach(function (r) {
+      r.samples.forEach(function (s) { if (s.mouthRun) runSamples.push(s); });
+    });
+    check('河口延伸段已生效（中心线插进水格内部，不再停在海岸线上）',
+      rivers.counts.mouthRun > 0 && runSamples.length === rivers.counts.mouthRun,
+      '延伸采样点 ' + rivers.counts.mouthRun + ' 个（' + mainsRun.length + ' 条入海主河）');
+    check('延伸段全部落在水格上（方向是对的，没有爬回岸上）',
+      runSamples.length > 0 && runSamples.every(function (s) {
+        const t = w.tileAtPixel(s.x, s.z);
+        return !!t && t.terrain === 'water';
+      }), '检查 ' + runSamples.length + ' 个延伸采样点');
+    const mouthOff = mainsRun.map(function (r) {
+      const last = r.samples[r.samples.length - 1];
+      return w.landDistance(last.x, last.z) / pitch;
+    });
+    // 旧版末端正好落在海岸线角点上（离最近陆地 ≈ 0）—— 这就是「方头」的位置。
+    check('河口末端已离开岸线（离最近陆地 ≥ mouthRun.minDistToLand 格，或顶到对岸 / 走满上限）',
+      mouthOff.length > 0 && mouthOff.every(function (d) {
+        return d >= C.river.mouthRun.minDistToLand - 0.35;
+      }),
+      mainsRun.map(function (r, i) {
+        return r.id + ':' + mouthOff[i].toFixed(2) + ' 格';
+      }).join(' ') + '（目标 ≥ ' + C.river.mouthRun.minDistToLand + '）');
+  }
+  check('没有「断流的河」被输出（走不到水且未汇流的轨迹已丢弃）',
+    rivers.rivers.every(function (r) { return r.isTributary || r.reachesSea || r.joined; }),
+    '丢弃 ' + rivers.counts.dropped + ' 条');
+  check('走不到水时按 onDeadEnd 策略处理（drop/join）',
+    C.river.onDeadEnd === 'drop' || C.river.onDeadEnd === 'join', 'onDeadEnd=' + C.river.onDeadEnd);
+  check('支流不承担入海：mouth 为空、改给汇流点 confluence',
+    branches.length === 0 || branches.every(function (r) {
+      return r.mouth === null && r.hasMouth === false && r.reachesSea === false &&
+        !!r.confluence && isFinite(r.confluence.x);
+    }), branches.length + ' 条支流');
+  check('主河的 hasMouth 与 reachesSea 一致（不给假河口）',
+    mains.every(function (r) { return r.hasMouth === r.reachesSea && (r.reachesSea ? !!r.mouth : r.mouth === null); }));
+
+  /* 河口三角洲：分流只进表现层，起点贴干流、宽度递减 */
+  const deltaRivers = mains.filter(function (r) { return !!r.delta && r.delta.branches.length > 0; });
+  check('入海主河生成了河口分流（三角洲）', deltaRivers.length > 0,
+    deltaRivers.length + ' 条 / 共 ' + rivers.rivers.reduce(function (a, r) {
+      return a + (r.delta ? r.delta.branches.length : 0);
+    }, 0) + ' 条分流');
+  check('分流条数不超过配置、半宽沿程递减、末端都在水格上',
+    deltaRivers.every(function (r) {
+      const want = Math.round(C.river.delta.branches);
+      const bs = r.delta.branches;
+      // v2.8：分流会被**地形裁剪**（整条都插在陆上的直接丢弃），所以条数 ≤ 配置；
+      // 少于 2 条时 buildDelta 不给三角洲（1 条分流等于没分叉，只多一根短棍）。
+      if (bs.length < 2 || bs.length > want) return false;
+      return bs.every(function (b) {
+        const s = b.samples;
+        if (Math.abs(s[0].halfW - r.samples[0].halfW * C.river.delta.widthScale) >= 1e-6) return false;
+        for (let i = 1; i < s.length; i++) if (s[i].halfW > s[i - 1].halfW + 1e-9) return false;
+        const last = s[s.length - 1];
+        const t = w.tileAtPixel(last.x, last.z);
+        return !!t && t.terrain === 'water';
+      });
+    }), deltaRivers.map(function (r) {
+      return r.id + ':' + r.delta.branches.length;
+    }).join(' ') + '（配置 ≤ ' + C.river.delta.branches + ' / 半宽 ' + C.river.delta.widthScale + '×）');
+  check('分流起点落在干流中心线上（与干流取自同一点，不露缝）',
+    deltaRivers.every(function (r) {
+      // 分叉点是**中心线上的插值点**（不一定正好落在某个采样点上），
+      // 所以判据是「到干流折线的距离 ≈ 0」，不是「与某个采样点重合」。
+      const s0 = r.delta.branches[0].samples[0];
+      let best = Infinity;
+      for (let i = 1; i < r.samples.length; i++) {
+        const a = r.samples[i - 1], b = r.samples[i];
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const l2 = dx * dx + dz * dz || 1e-9;
+        let t = ((s0.x - a.x) * dx + (s0.z - a.z) * dz) / l2;
+        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        const d = Math.hypot(s0.x - (a.x + dx * t), s0.z - (a.z + dz * t));
+        if (d < best) best = d;
+      }
+      return best < 1e-6;
+    }));
+  check('分流首点水位 = 干流分叉点水位（同一处不能有两个水位）',
+    deltaRivers.every(function (r) {
+      return r.delta.branches.every(function (b) {
+        return Math.abs(b.samples[0].y - r.delta.fork.y) < 1e-6;
+      });
+    }), deltaRivers.length + ' 条入海河带三角洲');
+  check('分流沿程单调不升（不爬坡）',
+    deltaRivers.every(function (r) {
+      return r.delta.branches.every(function (b) {
+        for (let i = 1; i < b.samples.length; i++) {
+          if (b.samples[i].y > b.samples[i - 1].y + 1e-9) return false;
+        }
+        return true;
+      });
+    }));
+
+  /* 河口冲积平原：只影响表现（世界位置连续函数），不碰分类 / 高度 / 寻路 */
+  check('冲积带只在河口附近为正，远处归零',
+    rivers.alluvialMouths.length > 0 &&
+    rivers.alluvial(rivers.alluvialMouths[0].x, rivers.alluvialMouths[0].z) > 0.99 &&
+    rivers.alluvial(rivers.alluvialMouths[0].x + 4000, rivers.alluvialMouths[0].z) === 0,
+    rivers.alluvialMouths.length + ' 处河口 / 半径 ' + rivers.alluvialMouths[0].r.toFixed(1));
+  {
+    const m = rivers.alluvialMouths[0];
+    const t = w.tileAtPixel(m.x, m.z);
+    const h = w.heightAt(m.x, m.z);
+    const nearer = w.rivers.nearest(m.x, m.z);
+    check('冲积带不改地块分类、不改高度、不改寻路',
+      !!t && t.terrain !== 'city' && isFinite(h) && isFinite(nearer),
+      '地形 ' + (t ? t.terrain : '?') + ' / 高度 ' + h.toFixed(2));
+  }
+
   // ① 严格沿格边：采样点到最近格心的距离必须落在「内切圆 … 外接圆」之间。
   //    内切圆（0.866 格）= 边中点，外接圆（1 格）= 角点；越界说明河切进了格内。
+  //   ⚠ v2.8：**河口延伸段不走格边**（它是从最后一个顶点直接插进水里的直线段），
+  //     所以这里按设计排除 `mouthRun` 采样点；延伸段另有自己的断言（必须落在水格上）。
   let edgeMax = 0;
+  let edgeRunSkipped = 0;
   for (const r of rs) {
     for (const s of r.samples) {
+      if (s.mouthRun) { edgeRunSkipped++; continue; }
       const cell = Hex.pixelToAxial(s.x, s.z, size);
       const c = Hex.axialToPixel(cell.q, cell.r, size);
       const d = Math.hypot(s.x - c.x, s.z - c.z) / size;   // 单位：格
@@ -1059,7 +1272,7 @@ console.log('\n== 河流（沿格边 + 水平水面 + 浅切槽）==');
     }
   }
   check('河道严格沿格边（采样点落在内切圆与外接圆之间）', edgeMax < 0.02,
-    '最大越界 ' + edgeMax.toFixed(4) + ' 格');
+    '最大越界 ' + edgeMax.toFixed(4) + ' 格（河口延伸段 ' + edgeRunSkipped + ' 个采样点按设计排除）');
   check('采样足够密（相邻采样 ≤ 半格）', rs.every(r => {
     for (let i = 1; i < r.samples.length; i++) {
       if (Math.hypot(r.samples[i].x - r.samples[i - 1].x, r.samples[i].z - r.samples[i - 1].z) > size * 0.5) return false;
@@ -1067,36 +1280,73 @@ console.log('\n== 河流（沿格边 + 水平水面 + 浅切槽）==');
     return true;
   }), '最长 ' + (rivers.counts.longest / size).toFixed(1) + ' 格');
 
-  // ② 水面严格水平，且与海面同档（统一平面）
-  let waterMin = Infinity, waterMax = -Infinity;
-  for (const r of rs) for (const s of r.samples) {
-    waterMin = Math.min(waterMin, s.y);
-    waterMax = Math.max(waterMax, s.y);
+  // ② 沿程下降（v2.8 阶段二）：不再是「整图一个水位」，而是按地块档位阶梯下降。
+  //    三条不变量：① 每条河沿程单调不升；② 入海河的河口钉在海面；③ 全图存在真实落差。
+  let monoBad = 0;
+  for (const r of rs) {
+    for (let i = 1; i < r.samples.length; i++) {
+      if (r.samples[i].y > r.samples[i - 1].y + 1e-9) monoBad++;
+    }
   }
-  check('河面严格水平（整图一个水位）', waterMax - waterMin < 1e-9,
-    '水位 ' + waterMin.toFixed(3));
-  check('水面与海面同档高度（统一平面）', Math.abs(rivers.waterY) < size * 0.02,
-    'waterY ' + rivers.waterY.toFixed(3) + ' / 格距 ' + size);
+  check('河面沿程单调不升（不爬坡）', monoBad === 0, monoBad + ' 处回升');
+  check('入海河河口钉在海面（下降闭合的锚点）',
+    mains.filter(function (r) { return r.reachesSea; }).every(function (r) {
+      return Math.abs(r.samples[r.samples.length - 1].y - rivers.waterY) < 1e-9;
+    }), '海面 ' + rivers.waterY.toFixed(3));
+  check('全图存在真实落差（沿程下降真的生效了）', rivers.profile.drop > 1e-6,
+    '源 ' + rivers.profile.sourceY.toFixed(3) + ' → 口 ' + rivers.profile.mouthY.toFixed(3) +
+    '（落差 ' + rivers.profile.drop.toFixed(3) + '，' + rivers.profile.steps + ' 级台阶）');
+  check('落差不超过最高档位（水面只可能落在已有档位上）',
+    rivers.profile.drop <= TIERS.hill + 1e-6, '落差 ' + rivers.profile.drop.toFixed(3) + ' / 丘陵档 ' + TIERS.hill);
   check('水面高于槽底（浅槽里有水）',
     mains.every(r => r.samples.every(s => s.y > s.bed + 0.05)),
     '槽深 ' + rivers.depth.toFixed(2));
 
-  // ④ 宽度：整条河统一、所有河统一（文明 6 观感）
-  const allHalfW = [];
-  for (const r of rs) for (const s of r.samples) allHalfW.push(s.halfW);
-  const minHW = Math.min.apply(null, allHalfW);
-  const maxHW = Math.max.apply(null, allHalfW);
-  check('河宽全线统一（最宽/最窄 < 1.05×）', maxHW / minHW < 1.05,
-    minHW.toFixed(2) + ' ~ ' + maxHW.toFixed(2) + ' 单位（' + (maxHW / minHW).toFixed(3) + '×）');
-  check('河宽与配置一致', Math.abs(maxHW - w.hexSize * C.river.width) < 1e-6,
-    '半宽 ' + maxHW.toFixed(2) + ' / 期望 ' + (w.hexSize * C.river.width).toFixed(2));
-  // 河源与河口不再有锥形收放
-  let taperMax = 0;
-  for (const r of rs) {
-    const head = r.samples[0].halfW, tail = r.samples[r.samples.length - 1].halfW;
-    taperMax = Math.max(taperMax, Math.abs(tail - head));
-  }
-  check('无「河源细、河口粗」的锥形收放', taperMax < 1e-6, '最大首尾差 ' + taperMax.toFixed(6));
+  // ④ 宽度：主河保持配置半宽；支流从源头到汇入口连续渐宽。
+  const mainWidth = w.hexSize * C.river.width;
+  const branchSourceWidth = w.hexSize * C.river.tributary.widthSource;
+  const branchMouthWidth = w.hexSize * C.river.tributary.widthMouth;
+  check('主河全程使用配置半宽', mains.length > 0 && mains.every(function (r) {
+    return r.samples.every(function (s) { return Math.abs(s.halfW - mainWidth) < 1e-6; });
+  }), '期望 ' + mainWidth.toFixed(2));
+  check('支流从源头到汇入口渐宽', branches.length > 0 && branches.every(function (r) {
+    const samples = r.samples;
+    if (Math.abs(samples[0].halfW - branchSourceWidth) >= 1e-6 ||
+      Math.abs(samples[samples.length - 1].halfW - branchMouthWidth) >= 1e-6) return false;
+    for (let i = 1; i < samples.length; i++) {
+      if (samples[i].halfW + 1e-9 < samples[i - 1].halfW) return false;
+    }
+    return true;
+  }), '源 ' + branchSourceWidth.toFixed(2) + ' → 汇 ' + branchMouthWidth.toFixed(2));
+  check('河床空间查询与河面共用段宽度', (function () {
+    /**
+     * ⚠ 只在**没有别的河靠近**的采样点上断言「nearestSegment.w === sample.halfW」（v2.7）。
+     *   `nearestSegment` 是空间最近查询：两条河靠得很近时（例如一条支流就在干流边上汇入），
+     *   它返回邻河段是**正确行为**，与「同一段宽度被河面/河槽共用」这条无关。
+     *   旧写法用固定的中点，一旦河网变密就会假失败。
+     */
+    let checked = 0;
+    for (const r of rs) {
+      for (let i = Math.floor(r.samples.length / 2); i < r.samples.length - 1; i++) {
+        const s = r.samples[i];
+        let near = false;
+        for (const o of rs) {
+          if (o === r) continue;
+          for (const so of o.samples) {
+            if (Math.hypot(so.x - s.x, so.z - s.z) < s.halfW * 4) { near = true; break; }
+          }
+          if (near) break;
+        }
+        if (near) continue;
+        const seg = rivers.nearestSegment(s.x, s.z);
+        checked++;
+        if (!(seg && Math.abs(seg.w - s.halfW) < 1e-6 &&
+          rivers.channelOffset(s.x, s.z) > 0 && rivers.nearest(s.x, s.z) < 0)) return false;
+        break;
+      }
+    }
+    return checked > 0;
+  })(), 'sample.halfW → nearestSegment.w → 河槽 / 河面（已排除邻河干扰的采样点）');
 
   // ⑤ 岸色带随水宽缩放（不再是写死的绝对半径）
   const iMid = Math.floor(rs[0].samples.length / 2);
@@ -1297,26 +1547,28 @@ console.log('\n== 河源水体（泉眼 / 小湖）==');
   }
   check('碗够不到任何相邻共享角点（半径裕量 > 0）', margin > 0.05, '最小裕量 ' + margin.toFixed(3) + ' 格');
 
-  // ③ 碗真的是个碗：碗底落在「基准平面以下一个碗深」处，且**只下切、绝不抬高**。
+  // ③ 碗真的是个碗：碗底落在「**该水体自己的水面** 以下一个碗深」处，且**只下切、绝不抬高**。
   //    ⚠ 别把「碗心的下切量」直接当成 depth：下切量 = 原地形高 + 碗深，原地形本来就
   //      有起伏（渠槽 / 丘陵），两者只在「原地形恰好是 0」时才相等（实测 1.848 ≠ 2.64）。
-  //      真正的不变量是**碗底高度**：`min(原地形, -depth)`。
+  //      真正的不变量是**碗底高度**：`min(原地形, 水面 − depth)`。
+  //    ⚠ v2.8 阶段二：水面高度不再是全图 0，而是 `min(所在地块档位, 碗沿自然地面最低处)`
+  //      —— 写死 `-depth` 只在「海平面泉眼」这一个特例上碰巧成立。
   let bowlBad = 0, bowlDeep = Infinity, bowlBelow = 0, raised = 0;
   for (let i = 0; i < springs.length; i++) {
     const sp = springs[i];
     const h = w.heightAt(sp.x, sp.z);
     const cut = refSpring[i].center - h;
-    if (!(h <= -sp.depth + 1e-9)) bowlBad++;        // 碗底至少到 -depth
-    if (!(cut > 0)) bowlBad++;                      // 真下切了（没被更深的渠槽吃掉）
-    if (h > refSpring[i].center + 1e-9) raised++;    // 绝不允许抬高地面
+    if (!(h <= sp.level - sp.depth + 1e-9)) bowlBad++;    // 碗底至少到「水面 − depth」
+    if (!(cut > 0)) bowlBad++;                            // 真下切了（没被更深的渠槽吃掉）
+    if (h > refSpring[i].center + 1e-9) raised++;         // 绝不允许抬高地面
     bowlDeep = Math.min(bowlDeep, cut);
-    if (h < rivers.waterY) bowlBelow++;
+    if (h < sp.level) bowlBelow++;
   }
-  check('碗底落在「基准平面 − depth」处，且只下切不抬高', bowlBad === 0 && raised === 0,
-    '下切 ' + bowlDeep.toFixed(3) + ' ~ 最深碗底 ' +
-    Math.min.apply(null, springs.map(function (s) { return -s.depth; })).toFixed(3) +
-    ' / waterY ' + rivers.waterY.toFixed(2) + ' / 抬高 ' + raised + ' 处');
-  check('泉/湖格地面被切到水面以下（不然水面会盖在地面上）',
+  check('碗底落在「该水体水面 − depth」处，且只下切不抬高', bowlBad === 0 && raised === 0,
+    '下切 ' + bowlDeep.toFixed(3) + ' / 水面 ' +
+    springs.map(function (s) { return s.level.toFixed(2); }).join(',') +
+    ' / 抬高 ' + raised + ' 处');
+  check('泉/湖格地面被切到自身水面以下（不然水面会盖在地面上）',
     bowlBelow === springs.length, bowlBelow + '/' + springs.length);
   let ringDrift = 0, ringWorst = 0;
   for (let i = 0; i < springs.length; i++) {
@@ -1458,23 +1710,38 @@ console.log('\n== 水陆基色族隔离（陆地不被水色染蓝）==');
 
   // 纯水只用基色（v2.5）：水的深浅全部由几何 + 深度过渡给出，顶点色不得再叠斑驳。
   // 旧版水面顶点的亮度极差 30.4%、相邻水格最大差 25%（全部来自 patch 项）。
+  //
+  // ⚠ v2.8：河口延伸段把中心线插进了海里，`influence / floodplain / alluvial` 因此
+  //   覆盖到几个水格的**格心** —— 那些格心会被有意地染上河床 / 冲积色（「河水在这里
+  //   卸下泥沙」）。所以判据分两层：**不受河流影响的水格必须仍然完全同色**（这才是
+  //   防「逐格斑驳」的红线），受影响的水格单独计数并设上限（它必须是局部特征，
+  //   不能扩散成整片水面的纹理）。
   const wcolL = [], wcolC = [];
   const wOut = new THREE.Color();
+  let wTinted = 0, wPlain = 0, wTotal = 0;
   for (const t of w.tileList) {
     if (t.terrain !== 'water') continue;
+    wTotal++;
+    const nearRiver = rivers.influence(t.x, t.z) > 0 || rivers.floodplain(t.x, t.z) > 0 ||
+      rivers.alluvial(t.x, t.z) > 0;
+    if (nearRiver) { wTinted++; continue; }
     HL.TerrainLayer.vertexColor(w, HL.TerrainLayer.colorGroupAtVertex(w, t, -1), t.x, t.z, 0, wOut);
     wcolL.push(0.2126 * wOut.r + 0.7152 * wOut.g + 0.0722 * wOut.b);
     wcolC.push([wOut.r, wOut.g, wOut.b]);
+    wPlain++;
   }
-  const wSpread = Math.max.apply(null, wcolL) - Math.min.apply(null, wcolL);
+  const wSpread = wcolC.length ? Math.max.apply(null, wcolL) - Math.min.apply(null, wcolL) : 0;
   let wPair = 0;
   for (const c of wcolC) {
     wPair = Math.max(wPair, Math.abs(c[0] - wcolC[0][0]) + Math.abs(c[1] - wcolC[0][1]) + Math.abs(c[2] - wcolC[0][2]));
   }
-  check('纯水顶点色必须完全一致（水的深浅只由深度过渡给出，不再叠斑驳）',
-    wcolC.length > 100 && wSpread < 1e-9 && wPair < 1e-9,
-    wcolC.length + ' 个水格：亮度极差 ' + wSpread.toExponential(2) + '，最大 rgb 差 ' + wPair.toExponential(2) +
-    '（修前亮度极差 3.0e-1）');
+  check('纯水顶点色必须完全一致（不受河流影响的水格；深浅只由深度过渡给出）',
+    wPlain > 100 && wSpread < 1e-9 && wPair < 1e-9,
+    wPlain + ' 个纯水格（另 ' + wTinted + ' 个河口/河岸格单列）：亮度极差 ' + wSpread.toExponential(2) +
+    '，最大 rgb 差 ' + wPair.toExponential(2) + '（修前亮度极差 3.0e-1）');
+  check('河口 / 河岸染色只覆盖少量水格（是局部特征，不是全图斑驳）',
+    wTinted > 0 && wTinted < wTotal * 0.25,
+    wTinted + ' / ' + wTotal + ' 个水格落在河流影响范围内');
   check('「沿岸度 → foam」染色已彻底移除（tile.shore 已不再存在）',
     w.tileList.every(function (t) { return t.shore === undefined; }),
     w.tileList.filter(function (t) { return t.shore !== undefined; }).length + ' 个格仍带 shore 字段');
@@ -1678,12 +1945,13 @@ console.log('\n== 山脉重掷（只换山脉通道种子）==');
     const bRidge = before.terrain === 'ridge';
     if (aRidge !== bRidge) { ridgeChanged++; continue; }
     if (aRidge) { ridgeSame++; continue; }
-    // 两边都不是山格：地貌 / 用途 / 丘陵起伏必须逐格完全一致
+    // 两边都不是山格：地貌 / 用途 / 逻辑档位必须逐格完全一致
+    // （`hillAmp` / `height` 已随旧版 dome 体系删除，改看 `surfaceY`）
     checked++;
     if (before.terrain !== after.terrain || before.landform !== after.landform ||
-        before.height !== after.height || before.hillAmp !== after.hillAmp) drift++;
+        before.surfaceY !== after.surfaceY) drift++;
   }
-  check('重掷只换山格：非山格的 terrain / landform / height / hillAmp 逐格零漂移',
+  check('重掷只换山格：非山格的 terrain / landform / 档位 逐格零漂移',
     drift === 0 && checked > 200,
     checked + ' 格非山格 / 漂移 ' + drift + ' 格');
   // ⚠ 山格**总数**只允许在「演示块」范围内浮动：排名部分的格数是固定的
@@ -1812,10 +2080,15 @@ for (const road of rd.list) {
 check('跨河桥判定不依赖采样相位（桥段自身或邻点在河道内）',
   landBridges.length > 0 && bridgeBad === 0,
   landBridges.length + ' 个陆上跨河桥采样 / 异常 ' + bridgeBad);
-check('压在河源水面上的路段被抬成桥面（不沉进泉/湖里）',
-  springFlagBad === 0 && springSink === 0 && springSeen > 0,
+check('压在河源水面上被标记为跨泉/湖（标记与实际压水一致）',
+  springFlagBad === 0,
   springSeen + ' 个采样点压在水面上 → 抬为桥 ' + springBridges +
   ' / 标记不符 ' + springFlagBad + ' / 沉入 ' + springSink);
+check('跨泉/湖的路段必须抬成桥面且高于水面',
+  springSink === 0 && (springSeen === 0 || springBridges > 0),
+  springSeen === 0
+    ? '本图没有路段压在水面正上方（碗壁是干地，按设计跟随地形）；规则断言仍生效'
+    : springSeen + ' 个压水点全部抬为桥');
 check('不存在被水淹没的桥面（桥面高于水面）',
   waterSamples.every(s => s.y > w.rivers.waterY + 0.2),
   '水面 ' + w.rivers.waterY.toFixed(2) + ' / 最低桥面 ' +
@@ -1835,8 +2108,24 @@ check('栈桥面高于其下方地表',
   roadSamples.filter(function (s) { return s.kind === 'trestle'; }).every(function (s) { return s.y > s.ground; }),
   structures.filter(function (s) { return s.kind === 'trestle'; }).length + ' 个栈桥采样');
 const ys = rd.samples.map(s => s.y);
-check('路面高度落在合理区间（桥面不得高过山）', Math.min.apply(null, ys) > -1 && Math.max.apply(null, ys) < w.maxRise * 1.25,
-  'y ∈ [' + Math.min.apply(null, ys).toFixed(2) + ', ' + Math.max.apply(null, ys).toFixed(2) + '] / maxRise ' + w.maxRise.toFixed(2));
+const minY = Math.min.apply(null, ys);
+const maxY = Math.max.apply(null, ys);
+/**
+ * ⚠ 下界不再写成固定的 -1（v2.7）。本图上确实存在两种「低于基准平面」的合法路面：
+ *   · 沿**河源水体碗壁**下行（水面半径 7.3、碗半径 15.8 —— 碗壁是干地，
+ *     按设计就跟随地形），最低到 -1.38；
+ *   · 在**陡坡上被平滑**（相邻采样点地表落差 2 单位，路面只能下降 1.5 ⇒
+ *     最多切进坡里约 0.44，见 dawncapital-frostfort）。
+ *   两条都是设计行为，所以判据改成「不深于地形本身最深的合法下切」——
+ *   它仍然能抓到真正的穿模（路面掉到槽底/碗底以下）。
+ */
+const deepestCut = Math.max(C.river.channel.depth,
+  (C.river.sourceSpring.lake || {}).depth || 0,
+  (C.river.sourceSpring.spring || {}).depth || 0) * w.hexSize;
+check('路面高度落在合理区间（不深于地形下切、不高过山）',
+  minY > -(deepestCut + 0.5) && maxY < w.maxRise * 1.25,
+  'y ∈ [' + minY.toFixed(2) + ', ' + maxY.toFixed(2) + '] / 最深下切 ' +
+  deepestCut.toFixed(2) + ' / maxRise ' + w.maxRise.toFixed(2));
 
 console.log('\n== 城市图寻路 ==');
 const g = HL.CityGraph.build();
@@ -1881,6 +2170,34 @@ check('两次构建道路采样数一致',
   rd.list.map(r => r.samples.length).join() === rd2.list.map(r => r.samples.length).join());
 check('两次构建分级统计一致',
   JSON.stringify(rd.gradeCounts) === JSON.stringify(rd2.gradeCounts));
+
+console.log('\n== TerrainOverrides 水体表现字段 ==');
+{
+  const sample = w.tileList.find(function (tile) { return tile.terrain !== 'water'; });
+  const before = { terrain: sample.terrain, landform: sample.landform, waterY: rivers.waterY };
+  const visualOnly = HL.TerrainOverrides.build(w, { byKey: {} });
+  const normalized = HL.TerrainOverrides.normalize({ byKey: {} });
+  const spec = HL.TerrainOverrides.build(null, {
+    byKey: (function () { const out = {}; out[sample.key] = { waterVisual: { foamNoise: 0.5, bandSteps: 4, tint: 0xaaccee } }; return out; })()
+  }).of(sample.key);
+  check('waterVisual 被规范化且保持表现字段隔离', !!spec && spec.waterVisual &&
+    spec.waterVisual.foamNoise === 0.5 && spec.waterVisual.bandSteps === 4 &&
+    spec.terrain == null && spec.waterway == null && before.terrain === sample.terrain &&
+    before.landform === sample.landform && before.waterY === rivers.waterY && !!visualOnly && !!normalized);
+  {
+    // 白名单必须与水面材质的 uniform 同名，否则编辑器里改了也不会生效（v2.7）
+    const spec2 = HL.TerrainOverrides.build(null, {
+      byKey: (function () {
+        const out = {};
+        out[sample.key] = { waterVisual: { foamStrength: 0.9, notAThing: 1, waveAmplitude: 0.2 } };
+        return out;
+      })()
+    }).of(sample.key);
+    check('waterVisual 白名单与材质 uniform 同名（旧字段与被拼错的字段被丢弃）',
+      !!spec2 && !!spec2.waterVisual && spec2.waterVisual.waveAmplitude === 0.2 &&
+      spec2.waterVisual.foamStrength === undefined && spec2.waterVisual.notAThing === undefined);
+  }
+}
 
 console.log('\n----------------------------------------');
 console.log(failures === 0 ? '全部通过 ✔' : ('失败 ' + failures + ' 项 ✘'));

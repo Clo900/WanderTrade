@@ -94,14 +94,11 @@
     group.name = 'ink';
 
     const inkColor = new THREE.Color(P.ink);
-    const foamColor = new THREE.Color(P.water.foam);
 
     const inkBuf = { pos: [], col: [], uv: [], idx: [] };
-    const foamBuf = { pos: [], col: [], uv: [], idx: [] };
 
     const baseWidth = size * (P.inkWidth == null ? 0.155 : P.inkWidth);
     const outerWidth = size * (P.inkOuterWidth == null ? 0.21 : P.inkOuterWidth);
-    const foamBaseWidth = size * (P.foamWidth == null ? 0.095 : P.foamWidth);
     const lift = size * 0.055;
 
     const segLength = size * Math.max(0.05, C.segmentLength == null ? 0.5 : C.segmentLength);
@@ -114,21 +111,40 @@
     const wobbleScale = Math.max(0.05, C.wobbleScale == null ? 1.2 : C.wobbleScale);
 
     let edgeCount = 0;
-    let foamCount = 0;
     let strokeCount = 0;
     let breakCount = 0;
+    let riverCovered = 0;
     let minStrokeWidth = Infinity;
     let maxStrokeWidth = 0;
+
+    /**
+     * 这条格边是否**被河面压住**（v2.8）。
+     *
+     * 河流严格沿格边走，所以整条河道上的格边都会被水带盖住；河口处更是如此。
+     * 若照样描边，河口会多出一条**横切水面的墨线** —— 视觉上正是「河被一条线切断、
+     * 末端是个方头」的帮凶（用户截图里的方头断口就是被这条线框出来的）。
+     * 判据用权威中心线索引（`world.rivers.nearestSegment`），距离 < 半宽 × 1.1
+     * 即认为被盖住 —— 与「河面是河中线上最上层可见的表面」用同一份数据。
+     */
+    const riverIndex = (world.rivers && typeof world.rivers.nearestSegment === 'function')
+      ? world.rivers : null;
+    function coveredByRiver(x, z) {
+      if (!riverIndex) return false;
+      const seg = riverIndex.nearestSegment(x, z);
+      return !!seg && seg.d < seg.w * 1.1;
+    }
 
     /**
      * 把一条边铺成**一条连续笔触**。
      * 参数（宽度 / 横向游走 / 浓淡）沿边取一维平滑噪声，且相邻段严格共享站点
      * 数值 —— 这是「一条边必须是一条线」的实现前提。v1.3 的写法是每段各自
      * 随机，相邻段中心线能错开一个笔宽，看起来就是两条不衔接的线段（见方案 §15）。
-     * @param {('ink'|'foam')} channel 目标缓冲
+     * 水岸泡沫**不在这里**（v2.7）：岸线泡沫改由水面材质按真实水深统一生成
+     * （海 / 河 / 湖 / 河岸同一套判据）。旧版这里另画一条静态蜡笔泡沫线，只沿
+     * 「陆|水」格边、河岸没有，而且无法随水深变化 —— 两套泡沫并存只会互相打架。
      */
-    function strokeEdge(channel, tile, k, x0, z0, x1, z1, width, color, alphaBase) {
-      const buf = channel === 'ink' ? inkBuf : foamBuf;
+    function strokeEdge(tile, k, x0, z0, x1, z1, width, color, alphaBase) {
+      const buf = inkBuf;
       const dx = x1 - x0;
       const dz = z1 - z0;
       const len = Math.hypot(dx, dz);
@@ -136,9 +152,9 @@
       // 法向（用于横向游走）
       const nx = -dz / len;
       const nz = dx / len;
-      const k2 = (k + 1) % 6;
-      const yStart = tile.cornerY[k];
-      const yEnd = tile.cornerY[k2];
+      // 角点高度问 heightAt（v2.8 阶段二：格边不一定在基准平面上）
+      const yStart = world.heightAt(x0, z0);
+      const yEnd = world.heightAt(x1, z1);
 
       const segs = Math.max(1, Math.round(len / segLength));
       const vSpan = len / (size * texRepeat);
@@ -170,10 +186,9 @@
             pushStroke(buf, prevX, prevZ, px, pz, prevY, py, nx, nz,
               prevHalf, half, prevLat, lat, lift, color, prevA, alpha, prevV, pv);
             strokeCount++;
-            if (channel === 'ink') {
-              if (half * 2 < minStrokeWidth) minStrokeWidth = half * 2;
-              if (half * 2 > maxStrokeWidth) maxStrokeWidth = half * 2;
-            }
+            // 本通道只有墨线（泡沫已移交水面材质），笔宽统计直接取它
+            if (half * 2 < minStrokeWidth) minStrokeWidth = half * 2;
+            if (half * 2 > maxStrokeWidth) maxStrokeWidth = half * 2;
           }
         }
         prevX = px; prevZ = pz; prevY = py; prevV = pv;
@@ -229,27 +244,13 @@
           if (!(outline || isShore)) continue;
         }
 
+        // 被河面压住的格边不描边（否则河口会有一条横切水面的墨线，见 coveredByRiver）
+        if (coveredByRiver((x0 + x1) * 0.5, (z0 + z1) * 0.5)) { riverCovered++; continue; }
+
         // 外缘轮廓略粗一档（沙盘边缘要收得住），其余统一基准宽度
         const w = isOuter ? outerWidth : baseWidth;
-        strokeEdge('ink', tile, k, x0, z0, x1, z1, w, inkColor, 1);
+        strokeEdge(tile, k, x0, z0, x1, z1, w, inkColor, 1);
         edgeCount++;
-
-        // 水陆交界：在水侧再画一条浅色泡沫线（同样毛边），浪花不会齐边
-        if (isShore && nb) {
-          const landTile = cls === 'water' ? nb : tile;
-          const waterTile = cls === 'water' ? tile : nb;
-          let dxw = waterTile.x - landTile.x;
-          let dzw = waterTile.z - landTile.z;
-          const dw = Math.hypot(dxw, dzw) || 1;
-          dxw /= dw; dzw /= dw;
-          const push = (baseWidth * 0.5 + foamBaseWidth * 0.5) * 0.9;
-          const offX = dxw * push;
-          const offZ = dzw * push;
-          const fo = { x: x0 + offX, z: z0 + offZ };
-          const ft = { x: x1 + offX, z: z1 + offZ };
-          strokeEdge('foam', tile, k, fo.x, fo.z, ft.x, ft.z, foamBaseWidth, foamColor, 0.8);
-          foamCount++;
-        }
       }
     }
 
@@ -262,17 +263,12 @@
     inkMesh.receiveShadow = false;
     group.add(inkMesh);
 
-    const foamMesh = new THREE.Mesh(toGeometry(foamBuf), crayonMaterial(crayonTex, 5));
-    foamMesh.name = 'ink-foam';
-    foamMesh.renderOrder = 4;
-    group.add(foamMesh);
-
     return {
       group: group,
       inkMesh: inkMesh,
-      foamMesh: foamMesh,
       edgeCount: edgeCount,
-      foamCount: foamCount,
+      /** 因为被河面压住而**没有**描边的格边数（v2.8，河口开口的量化） */
+      riverCovered: riverCovered,
       /** 蜡笔笔触统计：段落数 / 断笔数 / 笔触宽度区间（HUD 与断言用） */
       crayonStats: {
         strokes: strokeCount,
