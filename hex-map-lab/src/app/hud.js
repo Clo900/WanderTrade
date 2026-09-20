@@ -88,8 +88,9 @@
     viewCard.appendChild(el('h4', null, '视角与图层'));
 
     const modeRow = el('div', 'btn-row');
-    const btnOrtho = el('button', 'btn is-active', '正射（主）');
-    const btnPersp = el('button', 'btn', '低透视');
+    // 默认「低透视」（与 scene.js 的 DEFAULT_MODE 一致）：正交视角靠按钮切换
+    const btnPersp = el('button', 'btn is-active', '低透视（主）');
+    const btnOrtho = el('button', 'btn', '正射');
     btnOrtho.addEventListener('click', function () {
       btnOrtho.classList.add('is-active');
       btnPersp.classList.remove('is-active');
@@ -100,8 +101,8 @@
       btnOrtho.classList.remove('is-active');
       Bus.emit('ui:toggle', { name: 'cameraMode', value: 'perspective' });
     });
-    modeRow.appendChild(btnOrtho);
     modeRow.appendChild(btnPersp);
+    modeRow.appendChild(btnOrtho);
     const btnReset = el('button', 'btn', '重置视角');
     btnReset.addEventListener('click', function () { Bus.emit('ui:action', { name: 'resetView' }); });
     const btnFocus = el('button', 'btn', '定位主城');

@@ -191,7 +191,9 @@ e:\WanderTrade\
 │   ├── e2e/                        # 浏览器回归套件（puppeteer-core）
 │   ├── load/                       # 并发压测
 │   └── tests/                      # Node 单元测试
-├── tools/map-editor.html           # 可视化地图编辑器
+├── tools/map-editor/               # 六角地图 / 地形编辑器（地图模式 + 复用 hex-map-lab 的 3D 地形模式）
+├── tools/map-editor.html           # 旧入口兼容跳转页（→ tools/map-editor/index.html）
+├── hex-map-lab/                    # 六边形 2.5D 地图实验页（3D 引擎；其 app/world-view.js 被地形编辑器复用）
 ├── server/                         # Node.js 服务端（index.mjs + 17 个模块，见 §5.1）
 ├── start-server.bat                # 一键启动服务器
 ├── start-map-editor.bat            # 一键启动地图编辑器

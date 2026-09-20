@@ -78,14 +78,27 @@ test('接受六角道路弯曲节点并拒绝越界节点', () => {
   assert.match(validateMap(map, sourceWorld).join('\n'), /六角弯曲节点超出/);
 });
 
-test('接受六角地形并拒绝无效或重复地块', () => {
+test('接受六角地形覆写与批量规则，并拒绝非法键与无效枚举', () => {
   const map = clone(sourceMap);
-  map.terrain.hexTiles = [{ column: 1, row: 2, type: 'forest' }];
+  map.terrain.hex = {
+    hexSize: 22,
+    overrides: {
+      tiles: { '3,-2': { terrain: 'ridge', mountain: { style: 'twinPeak', heightScale: 1.25 }, waterway: { mode: 'mountainPass' } } },
+      rules: [{ match: { terrain: 'ridge' }, set: { waterway: { mode: 'mountainGorge' } } }]
+    }
+  };
   assert.deepEqual(validateMap(map, sourceWorld), []);
-  map.terrain.hexTiles.push({ column: 1, row: 2, type: 'desert' });
-  const errors = validateMap(map, sourceWorld).join('\n');
-  assert.match(errors, /地形类型无效/);
-  assert.match(errors, /地块坐标重复/);
+
+  map.terrain.hex.overrides.tiles['bad key'] = { terrain: 'grass' };
+  assert.match(validateMap(map, sourceWorld).join('\n'), /键必须是 "q,r"/);
+  delete map.terrain.hex.overrides.tiles['bad key'];
+
+  map.terrain.hex.overrides.tiles['1,1'] = { terrain: 'desert' };
+  assert.match(validateMap(map, sourceWorld).join('\n'), /地形类型无效/);
+  delete map.terrain.hex.overrides.tiles['1,1'];
+
+  map.terrain.hex.overrides.rules[0].set.waterway.mode = 'nope';
+  assert.match(validateMap(map, sourceWorld).join('\n'), /水路模式无效/);
 });
 
 test('拒绝新增城市但经济表未登记', () => {

@@ -9,7 +9,9 @@
  * 将来做日夜轮转与季节天气时，只需要调用 setEnvironment({...})
  * 覆盖色温、强度与天光，不需要改本文件的装配逻辑。
  *
- * 相机：正射为主、低透视可切换，两台相机由同一套 rig 状态驱动。
+ * 相机：**低透视为主**（低 FOV 透视，见 FOV_DEG），正射（正交）由按钮切换；
+ * 两台相机由同一套 rig 状态驱动，切换不改变取景范围（applyRig 用
+ * ortho.zoom 对齐到与透视同一距离下的可见高度）。
  * ============================================================ */
 (function (HL) {
   'use strict';
@@ -19,6 +21,8 @@
 
   const FOV_DEG = 28;
   const FOV_RAD = (FOV_DEG * Math.PI) / 180;
+  /** 默认相机模式：低透视。正交视角由 UI 按钮切换（实验页 HUD / 编辑器地形面板）。 */
+  const DEFAULT_MODE = 'perspective';
 
   /**
    * @param {{container:HTMLElement, world:object}} opts
@@ -86,7 +90,7 @@
 
     const perspective = new THREE.PerspectiveCamera(FOV_DEG, aspect0, 1, 8000);
 
-    let mode = 'ortho';
+    let mode = DEFAULT_MODE;
 
     const api = {
       renderer: renderer,
@@ -101,6 +105,9 @@
       },
 
       mode: function () { return mode; },
+
+      /** 默认模式（低透视）；UI 用它初始化按钮状态，避免与装配默认值漂移 */
+      defaultMode: DEFAULT_MODE,
 
       setMode: function (next) {
         mode = next === 'perspective' ? 'perspective' : 'ortho';

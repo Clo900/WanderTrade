@@ -84,16 +84,59 @@
    */
 
   // ---- 查询辅助（避免各模块各自遍历） ----
+  // 这两张索引由 `reindex()` 统一重建：注入外部地图后必须一起刷新，
+  // 否则会出现「世界用的是新城市、查询用的还是旧索引」的隐性错位。
   const cityIndex = Object.create(null);
-  for (let i = 0; i < SNAPSHOT.cities.length; i++) {
-    cityIndex[SNAPSHOT.cities[i].id] = SNAPSHOT.cities[i];
-  }
-
   const roadsByCity = Object.create(null);
-  for (let i = 0; i < SNAPSHOT.roads.length; i++) {
-    const rd = SNAPSHOT.roads[i];
-    (roadsByCity[rd.from] || (roadsByCity[rd.from] = [])).push(rd);
-    (roadsByCity[rd.to] || (roadsByCity[rd.to] = [])).push(rd);
+
+  function reindex() {
+    for (const key in cityIndex) delete cityIndex[key];
+    for (const key in roadsByCity) delete roadsByCity[key];
+    for (let i = 0; i < SNAPSHOT.cities.length; i++) {
+      cityIndex[SNAPSHOT.cities[i].id] = SNAPSHOT.cities[i];
+    }
+    for (let i = 0; i < SNAPSHOT.roads.length; i++) {
+      const rd = SNAPSHOT.roads[i];
+      (roadsByCity[rd.from] || (roadsByCity[rd.from] = [])).push(rd);
+      (roadsByCity[rd.to] || (roadsByCity[rd.to] = [])).push(rd);
+    }
+  }
+  reindex();
+
+  /** 内置快照的副本：`useMap(null)` 时用它还原，保证实验页可回到初始状态 */
+  const BUILTIN = JSON.parse(JSON.stringify(SNAPSHOT));
+
+  /**
+   * 用外部地图数据替换内置快照（工具 / 编辑器注入用）。
+   * 只**就地更新**共享对象 `SNAPSHOT` 的字段并重建索引，因此所有持有
+   * `HL.Data.SNAPSHOT` 引用的模块在下一次构建时会自动读到新数据 —— 无需
+   * 修改任何渲染 / 逻辑模块，也不需要重新加载脚本。
+   *
+   * 可识别字段：`cities / roads / regions / viewBox / worldSchema /
+   * terrainSeed（或 terrain.seed）/ source / revision`；缺省字段保留原值。
+   * 传 `null` 或不传参数即还原为内置快照（实验页默认行为）。
+   *
+   * @param {object|null} [map] 形如 `map/world-map.json` 的对象
+   * @returns {object} 更新后的 SNAPSHOT
+   */
+  function useMap(map) {
+    const src = (map && typeof map === 'object') ? map : BUILTIN;
+    const clone = function (value) { return JSON.parse(JSON.stringify(value)); };
+    SNAPSHOT.cities = Array.isArray(src.cities) ? clone(src.cities) : clone(BUILTIN.cities);
+    SNAPSHOT.roads = Array.isArray(src.roads) ? clone(src.roads) : clone(BUILTIN.roads);
+    SNAPSHOT.regions = Array.isArray(src.regions) ? clone(src.regions) : clone(BUILTIN.regions);
+    if (src.viewBox && isFinite(src.viewBox.width) && isFinite(src.viewBox.height)) {
+      SNAPSHOT.viewBox = { width: +src.viewBox.width, height: +src.viewBox.height };
+    } else {
+      SNAPSHOT.viewBox = { width: BUILTIN.viewBox.width, height: BUILTIN.viewBox.height };
+    }
+    SNAPSHOT.worldSchema = isFinite(src.worldSchema) ? (src.worldSchema | 0) : BUILTIN.worldSchema;
+    const seed = src.terrainSeed != null ? src.terrainSeed : (src.terrain && src.terrain.seed);
+    SNAPSHOT.terrainSeed = isFinite(seed) ? (seed | 0) : BUILTIN.terrainSeed;
+    SNAPSHOT.source = typeof src.source === 'string' ? src.source : (map ? '注入地图' : BUILTIN.source);
+    SNAPSHOT.revision = typeof src.revision === 'string' ? src.revision : SNAPSHOT_REVISION;
+    reindex();
+    return SNAPSHOT;
   }
 
   function cityById(id) {
@@ -108,6 +151,8 @@
     SNAPSHOT,
     SNAPSHOT_REVISION,
     cityById,
-    roadsOfCity
+    roadsOfCity,
+    /** 注入外部地图（工具 / 编辑器用）；`null` 还原内置快照 */
+    useMap
   };
 })(window.HexLab = window.HexLab || {});

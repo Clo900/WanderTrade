@@ -14,6 +14,25 @@ export function generatedSource(map) {
 }
 export function economicRoads(map) { return (Array.isArray(map?.roads) ? map.roads : []).filter(r => r.enabled !== false).map(r => [r.from, r.to, r.economicDistance]); }
 
+/** 校验一条地形覆写值（tiles 的值 / rules 的 set），白名单与 hex-map-lab 引擎同源 */
+function checkHexOverrideEntry(value, at, fail, enums) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) { fail(at, '必须是对象（如 { terrain:"ridge", waterway:{mode:"mountainPass"} }）'); return; }
+  if (value.terrain !== undefined && !enums.terrain.includes(String(value.terrain))) fail(`${at}.terrain`, `地形类型无效：${value.terrain}`);
+  if (value.landform !== undefined && !enums.landform.includes(String(value.landform))) fail(`${at}.landform`, `地貌类型无效：${value.landform}`);
+  if (value.mountain !== undefined) {
+    if (typeof value.mountain !== 'object' || Array.isArray(value.mountain)) fail(`${at}.mountain`, '必须是对象');
+    else {
+      if (value.mountain.style !== undefined && !enums.style.includes(String(value.mountain.style))) fail(`${at}.mountain.style`, `山体风格无效：${value.mountain.style}`);
+      if (value.mountain.heightScale !== undefined && !Number.isFinite(Number(value.mountain.heightScale))) fail(`${at}.mountain.heightScale`, '必须是数字');
+    }
+  }
+  if (value.waterway !== undefined) {
+    const mode = (value.waterway && typeof value.waterway === 'object') ? value.waterway.mode : value.waterway;
+    if (mode !== undefined && !enums.mode.includes(String(mode))) fail(`${at}.waterway.mode`, `水路模式无效：${mode}`);
+  }
+  if (value.waterVisual !== undefined && (typeof value.waterVisual !== 'object' || Array.isArray(value.waterVisual))) fail(`${at}.waterVisual`, '必须是对象');
+}
+
 export function validateMap(map, world) {
   const errors = [], fail = (where, message) => errors.push(`${where}: ${message}`);
   const positive = value => Number.isFinite(value) && value > 0;
@@ -123,14 +142,45 @@ export function validateMap(map, world) {
     if (!['gaussian', 'ridge'].includes(feature?.type)) fail(`terrain.features[${i}].type`, '仅支持 gaussian/ridge');
     if (feature?.anchor && !cityIds.has(feature.anchor)) fail(`terrain.features[${i}].anchor`, `城市不存在：${feature.anchor}`);
   }
-  if (map.terrain?.hexTiles !== undefined && !Array.isArray(map.terrain.hexTiles)) fail('terrain.hexTiles', '必须是数组');
-  const terrainTypes = new Set(['lake', 'grassland', 'forest', 'mountain', 'swamp']), terrainCells = new Set();
-  for (const [i, tile] of (Array.isArray(map.terrain?.hexTiles) ? map.terrain.hexTiles : []).entries()) {
-    const at = `terrain.hexTiles[${i}]`, key = `${tile?.column},${tile?.row}`;
-    if (!Number.isInteger(tile?.column) || tile.column < 0 || (Number.isInteger(map.editor?.hexGrid?.columns) && tile.column >= map.editor.hexGrid.columns)) fail(`${at}.column`, '超出六角网格');
-    if (!Number.isInteger(tile?.row) || tile.row < 0 || (Number.isInteger(map.editor?.hexGrid?.rows) && tile.row >= map.editor.hexGrid.rows)) fail(`${at}.row`, '超出六角网格');
-    if (!terrainTypes.has(tile?.type)) fail(`${at}.type`, `地形类型无效：${tile?.type}`);
-    if (terrainCells.has(key)) fail(at, `地块坐标重复：${key}`); else terrainCells.add(key);
+  // 地形覆写（六角世界）：轴向 (q,r) 稀疏覆写 + 按「已生成地形」批量命中的规则，
+  // 结构与 hex-map-lab 的 HL.TerrainOverrides.build() 输入一致。
+  const hexEnums = {
+    terrain: ['water', 'grass', 'field', 'forest', 'flower', 'ridge', 'city'],
+    landform: ['water', 'plain', 'hill'],
+    mode: ['auto', 'mountainGorge', 'mountainPass', 'waterfall', 'blocked', 'dryValley'],
+    style: ['auto', 'lonePeak', 'twinPeak', 'massif', 'ridge', 'valleyPeak', 'landmark']
+  };
+  if (map.terrain?.hex !== undefined && (typeof map.terrain.hex !== 'object' || Array.isArray(map.terrain.hex))) fail('terrain.hex', '必须是对象');
+  if (map.terrain?.hex?.hexSize !== undefined && (!Number.isFinite(map.terrain.hex.hexSize) || map.terrain.hex.hexSize < 10 || map.terrain.hex.hexSize > 100)) fail('terrain.hex.hexSize', '必须是 10 到 100');
+  const hexOverrides = map.terrain?.hex?.overrides;
+  if (hexOverrides !== undefined) {
+    if (!hexOverrides || typeof hexOverrides !== 'object' || Array.isArray(hexOverrides)) fail('terrain.hex.overrides', '必须是对象');
+    else {
+      const tiles = hexOverrides.tiles;
+      if (tiles !== undefined) {
+        if (!tiles || typeof tiles !== 'object' || Array.isArray(tiles)) fail('terrain.hex.overrides.tiles', '必须是对象（键为 "q,r"）');
+        else for (const key of Object.keys(tiles)) {
+          const at = `terrain.hex.overrides.tiles["${key}"]`;
+          if (!/^-?\d+,-?\d+$/.test(key)) { fail(at, '键必须是 "q,r" 轴向坐标'); continue; }
+          checkHexOverrideEntry(tiles[key], at, fail, hexEnums);
+        }
+      }
+      const ruleList = hexOverrides.rules;
+      if (ruleList !== undefined) {
+        if (!Array.isArray(ruleList)) fail('terrain.hex.overrides.rules', '必须是数组');
+        else ruleList.forEach((rule, i) => {
+          const at = `terrain.hex.overrides.rules[${i}]`;
+          if (!rule || typeof rule !== 'object' || Array.isArray(rule)) { fail(at, '必须是对象'); return; }
+          const match = rule.match || {};
+          if (match.terrain === undefined && match.landform === undefined) fail(`${at}.match`, '需要 terrain 或 landform');
+          if (typeof match.terrain === 'string' && !hexEnums.terrain.includes(match.terrain)) fail(`${at}.match.terrain`, `地形类型无效：${match.terrain}`);
+          if (typeof match.landform === 'string' && !hexEnums.landform.includes(match.landform)) fail(`${at}.match.landform`, `地貌类型无效：${match.landform}`);
+          const set = rule.set !== undefined ? rule.set : rule.spec;
+          if (set === undefined) fail(`${at}.set`, '缺少覆写内容');
+          else checkHexOverrideEntry(set, `${at}.set`, fail, hexEnums);
+        });
+      }
+    }
   }
   if ((world?.__schema || 0) < (map.worldSchema || 0)) fail('default-world.__schema', '低于地图要求的 worldSchema');
   if (JSON.stringify(world?.tradeRoads) !== JSON.stringify(economicRoads(map))) fail('default-world.tradeRoads', '未与地图经济距离同步，请运行构建脚本');

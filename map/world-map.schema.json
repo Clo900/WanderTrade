@@ -36,7 +36,7 @@
         "gridStep": { "type": "number", "exclusiveMinimum": 0 },
         "contourLevels": { "type": "array", "items": { "type": "number", "minimum": 0, "maximum": 1 } },
         "features": { "type": "array", "items": { "$ref": "#/$defs/terrainFeature" } },
-        "hexTiles": { "type": "array", "items": { "$ref": "#/$defs/terrainHexTile" } }
+        "hex": { "$ref": "#/$defs/terrainHexOverrides" }
       }
     },
     "regions": { "type": "array", "items": { "$ref": "#/$defs/region" } },
@@ -97,13 +97,67 @@
         "from": { "$ref": "#/$defs/point" }, "to": { "$ref": "#/$defs/point" }, "width": { "type": "number", "exclusiveMinimum": 0 }
       }
     },
-    "terrainHexTile": {
+    "terrainHexOverrides": {
       "type": "object",
-      "required": ["column", "row", "type"],
       "properties": {
-        "column": { "type": "integer", "minimum": 0 },
-        "row": { "type": "integer", "minimum": 0 },
-        "type": { "enum": ["lake", "grassland", "forest", "mountain", "swamp"] }
+        "hexSize": { "type": "number", "minimum": 10, "maximum": 100 },
+        "overrides": {
+          "type": "object",
+          "properties": {
+            "tiles": {
+              "type": "object",
+              "patternProperties": { "^-?\\d+,-?\\d+$": { "$ref": "#/$defs/terrainHexOverride" } },
+              "additionalProperties": false
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "match": { "$ref": "#/$defs/terrainHexMatch" },
+                  "set": { "$ref": "#/$defs/terrainHexOverride" },
+                  "spec": { "$ref": "#/$defs/terrainHexOverride" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "terrainHexMatch": {
+      "type": "object",
+      "properties": {
+        "terrain": { "oneOf": [ { "$ref": "#/$defs/terrainHexName" }, { "type": "array", "items": { "$ref": "#/$defs/terrainHexName" } } ] },
+        "landform": { "oneOf": [ { "enum": ["water", "plain", "hill"] }, { "type": "array", "items": { "enum": ["water", "plain", "hill"] } } ] }
+      }
+    },
+    "terrainHexName": { "enum": ["water", "grass", "field", "forest", "flower", "ridge", "city"] },
+    "terrainHexOverride": {
+      "type": "object",
+      "properties": {
+        "terrain": { "$ref": "#/$defs/terrainHexName" },
+        "landform": { "enum": ["water", "plain", "hill"] },
+        "locked": { "type": "boolean" },
+        "blocked": { "type": "boolean" },
+        "mountain": {
+          "type": "object",
+          "properties": {
+            "style": { "enum": ["auto", "lonePeak", "twinPeak", "massif", "ridge", "valleyPeak", "landmark"] },
+            "heightScale": { "type": "number", "minimum": 0, "maximum": 4 },
+            "landmark": { "type": "boolean" },
+            "valley": { "type": ["string", "boolean"] }
+          }
+        },
+        "waterway": {
+          "type": "object",
+          "properties": {
+            "mode": { "enum": ["auto", "mountainGorge", "mountainPass", "waterfall", "blocked", "dryValley"] },
+            "radius": { "type": "number" },
+            "depth": { "type": "number" },
+            "width": { "type": "number" }
+          }
+        },
+        "waterVisual": { "type": "object" }
       }
     }
   }

@@ -1,0 +1,264 @@
+/* ============================================================
+ * WanderTrade 地图 / 地形编辑器 —— 样式
+ * ------------------------------------------------------------
+ * 分段：
+ *   1 基础与布局   2 头部与按钮   3 左工具栏
+ *   4 画布与网格   5 城市 / 道路 / 控制柄   6 右侧表单
+ *   7 删除弹窗     8 地形模式（3D 预览 + 覆写面板）
+ * ============================================================ */
+
+/* ---------- 1 基础与布局 ---------- */
+:root {
+  color-scheme: dark;
+  font: 14px/1.45 system-ui;
+  background: #10151c;
+  color: #e6edf3;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none; }
+body {
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+main {
+  display: grid;
+  grid-template-columns: 190px minmax(400px, 1fr) 340px;
+  min-height: 0;
+}
+
+/* ---------- 2 头部与按钮 ---------- */
+header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid #30363d;
+  background: #161b22;
+}
+button, .file {
+  border: 1px solid #3f4a58;
+  background: #212a35;
+  color: #e6edf3;
+  padding: 7px 11px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.file input { display: none; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+.primary { background: #2867b2; }
+.danger { color: #ff7b72; }
+.mode-btn.active { border-color: #58a6ff; background: #173653; box-shadow: 0 0 0 2px #58a6ff55; }
+#status { margin-left: auto; color: #9da7b3; }
+
+/* ---------- 3 左工具栏 ---------- */
+.tool-panel {
+  overflow: auto;
+  padding: 14px;
+  border-right: 1px solid #30363d;
+  background: #161b22;
+}
+.tool-panel h2 { font-size: 16px; margin: 0 0 10px; }
+.tool-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.tool-card {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid #455363;
+  border-radius: 9px;
+  background: #202b36;
+  color: #e6edf3;
+  cursor: grab;
+  text-align: center;
+}
+.tool-card:hover { border-color: #58a6ff; background: #263746; }
+.tool-card:active { cursor: grabbing; }
+.tool-card.active { border-color: #58a6ff; background: #173653; box-shadow: 0 0 0 2px #58a6ff55; }
+.tool-icon { font-size: 28px; line-height: 1; }
+.tool-name { font-size: 13px; font-weight: 700; }
+
+/* ---------- 4 画布与网格 ---------- */
+.canvas {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+  background: #0d1117;
+}
+.canvas.panning { cursor: grabbing; }
+.canvas.tool-drag { outline: 3px solid #58a6ff; outline-offset: -3px; }
+.canvas.dragover { outline: 3px dashed #58a6ff; outline-offset: -10px; }
+svg#map {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  user-select: none;
+  touch-action: none;
+}
+.hex-cell {
+  fill: #20333d;
+  fill-opacity: .22;
+  stroke: #78909c;
+  stroke-opacity: .3;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.hex-cell:nth-child(3n) { fill: #29424d; }
+.hex-drop-preview {
+  fill: #58a6ff;
+  fill-opacity: .3;
+  stroke: #a5d6ff;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+/* ---------- 5 城市 / 道路 / 控制柄 ---------- */
+.road { fill: none; stroke: #7a91a4; stroke-width: 4; cursor: pointer; }
+.road.hidden { stroke-dasharray: 7 6; opacity: .45; }
+.road.disabled { opacity: .18; }
+.road.selected { stroke: #ffbd59; stroke-width: 7; }
+.city { cursor: move; }
+.city circle { fill: #dfe9dc; stroke: #17232b; stroke-width: var(--city-stroke, 3px); }
+.city.selected circle { fill: #ffbd59; }
+.city text {
+  fill: #fff;
+  paint-order: stroke;
+  stroke: #17232b;
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  font-weight: 700;
+  pointer-events: none;
+}
+body.connect .city circle,
+body.y-mode .city circle { stroke: #58a6ff; stroke-width: var(--city-active-stroke, 6px); }
+.control-guide { fill: none; stroke: #ffbd59; stroke-width: 1.5; stroke-dasharray: 5 4; opacity: .65; pointer-events: none; }
+.control-handle { fill: #ffbd59; stroke: #fff; stroke-width: var(--road-node-stroke, 2px); cursor: move; }
+.control-handle.hex-waypoint { fill: #58a6ff; }
+
+/* ---------- 6 右侧表单 ---------- */
+.panel {
+  overflow: auto;
+  padding: 16px;
+  border-left: 1px solid #30363d;
+  background: #161b22;
+}
+.panel h2 { font-size: 16px; margin: 0 0 12px; }
+fieldset { border: 1px solid #30363d; border-radius: 7px; margin: 0 0 14px; padding: 12px; }
+fieldset[hidden] { display: none; }
+legend { color: #9da7b3; }
+label { display: grid; grid-template-columns: 92px 1fr; gap: 8px; align-items: center; margin: 8px 0; }
+input, select, textarea {
+  width: 100%;
+  border: 1px solid #3f4a58;
+  background: #0d1117;
+  color: #e6edf3;
+  padding: 6px;
+  border-radius: 4px;
+}
+input[type=checkbox] { width: auto; justify-self: start; }
+textarea { min-height: 72px; resize: vertical; }
+.row { display: flex; gap: 8px; }
+.wide { width: 100%; margin-top: 8px; }
+.hint { color: #9da7b3; font-size: 12px; }
+
+/* ---------- 7 删除弹窗 ---------- */
+.modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; background: #05080dbd; }
+.modal[hidden] { display: none; }
+.modal-card { width: min(440px, 100%); padding: 20px; border: 1px solid #465466; border-radius: 12px; background: #161b22; box-shadow: 0 20px 60px #000b; }
+.modal-card h2 { margin: 0 0 10px; }
+.modal-message { margin: 0 0 18px; color: #c9d1d9; white-space: pre-line; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.modal-actions .confirm-delete { border-color: #8b3434; background: #a33b36; }
+
+/* ---------- 8 地形模式 ---------- */
+#sceneHost {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  touch-action: none;
+}
+#sceneHost[hidden] { display: none; }
+#sceneHost.is-dragging { cursor: grabbing; }
+/*
+ * ⚠ 必须显式给 canvas 100% 尺寸。
+ * 引擎用 `renderer.setSize(w, h, false)`（第三个参数 false = 不改 canvas 的 CSS 尺寸），
+ * canvas 的 CSS 尺寸会退化成它的内在像素尺寸 `w×dpr × h×dpr`；在 DPR>1 的机器上
+ * 就会比容器大、被裁掉右下角，而射线拾取仍按容器矩形换算 → 鼠标位置与实际地块不符
+ * （偏差随离左上角的距离线性放大）。实验页 styles.css 里同样有这两行。
+ */
+#sceneHost canvas { display: block; width: 100%; height: 100%; }
+#sceneHost.is-brushing { cursor: crosshair; }
+#sceneHost.is-rebuilding { cursor: progress; }
+#sceneHost.is-rebuilding::after {
+  content: '正在重建世界…';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #05080d66;
+  color: #ffe29a;
+  font-weight: 700;
+  pointer-events: none;
+}
+.brush-warn {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid #8b6a2f;
+  border-radius: 6px;
+  background: #3a2f16;
+  color: #ffd166;
+  font-size: 12px;
+}
+.brush-summary {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0 0 10px;
+  padding: 6px 8px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  font-size: 12px;
+}
+#brushSummary { color: #ffd166; }
+.terrain-readout {
+  margin: 6px 0 0;
+  padding: 8px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  color: #b7c0ca;
+  font-size: 12px;
+  white-space: pre-line;
+}
+.rule-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  font-size: 12px;
+}
+.rule-row button { padding: 3px 8px; font-size: 12px; }
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 850px) {
+  main { grid-template-columns: 1fr; }
+  .panel { border-left: 0; border-top: 1px solid #30363d; }
+  .tool-panel { border-right: 0; border-bottom: 1px solid #30363d; }
+  .tool-grid { grid-template-columns: repeat(2, 90px); }
+}

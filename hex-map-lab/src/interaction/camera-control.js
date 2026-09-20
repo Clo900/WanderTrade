@@ -17,11 +17,16 @@
 
   /**
    * @param {{dom:HTMLElement, sceneKit:object, initial:object,
-   *          minDistance?:number, maxDistance?:number}} opts
+   *          minDistance?:number, maxDistance?:number, rotateButton?:number}} opts
+   *
+   * `rotateButton`：用哪个鼠标键拖拽旋转（默认 `0` = 左键，与实验页一致）。
+   * 编辑器在「地形模式」下把它设为 `2`（右键旋转），**把左键让给涂刷** ——
+   * 涂刷是按住左键连续进行的，若左键仍被旋转占用，拖动鼠标就只会转视角。
    */
   function create(opts) {
     const dom = opts.dom;
     const sceneKit = opts.sceneKit;
+    const rotateButton = opts.rotateButton == null ? 0 : opts.rotateButton;
 
     const limits = {
       minDistance: opts.minDistance == null ? 90 : opts.minDistance,
@@ -71,7 +76,7 @@
     }
 
     function onPointerDown(e) {
-      if (e.button === 0 && !e.shiftKey) dragMode = 'rotate';
+      if (e.button === rotateButton && !e.shiftKey) dragMode = 'rotate';
       else if (e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey)) dragMode = 'pan';
       else return;
 
