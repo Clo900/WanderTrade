@@ -10,15 +10,20 @@
  * 本模块**不**依赖 camera-control / picker / travel-sim / hud / 输入总线。
  *
  * 对外接口：
- *   create({ container, world?, terrainOverrides? })
+ *   create({ container, world?, terrainOverrides?, lodDetails? })
  *   · getter：world / mountainClusters / mountainSystem / riverData / roadData /
- *             state / terrainRules / layers / waterDepth / mountainLod / sceneKit
+ *             state / terrainRules / layers / waterDepth / mountainLod / lodDetails /
+ *             sceneKit
  *   · environmentState / environmentProfile() / applyEnvironment()
- *   · rebuild({ world?, terrainOverrides? })   世界变化时替换表现层并释放旧资源
+ *   · rebuild({ world?, terrainOverrides?, lodDetails? })  世界变化时替换表现层并释放旧资源
  *   · resize()                                 容器尺寸变化
  *   · renderFrame(simNow, dt, cameraControl?)  推进一帧（图层动画 + LOD + 深度 + 主通道）
  *   · layerTimings()                           各层建造耗时（诊断用）
  *   · dispose()
+ *
+ * `lodDetails` 可以是数组（只建这几级山体）或一个**惰性函数**
+ * `({sceneKit, container, world}) => number[]`（按当前相机算需要哪一级）。
+ * 详见 `MountainLayer.lodDetails` 的注释。
  * ============================================================ */
 (function (HL) {
   'use strict';
@@ -33,6 +38,11 @@
     //   · overrides —— 策划提交的覆写。重掷山脉不该把它丢掉。
     let worldOptions = opts.world ? Object.assign({}, opts.world) : {};
     let overrides = opts.terrainOverrides != null ? opts.terrainOverrides : null;
+    /**
+     * 山体只建哪几级（`null` = 按 config 全建）。与上面两类输入同理，必须持久保存：
+     * 编辑器每次涂刷都重建，若重建时丢掉它就会退回「4 级全建」，白付 ~2.1s。
+     */
+    let lodDetails = opts.lodDetails != null ? opts.lodDetails : null;
 
     let disposed = false;
     let layerMs = {};
@@ -63,6 +73,19 @@
     sceneKit = HL.SceneKit.create({ container: container, world: rebuilt.world });
 
     // ---------- 各表现层（顺序＝绘制层次从底到顶）----------
+    /**
+     * 解析「山体只建哪几级」：支持直接给数组，也支持给一个**惰性函数**。
+     * 用函数的意义：调用方（编辑器的地形模式）必须按「当前相机 + 当前世界」才能
+     * 算出需要哪一级，而这两样在 `create` 之前都不存在（相机由 SceneKit 建、
+     * 世界由 buildWorld 建）。在真正要建山体的那一刻求值 ⇒ 创建与重建共用一条路径。
+     */
+    function resolveLodDetails(world) {
+      if (typeof lodDetails === 'function') {
+        return lodDetails({ sceneKit: sceneKit, container: container, world: world });
+      }
+      return lodDetails;
+    }
+
     function createRuntime() {
       // 每层的建造耗时一起记：地表与山体是两大头（山体还要按 LOD 建 4 级）。
       layerMs = {};
@@ -81,7 +104,7 @@
       }
       const layers = {
         terrain: timed('地形', function () { return HL.TerrainLayer.build(world); }),
-        mountains: timed('山体', function () { return HL.MountainLayer.build(world); }),
+        mountains: timed('山体', function () { return HL.MountainLayer.build(world, { lodDetails: resolveLodDetails(world) }); }),
         // 统一水面（v2.8）：海 + 河（含河口分流）+ 泉 / 湖合并成一份几何 + 一份材质。
         water: timed('水面', function () { return HL.WaterSurface.build(world, riverData); }),
         ink: timed('描边', function () { return HL.InkLayer.build(world); }),
@@ -185,6 +208,7 @@
       // 覆写是世界生成输入：显式传入才更新，否则沿用上一次（重掷山脉不能把它丢掉）。
       if (o.terrainOverrides !== undefined) overrides = o.terrainOverrides;
       if (o.world) worldOptions = Object.assign({}, worldOptions, o.world);
+      if (o.lodDetails !== undefined) lodDetails = o.lodDetails;
       const visibility = {};
       const oldNames = Object.keys(runtime.layers);
       for (let i = 0; i < oldNames.length; i++) {
@@ -271,6 +295,7 @@
       layers: { get: function () { return runtime.layers; } },
       waterDepth: { get: function () { return runtime.waterDepth; } },
       mountainLod: { get: function () { return runtime.mountainLod; } },
+      lodDetails: { get: function () { return lodDetails; } },
       sceneKit: { get: function () { return sceneKit; } }
     });
     return api;

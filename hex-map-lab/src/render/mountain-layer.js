@@ -55,10 +55,18 @@
    * LOD 级别列表：细 → 粗，去掉非法值。
    * `lod.enabled === false` 时只留 `details[0]`（**最细那一级**）—— 与 config 里
    * 「[0] 同时是关掉 LOD 时用的那一级」这条约定一致：关掉 LOD = 一直用最高精度。
+   *
+   * `override`（可选，细 → 粗）由调用方给出，语义是「**只建这几级**」：
+   * 山体占一次整层重建的 ~74%（默认档要建 4 级，其中只有 1 级会被渲染），
+   * 而「改一格地形」会整层重建 —— 于是按当前相机点名要的那一级，只建它。
+   * ⚠ 覆盖列表**不再被 `lod.enabled` 截断**：那是 config 档位的开关（关掉 LOD =
+   *   一直用最细的一级），与「调用方只要这一级」是两件事。给 `[3]` 若还按
+   *   enabled 取 `out[0]`，就会从「3」跳成最细一级，正是要避免的。
    */
-  function lodDetails(M) {
+  function lodDetails(M, override) {
     const cfg = M.lod || {};
-    const list = (cfg.details && cfg.details.length) ? cfg.details : [6];
+    const useOverride = !!(override && override.length);
+    const list = useOverride ? override : ((cfg.details && cfg.details.length) ? cfg.details : [6]);
     const out = [];
     for (let i = 0; i < list.length; i++) {
       const d = Math.round(list[i]);
@@ -66,7 +74,7 @@
       if (out.indexOf(d) < 0) out.push(d);
     }
     out.sort(function (a, b) { return b - a; });
-    const keep = cfg.enabled === false ? 1 : out.length;
+    const keep = useOverride ? out.length : (cfg.enabled === false ? 1 : out.length);
     return out.length ? out.slice(0, keep) : [6];
   }
 
@@ -480,9 +488,10 @@
 
   /**
    * @param {object} world
+   * @param {{lodDetails?:number[]}} [opts] `lodDetails` = 只建这几级（见 lodDetails 注释）
    * @returns {object} 山体层
    */
-  function build(world) {
+  function build(world, opts) {
     const C = Config.value;
     const P = C.palette;
     const size = world.hexSize;
@@ -592,7 +601,7 @@
     };
 
     // ---- 逐级建网格：块 = 山簇 ----
-    const details = lodDetails(M);
+    const details = lodDetails(M, opts && opts.lodDetails);
     const levels = [];
     const meshes = [];
 

@@ -3,12 +3,22 @@
  * ------------------------------------------------------------
  * 直接把 hex-map-lab 的 3D 引擎（`HL.WorldView`）挂进编辑器的画布容器：
  *   · 数据来源：`HL.Data.useMap(当前地图)` + `terrain.hex.overrides`；
- *   · 重建：一次涂刷**结束后**统一重建一次（重建是 ~3s 的同步全量事务，
+ *   · 重建：一次涂刷**结束后**统一重建一次（重建是同步全量事务，
  *     不能按格触发），并且重建前先让出一帧，保证「正在重建…」能画出来；
  *   · 涂刷：按住**左键**沿轨迹连续写覆写（用 `Hex.line` 补齐快速拖动跨过的格，
  *     同一笔内按 key 去重）；相机旋转改绑**右键**（见 camera-control 的
  *     `rotateButton`）。若左键仍被旋转占用，拖动就只会转视角、一格都刷不上。
  *   · 无笔刷时左键交由 `HL.Picker`：只做悬停读数与选中地块查看。
+ *
+ * ---- 一次「改一格」的总代价，以及这里的取舍 ----
+ * 重建是**整层全量**的（世界逻辑 + 地表/山体/水面/描边/道路/植被/村落/城市/氛围
+ * 全部重建）。实测一次重建 ~3.3s，其中：
+ *   · 山体 ~2.4s（74%）—— 默认档要建 4 级 LOD，而任一时刻**只有 1 级**会被渲染；
+ *   · 地表 ~0.5s     —— 大头是几张以 seed 为纯函数的程序化贴图（已在
+ *                        `render/textures.js` 里按画布记忆化）。
+ * 于是这里只做一件与「编辑」有关的事：**山体只建当前相机需要的那一级**
+ * （`editLodDetails`），并在相机缩放跨过档位分界时换一级重画（`followCameraLod`）。
+ * 这不改变实验页 / 游戏运行时的表现（它们不传 `lodDetails`，仍是 4 级 LOD）。
  *
  * 本模块不读写地图结构（那是 E.TerrainModel 的职责），也不改图层（引擎的）。
  * ============================================================ */
@@ -27,6 +37,12 @@
     size: 1,              // 1 = 单格；N = 半径 N-1 圈
     erase: false          // 擦除该格覆写
   };
+
+  /**
+   * 初始机位。**唯一来源**：mount() 用它交给 CameraControl，
+   * `editLodDetails` 也用它（首帧前相机还没定位，见那里的注释）。
+   */
+  const INITIAL_RIG = { azimuth: Math.PI * 0.5, polar: 0.9, distance: 1350 };
 
   let view = null;
   let cameraControl = null;
@@ -84,18 +100,94 @@
     return view.world.tileAtPixel(point.x, point.z) || null;
   }
 
+  // ---------- 山体档位（编辑期只建相机需要的那一级）----------
+  /**
+   * 当前相机「需要」的山体采样密度（在 config 的档位表里取最接近的一级）。
+   *
+   * 判据与 `HL.MountainLod` **完全同源**（复用 `worldPerPixel` / `nearestDetail`，
+   * 不在这里重抄一遍公式）：屏幕像素密度 → 需要的 detail → 最近档位。
+   * 这样「这里要建几级」与「LOD 控制器会渲染几级」必然一致，不会互相打架。
+   *
+   * @returns {number|null}
+   */
+  function wantedMountainDetail(sceneKit, world) {
+    const kit = sceneKit || (view && view.sceneKit);
+    if (!kit || !world) return null;
+    const M = HL.Config.value.terrain.relief.mountains;
+    const cam = kit.activeCamera();
+    if (!cam) return null;
+    const vp = (host && host.clientHeight) || 1;
+    // 透视按「沿视线的深度」算像素密度 —— 相机注视的是 CameraControl 的焦点
+    const focus = cameraControl && cameraControl.focus ? cameraControl.focus() : null;
+    const z = focus ? cam.position.distanceTo(focus) : cam.position.length();
+    const wpp = HL.MountainLod.worldPerPixel(cam, vp, z);
+    const target = (M.lod && M.lod.targetPxPerStep) || 6;
+    const required = world.hexSize / (target * Math.max(1e-9, wpp));
+    return HL.MountainLod.nearestDetail(HL.MountainLayer.lodDetails(M), required);
+  }
+
+  /** 当前**已建**的山体档位表（细 → 粗）。编辑期只建一级，所以正常应只有 1 项 */
+  function builtMountainLevels() {
+    const m = view && view.layers && view.layers.mountains;
+    return (m && m.levels) ? m.levels.map(function (l) { return l.detail; }) : [];
+  }
+
+  /** 当前**已建**的山体档位（编辑期只建一级，取第一项即是） */
+  function builtMountainDetail() {
+    const list = builtMountainLevels();
+    return list.length ? list[0] : null;
+  }
+
+  /**
+   * 交给 `WorldView` 的惰性入参：编辑期山体**只建这一级**。
+   *
+   * 为什么用函数而不是数组：需要「当前相机 + 当前世界」才能算，而这两样在
+   * `WorldView.create` 之前都不存在（相机由 SceneKit 建、世界由 buildWorld 建）。
+   * 惰性求值让创建与每次重建共用同一条路径 —— 「缩放跨档」只要触一次重建就自然跟上。
+   *
+   * 副作用（唯一一处）：首次装配时**顺手把初始机位套到相机上**。
+   * `WorldView.create` 发生在 `CameraControl.create` 之前，那一刻相机还停在原点
+   * （rig 尚未 apply），按它算出的像素密度没有意义 —— 会退化成「建最细的一级」
+   * （最贵的一档，~1s）。用与 mount() 同一份 `INITIAL_RIG` 先定位，就能在首帧前
+   * 按真实像素密度选级、只建一次。之后每次重建相机都已就位，这段分支不会再进。
+   */
+  function editLodDetails(ctx) {
+    const kit = ctx.sceneKit;
+    const cam = kit && kit.activeCamera();
+    if (cam && cam.position.length() < 1e-3) {
+      kit.applyRig({
+        target: new THREE.Vector3(0, 0, 0),
+        azimuth: INITIAL_RIG.azimuth,
+        polar: INITIAL_RIG.polar,
+        distance: INITIAL_RIG.distance
+      });
+    }
+    const d = wantedMountainDetail(kit, ctx.world);
+    return d == null ? null : [d];
+  }
+
   // ---------- 生命周期 ----------
   function mount(container) {
     if (view) return;
     host = container;
     HL.Data.useMap(E.store.map);
-    view = HL.WorldView.create({ container: host, terrainOverrides: overrides() });
+    view = HL.WorldView.create({
+      container: host,
+      terrainOverrides: overrides(),
+      // 山体只建当前相机需要的那一级（见 editLodDetails 的注释）
+      lodDetails: editLodDetails
+    });
     cameraControl = HL.CameraControl.create({
       dom: host,
       sceneKit: view.sceneKit,
       // 右键旋转：把左键让给涂刷（见 camera-control 的 rotateButton 注释）
       rotateButton: 2,
-      initial: { azimuth: Math.PI * 0.5, polar: 0.9, distance: 1350, target: new THREE.Vector3(0, 0, 0) }
+      initial: {
+        azimuth: INITIAL_RIG.azimuth,
+        polar: INITIAL_RIG.polar,
+        distance: INITIAL_RIG.distance,
+        target: new THREE.Vector3(0, 0, 0)
+      }
     });
     rebuildPicker();
     bindBrush();
@@ -252,8 +344,37 @@
       view.layers.terrain.setHighlight(tile);
       if (!tile) selectedKey = null;
     }
-    setStatus(`重建完成：${view.world.tileList.length} 格 / 覆写 ${E.TerrainModel.tileCount()} 格 · 规则 ${E.TerrainModel.ruleCount()} 条 · ${(performance.now() - t0).toFixed(0)}ms`);
+    setStatus(`重建完成：${view.world.tileList.length} 格 / 覆写 ${E.TerrainModel.tileCount()} 格 · 规则 ${E.TerrainModel.ruleCount()} 条 · 山体 ${builtMountainDetail()} 级 · ${(performance.now() - t0).toFixed(0)}ms`);
     notifyPanel();
+  }
+
+  // ---------- 山体档位跟随相机 ----------
+  /**
+   * 相机缩放跨过档位分界时换一级重画。
+   *
+   * 两级防抖，避免「一边滚轮缩放一边重建卡住」：
+   *   · 检查节流 LOD_CHECK_MS —— 不是每帧都算；
+   *   · 需求稳定 LOD_SETTLE_MS —— 缩放动作停下来（所需档位连续不变）才真的重建。
+   * 跨档最多 3 次（12/8/5/3 四档之间），每次重建后 `builtMountainDetail()` 就等于
+   * 所需档位，所以不会反复重建。
+   */
+  const LOD_CHECK_MS = 250;
+  const LOD_SETTLE_MS = 400;
+  let lodCheckedAt = 0;
+  let lodWant = null;
+  let lodWantSince = 0;
+
+  function followCameraLod(now) {
+    if (now - lodCheckedAt < LOD_CHECK_MS) return;
+    lodCheckedAt = now;
+    const want = wantedMountainDetail(null, view.world);
+    const have = builtMountainDetail();
+    if (want == null || have == null || want === have) { lodWant = null; return; }
+    if (lodWant !== want) { lodWant = want; lodWantSince = now; return; }
+    if (now - lodWantSince < LOD_SETTLE_MS) return;
+    lodWant = null;
+    setStatus(`视角缩放需要山体 ${want} 级（当前 ${have} 级），正在重建…`);
+    scheduleRebuild();
   }
 
   // ---------- 帧循环 ----------
@@ -273,6 +394,9 @@
         try { rebuildNow(); }
         finally { rebuilding = false; if (host) host.classList.remove('is-rebuilding'); }
       });
+    } else if (!rebuilding) {
+      // 没有待重建时，才让山体档位去跟相机（重建期间相机在动，此刻算出来的需求没意义）
+      followCameraLod(now);
     }
     view.renderFrame(now / 1000, dt, cameraControl);
   }
@@ -322,6 +446,14 @@
     brush, mount, setActive, resize, scheduleRebuild, setReliefSeed, resetView, setCameraMode, dispose,
     /** 对外暴露涂刷用的拾取（屏幕坐标 → 地块）；自检 / 外部工具可复用同一条路径 */
     pickAt: pickTileAt,
+    /** 上一次重建的分层耗时（诊断用：重建卡顿先看这里） */
+    layerTimings: function () { return view ? view.layerTimings() : {}; },
+    /** 当前已建的山体档位（编辑期只建相机需要的那一级） */
+    mountainDetail: function () { return builtMountainDetail(); },
+    /** 当前已建的山体档位表（编辑期应为 1 项；诊断 / 自检用） */
+    mountainLevels: function () { return builtMountainLevels(); },
+    /** 当前相机需要的山体档位（与 mountainDetail 不符时帧循环会自动重建） */
+    wantedMountainDetail: function () { return view ? wantedMountainDetail(null, view.world) : null; },
     get cameraMode() { return cameraMode(); },
     get world() { return view ? view.world : null; },
     get reliefSeed() { return reliefSeed; },

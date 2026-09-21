@@ -43,6 +43,32 @@
     return tex;
   }
 
+  /* ------------------------------------------------------------
+   * 画布记忆化（本模块的通用约定）
+   * ------------------------------------------------------------
+   * 本模块除 `labelSprite` 外的贴图都是「参数 → 画布」的**纯函数**：seed 相同 ⇒
+   * 像素逐点相同。而「改一格地形」会让整层重建（TerrainLayer / WaterSurface /
+   * PropsLayer / InkLayer / AmbienceLayer 全部重建一次），重建之间这些参数通常
+   * 并不变 —— 于是每改一格就把同一批逐像素循环重跑一遍。实测这些循环是重建里
+   * 除山体之外的最大一块（`fieldStripes` 单张 ~350ms、`cloudShadow` 512² 逐点）。
+   *
+   * ⚠ 缓存的是**画布**，不是 Texture：`repeat` / `offset` / `wrapS` 这些状态挂在
+   *   Texture 上，两个消费者（地表层与水面层）若共用同一个 Texture 就会互相改写；
+   *   而且图层 dispose 会沿材质 `map.dispose()` 把共用对象一起销毁。每次返回**新的
+   *   Texture 对象**（共享同一张画布）⇒ 每个图层拥有自己的贴图对象，缓存里只留纯
+   *   绘制结果，与「按图层释放 GPU 资源」不冲突。
+   *   代价只是一次 `new THREE.CanvasTexture`（~0.1ms），换来的是不再重画。
+   *
+   * key 由调用方拼成完整字符串（含 seed / 尺寸等全部入参）；key 相同即视为同一张画布。
+   * ------------------------------------------------------------ */
+  const canvasCache = new Map();
+
+  function memoCanvas(key, make) {
+    let canvas = canvasCache.get(key);
+    if (!canvas) { canvas = make(); canvasCache.set(key, canvas); }
+    return canvas;
+  }
+
   function rgb(hex) {
     const c = new THREE.Color(hex);
     return [Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255)];
@@ -183,12 +209,11 @@
    * 作用不是画出“草叶”，而是让地块本身出现顺势流动的质感；
    * 即便关掉树和花，地表也不至于只剩一块平色板。
    */
-  function grasslandTexture(seed) {
+  function grasslandCanvas(seed) {
     const N = SURFACE_TILE_PX;
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
-    const base = mottleCanvas(seed);
-    ctx.drawImage(base, 0, 0);
+    ctx.drawImage(mottleCanvas(seed), 0, 0);
     const rnd = Rng.mulberry32(((seed || 1) | 0) + 211);
     ctx.globalAlpha = 0.08;
     ctx.strokeStyle = '#ffffff';
@@ -209,11 +234,15 @@
       });
     }
     ctx.globalAlpha = 1;
-    return toTexture(canvas);
+    return canvas;
+  }
+
+  function grasslandTexture(seed) {
+    return toTexture(memoCanvas('grassland|' + seed, function () { return grasslandCanvas(seed); }));
   }
 
   /** 林地底纹：更暗、更碎的林下斑块，不依赖树也能读出“林地基底” */
-  function forestFloorTexture(seed) {
+  function forestFloorCanvas(seed) {
     const N = SURFACE_TILE_PX;
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
@@ -243,19 +272,23 @@
         ctx.fill();
       });
     }
-    return toTexture(canvas);
+    return canvas;
+  }
+
+  function forestFloorTexture(seed) {
+    return toTexture(memoCanvas('forestFloor|' + seed, function () { return forestFloorCanvas(seed); }));
   }
 
   /**
    * 农田：作物行（竖直条带）+ 细颗粒。
    * 条带周期整除画布边长 → 贴图可平铺；行距由 fieldRowSpacing() 对外给出，
    * 作物道具按同一个值摆放。
+   * 逐像素颗粒循环是重建里最贵的一张（实测 ~350ms），画布按 seed 记忆化。
    */
-  function fieldStripesTexture(seed) {
+  function fieldStripesCanvas(s) {
     const N = SURFACE_TILE_PX;
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
-    const s = (seed || 2201) | 0;
     ctx.fillStyle = '#e9e9e9';
     ctx.fillRect(0, 0, N, N);
 
@@ -280,11 +313,16 @@
       }
     }
     ctx.putImageData(img, 0, 0);
-    return toTexture(canvas);
+    return canvas;
+  }
+
+  function fieldStripesTexture(seed) {
+    const s = (seed || 2201) | 0;
+    return toTexture(memoCanvas('fieldStripes|' + s, function () { return fieldStripesCanvas(s); }));
   }
 
   /** 花田：底色 + 密集小点（点跨边界时按 ±N 补画） */
-  function flowerSpeckleTexture(seed) {
+  function flowerSpeckleCanvas(seed) {
     const N = SURFACE_TILE_PX;
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
@@ -304,11 +342,15 @@
         ctx.fill();
       });
     }
-    return toTexture(canvas);
+    return canvas;
+  }
+
+  function flowerSpeckleTexture(seed) {
+    return toTexture(memoCanvas('flowerSpeckle|' + seed, function () { return flowerSpeckleCanvas(seed); }));
   }
 
   /** 湿沙：细砂颗粒 + 水渍斑块，给岸线混合带用（仍是灰度，与基色相乘） */
-  function wetSandTexture(seed) {
+  function wetSandCanvas(seed) {
     const N = SURFACE_TILE_PX;
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
@@ -341,11 +383,15 @@
         ctx.fillRect(x - r + ox, y - r + oy, r * 2, r * 2);
       });
     }
-    return toTexture(canvas);
+    return canvas;
+  }
+
+  function wetSandTexture(seed) {
+    return toTexture(memoCanvas('wetSand|' + seed, function () { return wetSandCanvas(seed); }));
   }
 
   /** 水面：细碎波纹与裂纹（波纹频率取整除周期的值，纹路跨边界补画） */
-  function waterCrackleTexture(seed) {
+  function waterCrackleCanvas(seed) {
     const N = SURFACE_TILE_PX;
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
@@ -396,7 +442,11 @@
         ctx.stroke();
       });
     }
-    return toTexture(canvas);
+    return canvas;
+  }
+
+  function waterCrackleTexture(seed) {
+    return toTexture(memoCanvas('waterCrackle|' + seed, function () { return waterCrackleCanvas(seed); }));
   }
 
   /**
@@ -414,7 +464,7 @@
    *   基准 222）在泉眼上直接读成一个同心圆靶心，而且把水整体压暗 13%。现在
    *   环数 4、幅度 ±13（≈5%）、基准 240 —— 只是水面上一层很浅的动感。
    */
-  function rippleTexture(seed) {
+  function rippleCanvas(seed) {
     const N = 256;
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
@@ -436,7 +486,11 @@
       }
     }
     ctx.putImageData(img, 0, 0);
-    return toTexture(canvas);
+    return canvas;
+  }
+
+  function rippleTexture(seed) {
+    return toTexture(memoCanvas('ripple|' + seed, function () { return rippleCanvas(seed); }));
   }
 
   /* ============================================================
@@ -573,7 +627,7 @@
   }
 
   /** 花丛：细茎 + 圆花瓣，带墨线轮廓 */
-  function flowerTexture(seed) {
+  function flowerCanvas(seed) {
     const W = 128, H = 112;
     const canvas = makeCanvas(W, H);
     const ctx = canvas.getContext('2d');
@@ -617,11 +671,16 @@
         c.fill();
       }
     });
-    return toTexture(canvas, { wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping });
+    return canvas;
+  }
+
+  function flowerTexture(seed) {
+    return toTexture(memoCanvas('flower|' + seed, function () { return flowerCanvas(seed); }),
+      { wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping });
   }
 
   /** 作物丛：几束麦穗，带墨线轮廓 */
-  function cropTexture(seed) {
+  function cropCanvas(seed) {
     const W = 128, H = 112;
     const canvas = makeCanvas(W, H);
     const ctx = canvas.getContext('2d');
@@ -659,7 +718,12 @@
         }
       }
     });
-    return toTexture(canvas, { wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping });
+    return canvas;
+  }
+
+  function cropTexture(seed) {
+    return toTexture(memoCanvas('crop|' + seed, function () { return cropCanvas(seed); }),
+      { wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping });
   }
 
   /* ============================================================
@@ -672,7 +736,7 @@
    * ============================================================ */
 
   /** 蜡笔笔触：u（横向，0~1）两侧虚化，v（沿笔触）带颗粒与断口；RGB 全白，信息在 alpha */
-  function crayonStrokeTexture(seed) {
+  function crayonStrokeCanvas(seed) {
     const N = 128;
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
@@ -701,7 +765,11 @@
       }
     }
     ctx.putImageData(img, 0, 0);
-    return toTexture(canvas);
+    return canvas;
+  }
+
+  function crayonStrokeTexture(seed) {
+    return toTexture(memoCanvas('crayonStroke|' + seed, function () { return crayonStrokeCanvas(seed); }));
   }
 
   /** 岩壁：水平层理 + 竖向裂纹 + 颗粒（山脉/峡谷地表用，可平铺） */
@@ -951,7 +1019,7 @@
    *   256 的贴图在掠射视角下 1 个 texel 就有 1.5 世界单位，会被压成一排排
    *   细线（v1.6 修的问题），因此默认提到 512。
    */
-  function cloudShadowTexture(seed, size) {
+  function cloudShadowCanvas(seed, size) {
     const N = Math.max(64, Math.round(size || 512));
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
@@ -975,11 +1043,16 @@
       }
     }
     ctx.putImageData(img, 0, 0);
-    return toTexture(canvas);
+    return canvas;
+  }
+
+  function cloudShadowTexture(seed, size) {
+    const N = Math.max(64, Math.round(size || 512));
+    return toTexture(memoCanvas('cloudShadow|' + seed + '|' + N, function () { return cloudShadowCanvas(seed, size); }));
   }
 
   /** 半透明云雾团 */
-  function cloudTexture(seed) {
+  function cloudCanvas(seed) {
     const N = 256;
     const canvas = makeCanvas(N, N);
     const ctx = canvas.getContext('2d');
@@ -1002,7 +1075,12 @@
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, N, N);
     }
-    return toTexture(canvas, { wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping });
+    return canvas;
+  }
+
+  function cloudTexture(seed) {
+    return toTexture(memoCanvas('cloud|' + seed, function () { return cloudCanvas(seed); }),
+      { wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping });
   }
 
   /** 飞鸟剪影：一个带弧度的 V */

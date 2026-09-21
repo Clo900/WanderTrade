@@ -110,6 +110,21 @@ HL.Data.useMap(null);                  // 还原为内置快照
 
 规则存在的理由是：山格是**生成结果**，「把所有山格设成峡谷」如果只能逐格列举 key，就必须「先生成一遍拿到山格、再回头覆写」跑两遍构建。优先级是**规则 < 显式 key**，即规则是默认值、显式覆写是最终值；规则也会计入覆写 revision，否则改规则不会让山体场与河网的缓存失效。
 
+### 重建造价的旋钮：`lodDetails`
+
+重建是**整层全量**的，其中山体最贵（默认档要为每个山簇建 4 级 LOD 网格，实测 ~2.4s，占整次重建 ~70%），而任一时刻**只有 1 级**会被渲染。因此 `WorldView` 允许调用方指定「只建哪几级」：
+
+```js
+HL.WorldView.create({ container, terrainOverrides, lodDetails: [5] });   // 只建 detail=5 那一级
+view.rebuild({ terrainOverrides: next, lodDetails: [12] });              // 重建时换档
+```
+
+- 不传（默认 `null`）= 按 `config.terrain.relief.mountains.lod.details` 全建，即**实验页与游戏运行时的行为完全不变**；
+- 传数组 = 只建这几级。**该数组不受 `lod.enabled` 截断** —— `enabled: false` 的语义是「关掉 LOD，一直用最细一级」，与「调用方点名要这一级」是两件事；
+- 也可以传一个**惰性函数** `({ sceneKit, container, world }) => number[]`：编辑器就是用它按「当前相机需要哪一级」（复用 `MountainLod.worldPerPixel` + `MountainLod.nearestDetail`，与 LOD 控制器同一判据）在每次重建时求值，并在缩放跨档时补一次重建。见 `tools/map-editor/src/terrain/terrain-view.js`。
+
+程序化贴图同理：`render/textures.js` 里凡「参数 → 画布」的纯函数（地表五张 + 岩石 + 蜡笔 + 涟漪 + 云影 + 植被）都按参数**记忆化画布**（每次仍返回新的 `Texture` 对象，因为 `repeat` / `offset` 这类状态挂在 Texture 上，且图层 dispose 会连材质 `map` 一起释放）。`fieldStripes` 单张原本 ~350ms。
+
 默认地图上有一条演示规则 `river.demoWaterway`（`{ enabled: true, mode: 'mountainPass', target: 'ridge' }`），它走的就是上面这条管道，用来直接看到「河从山口穿过」；`enabled: false` 即回到完全自然的河网。
 
 ## 山脉重掷（策划对比用）
@@ -167,8 +182,8 @@ src/render/             表现层，只读世界模型与状态
   environment-palette.js  环境色解析：基础色板 × 当前环境 → 各层的最终配色
   ground-material.js      **统一地表材质（v2.9）**：`MeshStandardMaterial` + `onBeforeCompile` 的**最小注入**（替换 `<map_fragment>` 一处），按逐顶点权重混合五张灰度贴图并乘逐槽位底色。留在标准材质上是为了**免费继承**雾 / 阴影贴图 / 光照 / tone mapping（换自写 `ShaderMaterial` 就得逐个手工接回去）
   terrain-layer.js        地表（**一份网格 + 一份材质**，顶点高度读 heightAt；逐槽位 splat 属性 `aSplatA` / `aSplatB`、「明暗比值」顶点色与共享顶点法线）、**水下地表** + 沙盘底座；并对外提供几何累加缓冲（`createBuf` / `appendGroupGeometry` / `bufToGeometry`），是「统一水面」拼几何的底子；槽位顺序与底色来源的唯一出处是 `SURFACE_SLOTS`
-  mountain-layer.js       山体层：共享三角格网格器（相邻格复用同一批格点）+ 按位置焊接 + 表面/落地墙分工；按 `lod.details` 为每个山簇建**多级网格**，另供占位查询
-  mountain-lod.js         山体 LOD 控制器：按相机与视口的**屏幕像素密度**选级 + 滞回 + 相机静止短路。不碰几何、不碰场
+  mountain-layer.js       山体层：共享三角格网格器（相邻格复用同一批格点）+ 按位置焊接 + 表面/落地墙分工；按 `lod.details` 为每个山簇建**多级网格**（`build(world, { lodDetails })` 可只建其中几级），另供占位查询
+  mountain-lod.js         山体 LOD 控制器：按相机与视口的**屏幕像素密度**选级 + 滞回 + 相机静止短路。不碰几何、不碰场；对外暴露 `worldPerPixel` / `nearestDetail`，是选级判据的唯一来源（调用方不许重抄）
   water-surface.js        **统一水面**（v2.8）：海（按 `water.wave.subdiv` 加密）+ 河（含河口分流）+ 泉 / 湖圆盘写进**同一份几何**，配**唯一一份**水面材质。海面是唯一平面（恒为海面水位）；河 / 湖各取**自己所经地块的档位高度**（v2.8 阶段二：沿程阶梯下降，见下文）
   river-layer.js          河面几何追加器：圆滑化（Chaikin）、**末端收尖**（消「方头」）、逐采样点写河口因子 `aMouth`，把河带与分流带追加进统一水面的缓冲
   spring-layer.js         河源水体（泉眼 / 小湖）的圆盘几何追加器：极坐标圆盘 + 岸线扰动 + 涟漪 UV，同样追加进统一水面的缓冲

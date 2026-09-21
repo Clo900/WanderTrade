@@ -28,6 +28,28 @@
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
   /**
+   * 从「细 → 粗」的档位表里挑出最接近 `required` 的那一级（按对数距离）。
+   *
+   * 导出而不是留在 `create` 里的原因：「按当前相机只建必要的那一级」的调用方
+   * （编辑器的地形模式）必须用**同一条判据**选级 —— 若它自己再抄一份比较逻辑，
+   * 就会出现「按 A 判据建了 3 级、按 B 判据又要 5 级」这种反复重建。
+   *
+   * @param {number[]} details 档位表（任意顺序）
+   * @param {number} required 需要的采样密度
+   * @returns {number|null}
+   */
+  function nearestDetail(details, required) {
+    if (!details || !details.length) return null;
+    const r = Math.max(1e-9, required || 1);
+    let best = details[0], bestErr = Infinity;
+    for (let i = 0; i < details.length; i++) {
+      const err = Math.abs(Math.log(details[i] / r));
+      if (err < bestErr) { bestErr = err; best = details[i]; }
+    }
+    return best;
+  }
+
+  /**
    * 「屏幕上 1 像素对应多少世界单位」（竖直方向）。
    *
    * · 正交：可见高度 = (top − bottom) / zoom，与距离无关；
@@ -69,6 +91,8 @@
       for (let i = 0; i < chunks.length; i++) map[chunks[i].index] = chunks[i];
       byLevel.push(map);
     }
+    /** 各级的采样密度（选级判据与对外暴露的 nearestDetail 共用同一份） */
+    const levelDetails = levels.map(function (l) { return l.detail; });
     /** 所有出现过的簇号（以最细一级为准，粗级只可能更少） */
     const clusterIds = levels.length ? (levels[0].chunks || []).map(function (c) { return c.index; }) : [];
 
@@ -81,12 +105,11 @@
 
     /** 选级：按对数距离找最接近 requiredDetail 的那一级 */
     function closestIndex(required) {
-      let best = 0, bestErr = Infinity;
+      const d = nearestDetail(levelDetails, required);
       for (let i = 0; i < levels.length; i++) {
-        const err = Math.abs(Math.log(levels[i].detail / required));
-        if (err < bestErr) { bestErr = err; best = i; }
+        if (levels[i].detail === d) return i;
       }
-      return best;
+      return 0;
     }
 
     /**
@@ -210,5 +233,5 @@
     };
   }
 
-  HL.MountainLod = { create: create, worldPerPixel: worldPerPixel };
+  HL.MountainLod = { create: create, worldPerPixel: worldPerPixel, nearestDetail: nearestDetail };
 })(window.HexLab = window.HexLab || {});
